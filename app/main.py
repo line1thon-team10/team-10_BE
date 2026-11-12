@@ -12,7 +12,7 @@ from app.ai import engine as ai_engine
 from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
 from app.core.responses import install_error_handlers, ok
 from app.db.session import init_db
-from app.routers import books, demo, session, today
+from app.routers import books, demo, quiz, session, today
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.include_router(session.router)
 app.include_router(demo.router)
 app.include_router(today.router)
 app.include_router(books.router)
+app.include_router(quiz.router)
 
 
 @app.get("/api/health", tags=["상태"])

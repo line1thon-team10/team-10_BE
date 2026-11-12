@@ -68,6 +68,11 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 | `POST /api/records` | 기록 `{ taskId, result: done\|partial\|none, toPage, sessionId }` → 박스/알림 이벤트 |
 | `PATCH /api/tasks/:id/record` | 기록한 뒤 끝낸 페이지 고치기 |
 | `GET /api/books` | 책 쌓기: 과목·단원별 블록 상태, 등급·점수·회독, 준비도(진도율 × 숙달도) |
+| `GET /api/quiz/today` | 과목별 오늘의 퀴즈 카드: 문항 수·열림(70%)·구성·결과 |
+| `GET /api/quiz/:key` | 문항 (key = 과목 ID 또는 더 풀기 퀴즈 ID). 정답·해설은 안 보내요 |
+| `POST /api/quiz/:key/submit` | 제출 → 채점(서술형은 AI, 실패 시 저장된 채점) → 단원 점수(calc.py 식)·취약 문항 → 결과 |
+| `GET /api/quiz/:key/result` | 결과: 정답·해설·근거, 단원 점수 변화, 퀴즈 후 책 쌓기(P3), 오답 노트 추가 |
+| `POST /api/quiz/:subjectId/more` | 더 풀기: 같은 단원 안 푼 5문항 → `{ quizId, count }` |
 
 시드(`app/seed/`)에는 과목 3개·단원 13개·개념 39개·고정 일정·2주 계획(26개 태스크)·11/9 오후 5시까지 기록, 그리고 현민님 `seed_quiz.json`의 문항 77개·풀이 기록·취약 문항·11/9 오늘 퀴즈(7·13·5문항)가 들어가요.
 태스크 수는 데이터 세트(45개)와 아직 달라요. 15~60분 분할 규칙은 계획 엔진(백엔드 A)에서 맞춰요.
@@ -97,7 +102,9 @@ cd scripts/gen_schema && npm install && node gen_schema.js
 ## 알려진 점
 
 - 준비도는 calc.py와 같아요: 11/9 오후 5시 43·33·34%, 자료구조 p.88 기록 뒤 53%, 자료구조 퀴즈(3단원 83→73) 뒤 51%.
-- 퀴즈 API(오늘·문항·제출·결과)는 아직이에요.
+- 시연 퀴즈 확인: 자료구조 7문항 중 5개 정답(3번 서술형 70점, 5번 오답) → 3단원 83→73, 준비도 51%.
+- 서술형 AI 채점은 `GROQ_API_KEY`가 있어야 해요. 없거나 실패하면 저장된 채점(시연 문항 70점)을 쓰고 결과에 `essayGrading: saved`로 표시해요.
+- 더 풀기는 '이미 푼 문항은 안 나옴' 규칙이라, 시드의 3단원처럼 문항을 다 푼 단원은 `NO_QUESTIONS`예요. AI 문항 생성(quiz_bank)을 붙이면 해결돼요.
 - 퀴즈 시드는 비공개 AI 저장소의 `seed_quiz.json`을 `AI_ENGINE_PATH`에서 바로 읽어요. 이 공개 저장소에는 복사하지 않아요. 배포 서버에도 AI 코드가 같이 있어야 해요.
 
 - 윈도우 스마트 앱 컨트롤 때문에 SQLAlchemy 2.1·psycopg의 확장 모듈이 막혀서 SQLAlchemy 2.0을 써요. 로컬은 SQLite라 psycopg가 필요 없어요.

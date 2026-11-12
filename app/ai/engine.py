@@ -15,6 +15,7 @@ MODULES = {
     "analysis_contract": "services.analysis_contract",
     "quiz_bank": "services.quiz_bank",
     "quiz_grader": "services.quiz_grader",
+    "essay_grader": "services.essay_grader",
     "learning_metrics": "services.learning_metrics",
     "backend_adapter": "services.backend_adapter",
     "ai_tutor": "services.ai_tutor",
