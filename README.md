@@ -64,6 +64,10 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 | `POST /api/demo/seed` | `{ seed: empty \| day9 \| overdue }` 시드 전환 |
 | `POST /api/demo/reset` | 기본 시드(day9)로 초기화 |
 | `POST /api/demo/next-day` | 자리만 있음 (501) — 자정 판정은 백엔드 A |
+| `GET /api/today` | 홈: 오늘 할 일·진행률·퀴즈 열림(70%)·D-day·준비도·최근 7일 블록 |
+| `POST /api/records` | 기록 `{ taskId, result: done\|partial\|none, toPage, sessionId }` → 박스/알림 이벤트 |
+| `PATCH /api/tasks/:id/record` | 기록한 뒤 끝낸 페이지 고치기 |
+| `GET /api/books` | 책 쌓기: 과목·단원별 블록 상태, 등급·점수·회독, 준비도(진도율 × 숙달도) |
 
 시드(`app/seed/`)에는 과목 3개·단원 13개·개념 39개·고정 일정·2주 계획(26개 태스크)·11/9 오후 5시까지 기록이 들어가요.
 태스크 수는 데이터 세트(45개)와 아직 달라요. 15~60분 분할 규칙은 계획 엔진(백엔드 A)에서 맞춰요.
@@ -91,6 +95,9 @@ cd scripts/gen_schema && npm install && node gen_schema.js
 ```
 
 ## 알려진 점
+
+- 준비도: 진도율은 데이터 세트와 같고(62.9·55.8·36.0%), 숙달도는 시드 단원 점수가 calc.py 값과 달라 51/33/34% 대신 53/32/32%가 나와요. 퀴즈 시드(seed_quiz.json) 연결 때 맞춰요.
+- 오늘의 퀴즈 문항 수는 아직 '공부한 단원 × 5'만 세요 (어제 오답은 퀴즈 기능에서 더해요).
 
 - 윈도우 스마트 앱 컨트롤 때문에 SQLAlchemy 2.1·psycopg의 확장 모듈이 막혀서 SQLAlchemy 2.0을 써요. 로컬은 SQLite라 psycopg가 필요 없어요.
 - ERD 노트의 부분 유일 인덱스(`erd-constraints.sql`)는 아직 받지 못해서 반영 전이에요.
