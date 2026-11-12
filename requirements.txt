@@ -1,0 +1,8 @@
+# 백엔드 서버
+fastapi==0.162.4
+uvicorn==0.54.0
+SQLAlchemy>=2.0.36,<2.1  # 2.1은 윈도우 보안 정책에서 확장 모듈이 막혀 2.0 사용
+python-dotenv==1.2.4
+python-multipart==0.0.33
+pydantic==2.14.3
+psycopg[binary]>=3.2

@@ -1,0 +1,211 @@
+"""시드를 DB에 넣어요. 한 사용자의 데이터만 지우고 다시 넣어서 다른 사용자에게 영향이 없어요."""
+import uuid
+from collections import defaultdict
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import Connection, delete, select, update
+
+from app.core.clock import now_utc
+from app.db import schema as t
+from app.seed import demo_data as d
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def _id() -> str:
+    return str(uuid.uuid4())
+
+
+def _at(day, hhmm: str) -> datetime:
+    h, m = map(int, hhmm.split(":"))
+    return datetime.combine(day, time(h, m), KST)
+
+
+# 사용자 데이터를 지우는 순서 (자식 → 부모). user_id가 직접 없는 표는 소속 ID로 지워요
+def wipe_user(conn: Connection, user_id: str) -> None:
+    subj = select(t.subjects.c.id).where(t.subjects.c.user_id == user_id)
+    mats = select(t.materials.c.id).where(t.materials.c.subject_id.in_(subj))
+    unit_ids = select(t.units.c.id).where(t.units.c.material_id.in_(mats))
+    plan_ids = select(t.plans.c.id).where(t.plans.c.user_id == user_id)
+    task_ids = select(t.study_tasks.c.id).where(t.study_tasks.c.subject_id.in_(subj))
+    rec_ids = select(t.study_records.c.id).where(t.study_records.c.task_id.in_(task_ids))
+    sess_ids = select(t.study_sessions.c.id).where(t.study_sessions.c.user_id == user_id)
+    quiz_ids = select(t.quiz_sessions.c.id).where(t.quiz_sessions.c.user_id == user_id)
+    item_ids = select(t.quiz_items.c.id).where(t.quiz_items.c.quiz_session_id.in_(quiz_ids))
+    q_ids = select(t.questions.c.id).where(t.questions.c.unit_id.in_(unit_ids))
+    req_ids = select(t.plan_change_requests.c.id).where(t.plan_change_requests.c.user_id == user_id)
+    msg_ids = select(t.tutor_messages.c.id).where(t.tutor_messages.c.user_id == user_id)
+    job_ids = select(t.ai_jobs.c.id).where(t.ai_jobs.c.user_id == user_id)
+
+    steps = [
+        delete(t.ai_usage_logs).where(t.ai_usage_logs.c.user_id == user_id),
+        delete(t.ai_jobs).where(t.ai_jobs.c.id.in_(job_ids)),
+        delete(t.ai_saved_results).where(t.ai_saved_results.c.user_id == user_id),
+        delete(t.reflection_reports).where(t.reflection_reports.c.user_id == user_id),
+        delete(t.tutor_sources).where(t.tutor_sources.c.message_id.in_(msg_ids)),
+        update(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id).values(parent_message_id=None),
+        delete(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id),
+        delete(t.user_notices).where(t.user_notices.c.user_id == user_id),
+        delete(t.weak_questions).where(t.weak_questions.c.question_id.in_(q_ids)),
+        delete(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id.in_(item_ids)),
+        update(t.quiz_items).where(t.quiz_items.c.quiz_session_id.in_(quiz_ids)).values(origin_quiz_item_id=None),
+        delete(t.quiz_items).where(t.quiz_items.c.quiz_session_id.in_(quiz_ids)),
+        delete(t.quiz_scopes).where(t.quiz_scopes.c.quiz_session_id.in_(quiz_ids)),
+        delete(t.mastery_history).where(t.mastery_history.c.unit_id.in_(unit_ids)),
+        update(t.quiz_sessions).where(t.quiz_sessions.c.user_id == user_id).values(parent_quiz_session_id=None),
+        delete(t.quiz_sessions).where(t.quiz_sessions.c.user_id == user_id),
+        delete(t.question_sources).where(t.question_sources.c.question_id.in_(q_ids)),
+        delete(t.questions).where(t.questions.c.id.in_(q_ids)),
+        delete(t.learning_passes).where(t.learning_passes.c.unit_id.in_(unit_ids)),
+        delete(t.speed_calibrations).where(t.speed_calibrations.c.subject_id.in_(subj)),
+        delete(t.study_record_ranges).where(t.study_record_ranges.c.record_id.in_(rec_ids)),
+        delete(t.study_records).where(t.study_records.c.id.in_(rec_ids)),
+        delete(t.study_session_segments).where(t.study_session_segments.c.session_id.in_(sess_ids)),
+        delete(t.study_sessions).where(t.study_sessions.c.user_id == user_id),
+        delete(t.daily_plan_totals).where(t.daily_plan_totals.c.user_id == user_id),
+        delete(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(task_ids)),
+        update(t.study_tasks).where(t.study_tasks.c.subject_id.in_(subj)).values(origin_task_id=None),
+        delete(t.study_tasks).where(t.study_tasks.c.subject_id.in_(subj)),
+        delete(t.study_blocks).where(t.study_blocks.c.subject_id.in_(subj)),
+        delete(t.onboarding_messages).where(t.onboarding_messages.c.user_id == user_id),
+        update(t.plan_change_requests).where(t.plan_change_requests.c.user_id == user_id)
+        .values(base_proposal_id=None, accepted_proposal_id=None),
+        delete(t.plan_proposals).where(t.plan_proposals.c.request_id.in_(req_ids)),
+        delete(t.plan_change_requests).where(t.plan_change_requests.c.user_id == user_id),
+        delete(t.plans).where(t.plans.c.id.in_(plan_ids)),
+        delete(t.concepts).where(t.concepts.c.unit_id.in_(unit_ids)),
+        delete(t.units).where(t.units.c.id.in_(unit_ids)),
+        delete(t.materials).where(t.materials.c.id.in_(mats)),
+        delete(t.calendar_event_exceptions).where(
+            t.calendar_event_exceptions.c.event_id.in_(
+                select(t.calendar_events.c.id).where(t.calendar_events.c.user_id == user_id))),
+        delete(t.calendar_events).where(t.calendar_events.c.user_id == user_id),
+        delete(t.subjects).where(t.subjects.c.user_id == user_id),
+    ]
+    for stmt in steps:
+        conn.execute(stmt)
+
+
+def load_seed(conn: Connection, user_id: str, seed: str) -> None:
+    now = now_utc()
+    wipe_user(conn, user_id)
+    seed_day = d.SEED_DATES[seed]
+    has_plan = seed != "empty"
+    conn.execute(update(t.users).where(t.users.c.id == user_id).values(
+        demo_date=seed_day, last_assessed_date=seed_day,
+        onboarding_status="completed" if has_plan else "draft", updated_at=now))
+    if not has_plan:
+        return
+
+    # 과목·자료·단원·개념
+    subject_id, unit_id, unit_pages = {}, {}, {}
+    for s in d.SUBJECTS:
+        sid = subject_id[s["code"]] = _id()
+        conn.execute(t.subjects.insert().values(
+            id=sid, user_id=user_id, code=s["code"], name=s["name"], color=s["color"], status="active",
+            minutes_per_page=d.MIN_PER_PAGE, exam_name="기말고사", exam_date=s["exam_date"],
+            raw_goal=s["raw_goal"], target_grade=s["target_grade"], target_score=s["target_score"],
+            passing_criteria=s["passing_criteria"], grading_weights=s["grading_weights"],
+            emphasized_content=s["emphasized_content"], goal_confirmed_at=now, created_at=now, updated_at=now))
+        fname, pages = s["file"]
+        mid = _id()
+        conn.execute(t.materials.insert().values(
+            id=mid, subject_id=sid, original_name=fname, source_format="pdf", sha256=f"seed-{s['code']}",
+            page_count=pages, extraction_method="text", analysis_version="seed-1",
+            analysis_status="succeeded", quiz_enabled=True, question_generation_status="ready",
+            created_at=now, updated_at=now))
+        for no, (title, start, end, diff, concepts) in enumerate(s["units"], start=1):
+            code = f"{s['code']}{no}"
+            uid = unit_id[code] = _id()
+            unit_pages[code] = (start, end)
+            score, level, recovery = d.MASTERY.get(code, (None, None, False))
+            emphasis = 1.5 if s["emphasized_content"] and title.startswith("트리") else 1.0
+            conn.execute(t.units.insert().values(
+                id=uid, material_id=mid, code=code, title=title, sort_order=no, quantity_basis="page",
+                start_page=start, end_page=end, difficulty=diff, in_scope=True, emphasis_weight=emphasis,
+                evidence=[f"목차 {no}장 '{title}' (p.{start}–{end})"],
+                mastery_score=score, mastery_level=level, recovery_mode=recovery,
+                mastery_updated_at=now if score is not None else None, created_at=now, updated_at=now))
+            span = (end - start + 1) / len(concepts)
+            for ci, ctitle in enumerate(concepts):
+                cs = start + round(span * ci)
+                ce = end if ci == len(concepts) - 1 else start + round(span * (ci + 1)) - 1
+                conn.execute(t.concepts.insert().values(
+                    id=_id(), unit_id=uid, code=f"{code}-{ci + 1}", title=ctitle, sort_order=ci + 1,
+                    start_page=cs, end_page=ce, difficulty=diff, in_scope=True, created_at=now, updated_at=now))
+
+    # 고정 일정 (반복 규칙 1개로 저장)
+    for kind, title, days, start, end in d.EVENTS:
+        first = d.PLAN_START
+        wd = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+        targets = [wd[x] for x in days.split(",")]
+        while first.weekday() not in targets:
+            first += timedelta(days=1)
+        conn.execute(t.calendar_events.insert().values(
+            id=_id(), user_id=user_id, event_type=kind, title=title,
+            starts_at=_at(first, start), ends_at=_at(first, end),
+            recurrence_rule=f"FREQ=WEEKLY;BYDAY={days}", recurrence_until=d.EVENT_UNTIL,
+            created_at=now, updated_at=now))
+
+    # 계획 (사용자당 1개) · 블록 · 태스크 · 기록
+    plan_id = _id()
+    conn.execute(t.plans.insert().values(
+        id=plan_id, user_id=user_id, revision=1, created_at=now,
+        approved_at=datetime.combine(d.PLAN_START, time(21, 0), KST)))
+    totals = defaultdict(lambda: [0, 0])  # (날짜, 과목) → [새 범위 p, 전체 p]
+    day9_index = 0
+    for day, scode, unit_no, ttype, ranges, minutes, reason in d.PLAN:
+        if day < seed_day:
+            done = True
+        elif day == seed_day:
+            done = day9_index in d.DONE_ON_DAY9[seed]
+            day9_index += 1
+        else:
+            done = False
+        sid = subject_id[scode]
+        block_id, task_id = _id(), _id()
+        unit_ref = unit_id[f"{scode}{unit_no}"] if unit_no else None
+        conn.execute(t.study_blocks.insert().values(
+            id=block_id, subject_id=sid, unit_id=unit_ref, task_type=ttype,
+            stacked_at=datetime.combine(day, time(16, 0), KST) if done else None, created_at=now))
+        title = {"review": "총복습", "remedial": "보충"}.get(ttype, "")
+        if unit_no:
+            utitle = d.SUBJECTS[[s["code"] for s in d.SUBJECTS].index(scode)]["units"][unit_no - 1][0]
+            title = f"{unit_no}단원 {utitle}" + (" 보충" if ttype == "remedial" else "")
+        conn.execute(t.study_tasks.insert().values(
+            id=task_id, plan_id=plan_id, subject_id=sid, block_id=block_id, task_type=ttype, title=title,
+            scheduled_date=day, estimated_minutes=minutes, placement_reason=reason,
+            status="completed" if done else "planned", created_at=now))
+        for i, (uno, sp, ep) in enumerate(ranges):
+            conn.execute(t.study_task_ranges.insert().values(
+                id=_id(), task_id=task_id, unit_id=unit_id[f"{scode}{uno}"], start_page=sp, end_page=ep,
+                sort_order=i + 1))
+            pages = ep - sp + 1
+            totals[(day, scode)][1] += pages
+            if ttype == "study":
+                totals[(day, scode)][0] += pages
+        if done:
+            rec_id = _id()
+            conn.execute(t.study_records.insert().values(
+                id=rec_id, task_id=task_id, result="completed", recorded_at=datetime.combine(day, time(16, 0), KST),
+                study_date=day, updated_at=now))
+            for uno, sp, ep in ranges:
+                conn.execute(t.study_record_ranges.insert().values(
+                    id=_id(), record_id=rec_id, unit_id=unit_id[f"{scode}{uno}"], start_page=sp, end_page=ep))
+
+    for (day, scode), (new_p, total_p) in totals.items():
+        conn.execute(t.daily_plan_totals.insert().values(
+            user_id=user_id, subject_id=subject_id[scode], study_date=day, plan_id=plan_id,
+            planned_new_pages=new_p, planned_total_pages=total_p, planned_unpaged_minutes=0,
+            finalized_at=now if day < seed_day else None, updated_at=now))
+
+    # 1회독을 끝낸 단원 (11/9 이전 기록 기준). DS2는 11/8 보충까지 끝나 2회독
+    passes = [("DS1", 1, "initial", 4), ("DS2", 1, "initial", 5), ("DS2", 2, "remedial", 8),
+              ("OS1", 1, "initial", 3), ("NW1", 1, "initial", 8)]
+    for code, no, kind, dd in passes:
+        conn.execute(t.learning_passes.insert().values(
+            id=_id(), unit_id=unit_id[code], pass_number=no, completion_kind=kind,
+            evidence_key="initial" if kind == "initial" else f"seed-{code}-{no}",
+            evidence_snapshot={"schemaVersion": "1", "recordIds": [], "requiredRanges": [list(unit_pages[code])]},
+            completed_at=datetime.combine(d.D(dd), time(16, 0), KST), completed_date=d.D(dd)))
