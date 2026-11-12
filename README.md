@@ -34,11 +34,11 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
    py -3.12 -m venv .venv
    .venv/Scripts/python -m pip install -r requirements.txt
    ```
-2. AI 패키지 — team-10_AI의 requirements.txt는 PyMuPDF 버전 충돌이 있어서 지금은 버전 없이 설치해요
+2. AI 패키지 (team-10_AI 원본 목록의 PyMuPDF 버전 충돌을 고친 목록)
    ```bash
-   .venv/Scripts/python -m pip install pymupdf4llm PyMuPDF groq google-genai numpy networkx tenacity requests PyYAML tabulate onnxruntime
+   .venv/Scripts/python -m pip install -r requirements-ai.txt
    ```
-3. `.env.example`을 `.env`로 복사하고 `GROQ_API_KEY` 채우기
+3. `.env.example`을 `.env`로 복사하고 `GROQ_API_KEY`, `UPSTAGE_API_KEY` 채우기
 4. 서버 실행
    ```bash
    .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
