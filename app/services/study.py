@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, func, select
 
 from app.db import schema as t
 
@@ -173,13 +173,20 @@ class StudyData:
         }
 
     def quiz_counts(self, day: date) -> dict[str, int]:
-        """오늘의 퀴즈 문항 수 = 오늘 공부한 단원마다 5문항 (+ 어제 오답, 퀴즈 기능에서 더해요)"""
+        """오늘의 퀴즈 문항 수. 이미 만든 오늘 퀴즈가 있으면 그 문항 수,
+        없으면 '오늘 공부한 단원 × 5' (어제 오답은 퀴즈를 만들 때 더해져요)"""
+        made = dict(self.conn.execute(
+            select(t.quiz_sessions.c.subject_id, func.count(t.quiz_items.c.id))
+            .join(t.quiz_items, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
+            .where(t.quiz_sessions.c.user_id == self.user_id, t.quiz_sessions.c.quiz_date == day,
+                   t.quiz_sessions.c.type == "daily")
+            .group_by(t.quiz_sessions.c.subject_id)).all())
         units_by_subject = defaultdict(set)
         for x in self.tasks_on(day):
             unit = self.unit_of(x)
-            if unit and self.subject_by_id[x.row["subject_id"]]:
+            if unit:
                 units_by_subject[x.row["subject_id"]].add(unit["id"])
-        return {sid: 5 * len(u) for sid, u in units_by_subject.items()}
+        return {sid: made.get(sid, 5 * len(u)) for sid, u in units_by_subject.items()}
 
     def quiz_view(self, day: date, prog: dict) -> dict:
         counts = self.quiz_counts(day)

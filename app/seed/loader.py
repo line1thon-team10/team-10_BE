@@ -1,4 +1,5 @@
 """시드를 DB에 넣어요. 한 사용자의 데이터만 지우고 다시 넣어서 다른 사용자에게 영향이 없어요."""
+import json
 import uuid
 from collections import defaultdict
 from datetime import datetime, time, timedelta
@@ -6,11 +7,20 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, delete, select, update
 
+from app.config import AI_ENGINE_PATH
 from app.core.clock import now_utc
+from app.core.responses import ApiError
 from app.db import schema as t
 from app.seed import demo_data as d
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+def _read_quiz_seed() -> dict:
+    path = AI_ENGINE_PATH / d.QUIZ_SEED_FILE
+    if not path.is_file():
+        raise ApiError("QUIZ_SEED_MISSING", f"퀴즈 시드를 찾지 못했어요: {path} (AI_ENGINE_PATH 확인)", 500)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _id() -> str:
@@ -99,7 +109,8 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
         return
 
     # 과목·자료·단원·개념
-    subject_id, unit_id, unit_pages = {}, {}, {}
+    quiz = _read_quiz_seed()
+    subject_id, unit_id, unit_pages, concept_id, material_of = {}, {}, {}, {}, {}
     for s in d.SUBJECTS:
         sid = subject_id[s["code"]] = _id()
         conn.execute(t.subjects.insert().values(
@@ -127,13 +138,13 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
                 evidence=[f"목차 {no}장 '{title}' (p.{start}–{end})"],
                 mastery_score=score, mastery_level=level, recovery_mode=recovery,
                 mastery_updated_at=now if score is not None else None, created_at=now, updated_at=now))
-            span = (end - start + 1) / len(concepts)
-            for ci, ctitle in enumerate(concepts):
-                cs = start + round(span * ci)
-                ce = end if ci == len(concepts) - 1 else start + round(span * (ci + 1)) - 1
+            material_of[code] = mid
+            for ci, c in enumerate([c for c in quiz["concepts"] if c["unit"] == code]):
+                cid = concept_id[c["id"]] = _id()
                 conn.execute(t.concepts.insert().values(
-                    id=_id(), unit_id=uid, code=f"{code}-{ci + 1}", title=ctitle, sort_order=ci + 1,
-                    start_page=cs, end_page=ce, difficulty=diff, in_scope=True, created_at=now, updated_at=now))
+                    id=cid, unit_id=uid, code=c["id"], title=c["name"], sort_order=ci + 1,
+                    start_page=c["page_start"], end_page=c["page_end"], difficulty=diff, in_scope=True,
+                    created_at=now, updated_at=now))
 
     # 고정 일정 (반복 규칙 1개로 저장)
     for kind, title, days, start, end in d.EVENTS:
@@ -209,3 +220,72 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             evidence_key="initial" if kind == "initial" else f"seed-{code}-{no}",
             evidence_snapshot={"schemaVersion": "1", "recordIds": [], "requiredRanges": [list(unit_pages[code])]},
             completed_at=datetime.combine(d.D(dd), time(16, 0), KST), completed_date=d.D(dd)))
+
+    _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, material_of, now)
+
+
+def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, material_of, now) -> None:
+    """문항 77개 · 시드 날짜 전까지의 풀이 기록 · 취약 문항 · 시드 날짜의 오늘 퀴즈 구성"""
+    question_id = {}
+    for q in quiz["questions"]:
+        qid = question_id[q["id"]] = _id()
+        qtype = d.TYPE_MAP[q["type"]]
+        choices = ([{"id": f"{q['id']}-{i + 1}", "text": c} for i, c in enumerate(q["choices"])]
+                   if q.get("choices") else None)
+        conn.execute(t.questions.insert().values(
+            id=qid, unit_id=unit_id[q["unit"]], concept_id=concept_id.get(q["concept"]), code=q["id"],
+            type=qtype, difficulty=d.DIFF_MAP.get(q["difficulty"], "low"), prompt=q["question"], choices=choices,
+            correct_answer=q["answer"], explanation=q.get("explanation"),
+            origin="seed" if q.get("source") == "daily" else "generated", generation_version="seed_quiz-2026-11-05",
+            created_at=now))
+        conn.execute(t.question_sources.insert().values(
+            id=_id(), question_id=qid, material_id=material_of[q["unit"]],
+            start_page=q["page"], end_page=q["page"], quote=None))
+
+    subj_of_q = {q["id"]: q["unit"][:2] for q in quiz["questions"]}
+    # 날짜·과목별 퀴즈 1개로 묶어서 풀이 기록을 넣어요
+    sessions = defaultdict(list)
+    for a in quiz["attempts"]:
+        if a["date"] < seed_day.isoformat():
+            sessions[(a["date"], subj_of_q[a["question"]])].append(a)
+    latest = {}
+    for (day_s, scode), attempts in sorted(sessions.items()):
+        day = datetime.fromisoformat(day_s).date()
+        at = datetime.combine(day, time(20, 0), KST)
+        qsid = _id()
+        conn.execute(t.quiz_sessions.insert().values(
+            id=qsid, user_id=user_id, subject_id=subject_id[scode], type="daily", quiz_date=day,
+            status="submitted", selected_difficulty="low", current_position=len(attempts),
+            grading_status="completed", created_at=at, submitted_at=at, finalized_at=at, graded_at=at))
+        for i, a in enumerate(attempts):
+            item_id = _id()
+            conn.execute(t.quiz_items.insert().values(
+                id=item_id, quiz_session_id=qsid, question_id=question_id[a["question"]], sort_order=i + 1,
+                inclusion_reason="new"))
+            conn.execute(t.quiz_attempts.insert().values(
+                id=_id(), quiz_item_id=item_id, answer="", confidence=d.CONF_MAP[a["confidence"]],
+                is_correct=a["correct"], grading_status="graded", essay_score=a.get("essay_score"),
+                answered_at=at, answered_date=day, finalized_at=at, graded_at=at, mastery_applied_at=at))
+            latest[a["question"]] = (a, day)
+
+    # 마지막 풀이가 틀렸거나 애매였던 문항 = 취약 문항 (4-3)
+    for code, (a, day) in latest.items():
+        if not a["correct"] or a["confidence"] == "애매":
+            conn.execute(t.weak_questions.insert().values(
+                question_id=question_id[code], status="active", review_step=0,
+                next_review_date=day + timedelta(days=1), last_weak_at=datetime.combine(day, time(20, 0), KST)))
+
+    # 시드 날짜의 오늘 퀴즈 (데이터 세트 4장: 자료구조 7 · 운영체제 13 · 네트워크 5)
+    if seed_day.isoformat() == "2026-11-09":
+        studied_units = {code for codes in d.TODAY_UNITS.values() for code in codes}
+        for scode, codes in quiz["pending_quizzes_1109"].items():
+            qsid = _id()
+            conn.execute(t.quiz_sessions.insert().values(
+                id=qsid, user_id=user_id, subject_id=subject_id[scode], type="daily", quiz_date=seed_day,
+                status="ready", selected_difficulty="low", current_position=0, grading_status="pending",
+                created_at=now))
+            for i, code in enumerate(codes):
+                unit = next(q["unit"] for q in quiz["questions"] if q["id"] == code)
+                conn.execute(t.quiz_items.insert().values(
+                    id=_id(), quiz_session_id=qsid, question_id=question_id[code], sort_order=i + 1,
+                    inclusion_reason="new" if unit in studied_units and code not in latest else "weak"))

@@ -66,16 +66,23 @@ SUBJECTS = [
     },
 ]
 
-# 11/9 오후 5시 기준 단원 이해도 (정의서 v2 · 와이어 P3 · 프론트 seed.js)
-# OS1·NW1은 데이터 세트에 없어서 프론트 목업과 같은 값
+# 11/9 오후 5시 기준 단원 이해도 = seed_quiz.json의 11/8까지 풀이 기록을 calc.py(현민님 learning_metrics)로 계산한 값
+# (11/9 자료구조 퀴즈를 풀면 DS3이 83 → 73이 되고 준비도가 51%가 돼요)
 MASTERY = {
     "DS1": (96, "stable", False),
     "DS2": (69, "shaky", True),
     "DS3": (83, "stable", False),
-    "OS1": (86, "stable", False),
+    "OS1": (92, "stable", False),
     "OS2": (40, "risk", True),
-    "NW1": (88, "stable", False),
+    "NW1": (95, "stable", False),
 }
+
+# 문항·개념·풀이 기록 원본: 현민님 team-10_AI/seed_quiz.json
+# AI 저장소가 비공개라 공개 저장소(BE)에 복사하지 않고 AI_ENGINE_PATH에서 읽어요
+QUIZ_SEED_FILE = "seed_quiz.json"
+TYPE_MAP = {"객관식": "choice", "OX": "ox", "단답형": "short", "서술형": "essay"}
+DIFF_MAP = {"하": "low", "중": "mid", "상": "high"}
+CONF_MAP = {"확실": "sure", "애매": "unsure"}
 
 # 고정 일정 (RRULE 요일, 시작, 끝)
 EVENTS = [
@@ -119,4 +126,6 @@ PLAN = [
 ]
 
 # 11/9 태스크 중 오후 5시 시점에 끝난 것 (PLAN 안 순서 기준: DS3, OS3, OS2 보충, NW2)
+# 11/9에 공부한 단원 (오늘의 퀴즈 새 문제 범위)
+TODAY_UNITS = {"DS": ["DS3"], "OS": ["OS3", "OS2"], "NW": ["NW2"]}
 DONE_ON_DAY9 = {"day9": {1, 2, 3}, "overdue": {1, 2}}
