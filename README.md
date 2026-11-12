@@ -64,6 +64,10 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 | `POST /api/demo/seed` | `{ seed: empty \| day9 \| overdue }` 시드 전환 |
 | `POST /api/demo/reset` | 기본 시드(day9)로 초기화 |
 | `POST /api/demo/next-day` | [다음 날로]: 오늘 마감 → 자정 판정 → `judgment: carry \| replan \| none` |
+| `POST /api/study/sessions` | 집중 모드 [시작] `{ taskId }` (같은 태스크면 이어서) |
+| `GET /api/study/sessions/active` | 진행 중인 세션 (없으면 null) |
+| `GET /api/study/sessions/:id` | 세션 상태·측정 시간·오늘 총·과목 누적 |
+| `POST /api/study/sessions/:id/pause` · `/resume` · `/end` | 멈춤 · 다시 시작(또는 '아직 공부 중'에 계속) · 종료 |
 | `GET /api/plan/replan/options` | 분배안 A 시간 늘리기 / B 범위 줄이기 / C 압축하기 (밀렸을 때만) |
 | `POST /api/plan/replan` | `{ key: A \| B \| C }` 고른 안 적용 → 회복 박스 이벤트 |
 | `GET /api/today` | 홈: 오늘 할 일·진행률·퀴즈 열림(70%)·D-day·준비도·최근 7일 블록 |
@@ -108,6 +112,7 @@ cd scripts/gen_schema && npm install && node gen_schema.js
 - 자정 판정 확인: 11/9 p.88까지 기록 → 다음 날로 → 남은 p.89–95(7p)가 11/10 첫 태스크로 이월. 밀림 시드 → 다음 날로 → 38p(자료구조 24 · 네트워크 14, 기준 9p) → 분배안 3개 → 적용.
 - 분배안 B는 밀린 과목마다 아직 안 한 마지막 개념의 끝 6p를 빼요(강조 단원 제외). 데이터 세트 예시(운영체제 세그멘테이션)와는 고르는 범위가 달라요.
 - 아직 없는 규칙: 시험 당일엔 그 과목을 넣지 않기, 하루 공부 가능 시간 검사, 분배안 '나중에'. 며칠 건너뛰면 밀린 분량이 시험 당일에도 들어갈 수 있어요.
+- 집중 모드: 서버 시계로 순공부 구간을 쌓아 재요(멈춘 시간 제외, 새로고침해도 이어짐). 예상 시간의 2배가 지나면 `checkIn`, 10분 무응답이면 알림 시점에서 자동 종료하고 속도 보정에서 빼요. 기록할 때 `sessionId`를 붙이면 측정 시간이 남아요(세션당 기록 1번).
 - 서술형 AI 채점은 `GROQ_API_KEY`가 있어야 해요. 없거나 실패하면 저장된 채점(시연 문항 70점)을 쓰고 결과에 `essayGrading: saved`로 표시해요.
 - 더 풀기는 '이미 푼 문항은 안 나옴' 규칙이라, 시드의 3단원처럼 문항을 다 푼 단원은 `NO_QUESTIONS`예요. AI 문항 생성(quiz_bank)을 붙이면 해결돼요.
 - 퀴즈 시드는 비공개 AI 저장소의 `seed_quiz.json`을 `AI_ENGINE_PATH`에서 바로 읽어요. 이 공개 저장소에는 복사하지 않아요. 배포 서버에도 AI 코드가 같이 있어야 해요.
