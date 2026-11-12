@@ -126,8 +126,9 @@ class StudyData:
 
     # ---------- 조회 ----------
     def tasks_on(self, day: date) -> list[Task]:
-        return [x for x in self.tasks if x.row["scheduled_date"] == day
-                and x.row["status"] not in ("carried_over", "excluded")]
+        tasks = [x for x in self.tasks if x.row["scheduled_date"] == day
+                 and x.row["status"] not in ("carried_over", "excluded")]
+        return sorted(tasks, key=lambda x: x.row["origin_task_id"] is None)  # 이월된 태스크가 맨 위
 
     def unit_of(self, task: Task) -> dict | None:
         return self.units.get(task.ranges[0]["unit_id"]) if task.ranges else None

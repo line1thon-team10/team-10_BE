@@ -10,6 +10,7 @@ from app.db.schema import plans, subjects, users
 from app.db.session import get_conn
 from app.seed.demo_data import DEFAULT_SEED, SEED_DATES, SEEDS
 from app.seed.loader import load_seed
+from app.services.planner import Planner
 
 router = APIRouter(prefix="/api/demo", tags=["데모"])
 
@@ -78,7 +79,8 @@ def demo_reset(user: dict = Depends(current_user), conn: Connection = Depends(ge
 
 
 @router.post("/next-day")
-def demo_next_day(user: dict = Depends(current_user)):
-    """[다음 날로] = 자정 판정(RC-01·02) + 이월/분배안. 백엔드 A 담당이라 아직 비어 있어요."""
+def demo_next_day(user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    """[다음 날로] = 오늘 마감 → 자정 판정(RC-01·02) → 이월 또는 분배안 (NF-08)"""
     _require_demo()
-    raise ApiError("NOT_IMPLEMENTED", "다음 날로(자정 판정)는 아직 구현 전이에요 (백엔드 A)", 501)
+    judgment = Planner(conn, user).advance_day()
+    return ok(_state(conn, _reload_user(conn, user["id"]), judgment))

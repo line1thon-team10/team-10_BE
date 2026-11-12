@@ -11,6 +11,7 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
+from app.services.planner import Planner
 from app.services.study import OPEN_RATE, StudyData, Task, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
@@ -38,11 +39,24 @@ def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get
                    "dday": (s["exam_date"] - today).days if s["exam_date"] else None,
                    "readiness": data.readiness(s)["readiness"]} for s in data.subjects],
         "recentDays": data.recent_days(today),
-        "notice": None,       # 이월·분배안 적용 안내 — 자정 판정(백엔드 A) 뒤에 채워요
+        "notice": _notice(conn, user, today),
         "tutorSuggestions": TUTOR_SUGGESTIONS,
         "paceAlert": None,    # 속도 보정 알림 (PL-07) — 측정 기록 3일치가 쌓이면
-        "replan": None,       # 분배안 (P2) — 백엔드 A
+        "replan": Planner(conn, user).replan_view(),
     })
+
+
+def _notice(conn: Connection, user: dict, today) -> dict | None:
+    """오늘 접속하면 보여줄 안내: 이월(S6-2) 또는 분배안 적용 뒤(회복)"""
+    rows = conn.execute(select(t.user_notices).where(
+        t.user_notices.c.user_id == user["id"], t.user_notices.c.notice_date == today,
+        t.user_notices.c.notice_type.in_(["carry", "recovery"])).order_by(t.user_notices.c.created_at.desc())).mappings().all()
+    for r in rows:
+        if r["notice_type"] == "recovery":
+            return {"type": "replanned", "key": r["payload"].get("key"), "items": []}
+    for r in rows:
+        return {"type": "carry", "items": r["payload"].get("items", [])}
+    return None
 
 
 class RecordIn(BaseModel):

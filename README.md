@@ -63,7 +63,9 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 | `GET /api/demo/state` | 데모 날짜, 첫 시험, 시드 이름, 계획 유무 |
 | `POST /api/demo/seed` | `{ seed: empty \| day9 \| overdue }` 시드 전환 |
 | `POST /api/demo/reset` | 기본 시드(day9)로 초기화 |
-| `POST /api/demo/next-day` | 자리만 있음 (501) — 자정 판정은 백엔드 A |
+| `POST /api/demo/next-day` | [다음 날로]: 오늘 마감 → 자정 판정 → `judgment: carry \| replan \| none` |
+| `GET /api/plan/replan/options` | 분배안 A 시간 늘리기 / B 범위 줄이기 / C 압축하기 (밀렸을 때만) |
+| `POST /api/plan/replan` | `{ key: A \| B \| C }` 고른 안 적용 → 회복 박스 이벤트 |
 | `GET /api/today` | 홈: 오늘 할 일·진행률·퀴즈 열림(70%)·D-day·준비도·최근 7일 블록 |
 | `POST /api/records` | 기록 `{ taskId, result: done\|partial\|none, toPage, sessionId }` → 박스/알림 이벤트 |
 | `PATCH /api/tasks/:id/record` | 기록한 뒤 끝낸 페이지 고치기 |
@@ -103,6 +105,9 @@ cd scripts/gen_schema && npm install && node gen_schema.js
 
 - 준비도는 calc.py와 같아요: 11/9 오후 5시 43·33·34%, 자료구조 p.88 기록 뒤 53%, 자료구조 퀴즈(3단원 83→73) 뒤 51%.
 - 시연 퀴즈 확인: 자료구조 7문항 중 5개 정답(3번 서술형 70점, 5번 오답) → 3단원 83→73, 준비도 51%.
+- 자정 판정 확인: 11/9 p.88까지 기록 → 다음 날로 → 남은 p.89–95(7p)가 11/10 첫 태스크로 이월. 밀림 시드 → 다음 날로 → 38p(자료구조 24 · 네트워크 14, 기준 9p) → 분배안 3개 → 적용.
+- 분배안 B는 밀린 과목마다 아직 안 한 마지막 개념의 끝 6p를 빼요(강조 단원 제외). 데이터 세트 예시(운영체제 세그멘테이션)와는 고르는 범위가 달라요.
+- 아직 없는 규칙: 시험 당일엔 그 과목을 넣지 않기, 하루 공부 가능 시간 검사, 분배안 '나중에'. 며칠 건너뛰면 밀린 분량이 시험 당일에도 들어갈 수 있어요.
 - 서술형 AI 채점은 `GROQ_API_KEY`가 있어야 해요. 없거나 실패하면 저장된 채점(시연 문항 70점)을 쓰고 결과에 `essayGrading: saved`로 표시해요.
 - 더 풀기는 '이미 푼 문항은 안 나옴' 규칙이라, 시드의 3단원처럼 문항을 다 푼 단원은 `NO_QUESTIONS`예요. AI 문항 생성(quiz_bank)을 붙이면 해결돼요.
 - 퀴즈 시드는 비공개 AI 저장소의 `seed_quiz.json`을 `AI_ENGINE_PATH`에서 바로 읽어요. 이 공개 저장소에는 복사하지 않아요. 배포 서버에도 AI 코드가 같이 있어야 해요.
