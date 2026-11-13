@@ -13,6 +13,7 @@ from app.db import schema as t
 from app.db.session import get_conn
 from app.repositories.locking import UserBusyError, lock_user
 from app.services.planner import Planner
+from app.services.learning_evidence import revalidate_record_passes
 from app.services.study import OPEN_RATE, StudyData, Task, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
@@ -106,7 +107,8 @@ def _ranges_until(task: Task, to_page: int) -> list[dict]:
     return out
 
 
-def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], study_date, session_id=None) -> None:
+def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], study_date, session_id=None,
+                 *, user_id: str) -> None:
     now = now_utc()
     if task.record:
         rec_id = task.record["id"]
@@ -131,6 +133,7 @@ def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], 
     if status == "completed":
         conn.execute(update(t.study_blocks).where(t.study_blocks.c.id == task.row["block_id"],
                                                   t.study_blocks.c.stacked_at.is_(None)).values(stacked_at=now))
+    revalidate_record_passes(conn, user_id, rec_id, now)
 
 
 def _check_session(conn: Connection, task: Task, session_id: str | None) -> str | None:
@@ -164,7 +167,7 @@ def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connec
         ranges = []
     session_id = _check_session(conn, task, body.sessionId)
     before = data.progress(today)
-    _save_record(conn, task, body.result, ranges, today, session_id)
+    _save_record(conn, task, body.result, ranges, today, session_id, user_id=user["id"])
 
     after_data = StudyData(conn, user["id"])
     after = after_data.progress(today)
@@ -218,7 +221,7 @@ def fix_record(task_id: str, body: FixIn, user: dict = Depends(current_user), co
     if task.first is None or not (task.first <= body.toPage <= task.last):
         raise ApiError("BAD_PAGE", f"p.{task.first}부터 p.{task.last} 사이로 적어 주세요")
     result = "done" if body.toPage >= task.last else "partial"
-    _save_record(conn, task, result, _ranges_until(task, body.toPage), task.record["study_date"])
+    _save_record(conn, task, result, _ranges_until(task, body.toPage), task.record["study_date"], user_id=user["id"])
     after = StudyData(conn, user["id"])
     fixed = _find_task(after, task_id)
     return ok({"taskId": task_id, "status": after.task_view(fixed)["status"], "doneTo": fixed.done_to,
