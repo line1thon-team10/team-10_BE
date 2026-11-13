@@ -15,6 +15,16 @@ Table users {
   updated_at timestamptz [not null]
 }
 
+// POST /api/demo/next-day 성공 응답. 경로/메서드는 이 표의 사용 범위로 고정.
+Table demo_day_requests {
+  user_id uuid [not null, ref: > users.id]
+  idempotency_key uuid [not null]
+  request_hash varchar [not null]
+  response jsonb [not null, note: '성공 data 스냅샷. 상태 변경과 같은 트랜잭션으로 저장']
+  created_at timestamptz [not null]
+  indexes { (user_id, idempotency_key) [pk] }
+}
+
 Table subjects {
   id uuid [pk]
   user_id uuid [not null, ref: > users.id]

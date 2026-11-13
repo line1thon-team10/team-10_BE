@@ -20,6 +20,16 @@ users = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+demo_day_requests = Table(
+    "demo_day_requests", metadata,
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("idempotency_key", UUID, nullable=False),
+    Column("request_hash", String, nullable=False),
+    Column("response", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("user_id", "idempotency_key"),
+)
+
 subjects = Table(
     "subjects", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
