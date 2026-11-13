@@ -14,6 +14,13 @@
 - GET replan/options는 {options,saved,previewId}. POST replan은 key A/B/C와 previewId. 적용 {event:{type:"box",reason:"recover",...}}. 선택한 disabled 안은 400 BAD_KEY.
 - 속도 보정은 최근 3일의 유효 종료 측정 시간/실제 완료 페이지로 계산하며 autoStopped/excluded는 제외. 샘플이 없으면 paceAlert:null. apply:false는 제안만 해제, true는 승인 속도와 미래 예상 시간 갱신; 일정 초과 시 replan=true. P2가 P4보다 먼저 표시된다.
 
+## 집계와 누락된 중첩 형식
+
+- rate는 min(100, HALF_UP(100*donePages/totalPages)), 분모0이면0. 판정은 반올림 전 비율로 한다. quiz.remainPages=max(0,ceil(.7*출제가능계획페이지)-출제가능완료페이지). 일반 progress와 quiz용 분모를 구분한다.
+- Task.from/to/unitNo는 총복습처럼 단일 범위를 지정할 수 없으면 null. FE toTask는 null일 때 pages=0으로 처리해야 한다. 현재 표의 non-null보다 이 규칙이 우선한다.
+- replan options[].lines는 string[], effect/preview는 string, enabled는 bool. options 응답은 표의 전체 replan 객체에 previewId를 더한 형태이다(앞 규칙의 {options,saved,previewId}는 요약).
+- paceAlert에 calibrationId:string을 추가한다. POST pace는 subjectId/apply/calibrationId; 반환 {applied:bool,overDays:string[],replan:bool}. rows[].now는 기존 예상 분 정수, rows[].date는 날짜, 나머지 페이지 필드는 정수.
+
 ## 요청·응답 필드
 
 FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, 변경 사항은 decisions.md를 적용한다.
