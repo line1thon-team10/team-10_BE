@@ -47,11 +47,15 @@ git submodule update --init --recursive
    .venv/Scripts/python -m pip install -r requirements-ai.txt
    ```
 3. `.env.example`을 `.env`로 복사하고 `GROQ_API_KEY`, `UPSTAGE_API_KEY` 채우기
-4. 서버 실행
+4. DB 준비: 신규 DB는 아래 명령을 실행하세요. 기존 DB는 먼저 [DB 인계 절차](docs/db-migrations.md)를 따르세요. 서버 시작은 스키마를 자동 변경하지 않아요.
+   ```bash
+   .venv/Scripts/python -m alembic upgrade head
+   ```
+5. 서버 실행
    ```bash
    .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
    ```
-5. 확인: http://localhost:8000/docs , http://localhost:8000/api/health?ai=true
+6. 확인: http://localhost:8000/docs , http://localhost:8000/api/health?ai=true
 
 프론트를 붙일 때는 team-10_FE의 `.env`에 `VITE_API_BASE_URL=http://localhost:8000`, `VITE_USE_MOCK=false`.
 
@@ -99,11 +103,12 @@ app/
   config.py        환경변수
   core/            공통 응답·익명 인증·오늘 날짜
   db/schema.py     자동 생성 테이블 정의 (직접 고치지 않기)
-  db/session.py    DB 연결
+  db/session.py    DB 연결·revision 검사
   ai/engine.py     AI 모듈 불러오기
   routers/         API (프론트 endpoints.js 기준으로 추가)
   seed/            데모 시드 값과 적재
 vendor/team-10_AI/ AI 소스 submodule (별도 저장소/커밋)
+migrations/        Alembic revision·불변 초기 스키마
 schema/            ERD·참고 명세 원본
 scripts/gen_schema ERD → schema.py 생성기 (Node)
 ```
@@ -113,6 +118,8 @@ scripts/gen_schema ERD → schema.py 생성기 (Node)
 ```bash
 cd scripts/gen_schema && npm install && node gen_schema.js
 ```
+
+모델 재생성만으로 DB는 변경되지 않아요. 새 revision을 작성·검토·테스트한 뒤 적용하세요. [마이그레이션 개발 절차](docs/db-migrations.md)를 참고하세요.
 
 ## 알려진 점
 
