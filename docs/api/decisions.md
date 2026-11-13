@@ -1,6 +1,6 @@
 # 충돌 해소와 FE 변경표
 
-상위 근거는 [원문 대조](source-audit.md)다. 이 문서의 추가 규칙은 명세 작성자가 제안한 설계안이며 최종 구현 기준이 아니다. 별도 팀 승인이나 배포가 이루어졌다는 뜻은 아니다.
+사용자 지시에 따라 FE 계약을 기본으로 유지한다. 요구사항·와이어와 충돌하면 기존 BE 명세를 대조해 채택하고, BE에도 충돌/누락이 있으면 원문에 맞게 새 계약을 정의한다. 아래는 이번 구현 기준이며 FE 담당자의 수신·검토나 배포 완료를 의미하지 않는다. 변경 이유는 [원문 대조](source-audit.md)로 추적한다.
 
 | 항목 | 이번 계약 | 출처/이유 | FE 변경 |
 |---|---|---|---|
@@ -22,11 +22,11 @@
 | 여러 옵션 중 불가능 | enabled:false, 실행 거절 | 거짓 실행안 방지 | P2에서 disabled 표시/클릭 차단 |
 | 수동 신규 단원 | PUT units의 id 생략 허용 | TOC 응답에 id 없음 | undefined 유지 가능 |
 | 재시도 키 | 일반 요청은 선택적, relearn은 필수 Idempotency-Key | ERD 직접 회독 근거 보존 | relearn에 키 전달, 자동 재시도에는 같은 키 |
-| 미지원 기능 | AI 회고 제외; 과목 추가/rebuild는 요구사항과 FE 축소안의 릴리스 범위 충돌 | 최신 FE 결정 | 기존 비활성 유지 |
+| 미지원 기능 | AI 회고 제외; 과목 추가/rebuild는 요구사항대로 지원 | PDF pp.13,17 및 사용자 충돌 해결 지시 | 신규 과목은 draft 온보딩 후 승인, rebuild는 비교 후 적용으로 구현 |
 
 ## 미리보기 식별과 수명
 
-모든 후보 응답에 `previewId:string`을 추가한다. 이는 plan_proposals.id이며 소유자, 작업 종류, 대상 ID, 입력, 기준 plans.revision(계획 없으면 입력 구조 버전)을 저장한다. 후보 유효기간은 운영 정책 미확정이며30분은 작성자의 제안값이다. 소유권 불일치는 404 NO_PREVIEW, 없음은400 NO_PREVIEW, 합의된 만료 정책 위반/버전 불일치는409 PREVIEW_STALE, ID 누락은409 PREVIEW_REQUIRED. 성공 적용은 후보를 applied로 기록하고 같은 후보 재적용은 최초 응답을 반환한다. 취소 후보는 재적용 불가.
+모든 후보 응답에 `previewId:string`을 추가한다. 이는 plan_proposals.id이며 소유자, 작업 종류, 대상 ID, 입력, 기준 plans.revision(계획 없으면 입력 구조 버전; 일정/자료/학습 기록 등 의존 데이터 버전도 포함)을 저장한다. 시간에 따른 자동 만료는 이번 계약에 두지 않는다. 이전30분 제한은 철회한다. 사용자 날짜 또는 후보가 참조한 과목·자료·일정·학습 기록·계획 버전이 바뀌면 stale로 판정한다. 소유권 불일치는 404 NO_PREVIEW, 없음은400 NO_PREVIEW, 기준 날짜/버전 불일치는409 PREVIEW_STALE, ID 누락은409 PREVIEW_REQUIRED. 성공 적용은 후보를 applied로 기록하고 같은 후보 재적용은 최초 응답을 반환한다. 취소 후보는 재적용 불가.
 
 후보 생성 자체가 기존 계획 revision을 변경하지 않는다. 승인 성공은 revision을 한 번 증가시킨다. 서로 다른 후보 동시 승인은 첫 성공만 유효하며 나머지는 PREVIEW_STALE. 미리보기 단계에서 실제 일정/기록/목표를 변경하지 않는다.
 
@@ -40,11 +40,15 @@
 | POST /plan/additions/preview | POST /plan/additions body {previewId} |
 | POST /plan/today/preview | POST /plan/today body {action,previewId} |
 | POST /schedules/voice | POST /schedules/voice/apply body {previewId} |
+| PATCH /schedules/:id/preview | PATCH /schedules/:id body {previewId} |
+| DELETE /schedules/:id/preview | DELETE /schedules/:id query previewId |
+| PUT /units 또는 PATCH /materials/:id/units의 applied:false 응답 | 동일 경로 body {previewId} |
+| POST /plan/rebuild | POST /plan/resplit/apply body {previewId} |
 | DELETE /schedules/:id 또는 /subjects/:id의 빈 시간 응답 | POST /plan/empty-time body {option,previewId} |
 
 경로는 모두 /api 접두사. toPlanDraft/toResplit/toReplan/toPlanPreview/toAdditionPreview/toVoicePreview/toEmptyTime가 previewId를 보존하도록 변경해야 한다. 속도 보정 pace는 subjectId+서버에 저장된 calibration ID/revision으로 제안을 검증하며 오래된 제안은 PREVIEW_STALE; FE가 서버 반환 calibrationId를 전달하는 보완도 함께 적용한다.
 
-추가 FE 보완: `toTask`는 from/to가 null일 때 pages=0, `toPaceAlert`는 calibrationId를 보존하고 postPace에서 전달한다. P2 toReplan은 enabled를 보존한다. `postRelearn`은 요청당 Idempotency-Key를 생성하고 재시도 시 유지한다. quiz adapter는 quizId를 보존한다.
+추가 FE 보완: `toTask`는 서버 pages/ranges를 보존, `toPaceAlert`는 calibrationId를 보존하고 postPace에서 전달한다. P2 toReplan은 enabled를 보존한다. `postRelearn`은 요청당 Idempotency-Key를 생성하고 재시도 시 유지한다. quiz adapter는 quizId를 보존한다.
 
 ## null 및 기본값의 구체적인 예
 
