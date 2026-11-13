@@ -42,4 +42,3 @@ API는 FE enum을 사용하며 DB enum을 그대로 노출하지 않는다.
 - DB quiz ox → API choice, options=[O,X] 순서는 저장된 보기 순서를 유지.
 - DB confidence sure/unsure → AI 확실/애매, low/mid/high → 하/중/상.
 - PDF ai_jobs pending/processing→running, completed→done, failed→failed.
-- perfect는 회독 조건에 따른 블록 상태 추가안이며 FE 렌더러 대응이 필요하다. 단원 grade에는 포함하지 않는다.
