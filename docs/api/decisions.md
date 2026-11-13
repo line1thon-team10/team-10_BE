@@ -1,11 +1,11 @@
 # 충돌 해소와 FE 변경표
 
-이 문서의 추가 규칙은 명세 작성자가 제안한 구현 기준이다. 별도 팀 승인이나 배포가 이루어졌다는 뜻은 아니다.
+상위 근거는 [원문 대조](source-audit.md)다. 이 문서의 추가 규칙은 명세 작성자가 제안한 설계안이며 최종 구현 기준이 아니다. 별도 팀 승인이나 배포가 이루어졌다는 뜻은 아니다.
 
 | 항목 | 이번 계약 | 출처/이유 | FE 변경 |
 |---|---|---|---|
 | 기본 주소/응답/인증 | /api, success/data/error, X-Anonymous-Id | FE 11/12 22시 결정 | 없음 |
-| 장기 AI | PDF만 작업 폴링, 그 외 25초 서버 예산/30초 FE timeout | 공통 Job(202) 취소 결정 존중 | 없음 |
+| 장기 AI | PDF 작업 폴링/30초 FE timeout; 서버 예산 미확정 | 공통 Job(202) 취소 결정 존중 | 없음 |
 | 진행 표시 | PDF 실제 current/progress, 나머지 대기 연출 | 숫자로 오인 방지 | 없음 |
 | 빈 시험 | firstExam:null | 빈 사용자도 유효한 상태 | demo adapter와 헤더 null 분기 |
 | 채점 실패 | 답안 보존 후 503 AI_FAILED, 동일 답안 재시도 | 답 저장 약속과 결과 정확성 | 저장된 answers 유지; quizId 전달 |
@@ -13,7 +13,7 @@
 | 미리보기 적용 | previewId 필수, base revision 검증 | 다중 탭/오래된 후보 적용 방지 | 아래 적용표대로 ID 보존·전달 |
 | 시드 값 | AI 데모 패키지 기반의 별도 데이터 | 11/12 결정; DS/OS/NW 예시는 타입 예시 | 시드 수령 후 mock 값만 교체 |
 | P2/P4 | P2 먼저, P2 닫힌 후 P4 | policy-and-backend 11/12 결정 | 기존 순서 유지 |
-| OCR | 성공 시 quizless=true, 실패만 수동 목차 | 팀 문서의 구별 | 없음 |
+| OCR | OCR 저품질만 quizless=true, 분석 실패만 수동 목차 | 팀 문서의 구별 | 없음 |
 | 재분할 합계 | 실제 배정값 합산, 1025/1005 고정 금지 | 예시 수치 간 충돌 해소 | 없음 |
 | tutor pages | {materialId,from,to}[] | 기존 adapter 채택 | 없음 |
 | 단원 evidence | string[] 실제 근거 문장 | 기존 화면 채택; 좌표는 범위 제외 | 없음 |
@@ -22,11 +22,11 @@
 | 여러 옵션 중 불가능 | enabled:false, 실행 거절 | 거짓 실행안 방지 | P2에서 disabled 표시/클릭 차단 |
 | 수동 신규 단원 | PUT units의 id 생략 허용 | TOC 응답에 id 없음 | undefined 유지 가능 |
 | 재시도 키 | 일반 요청은 선택적, relearn은 필수 Idempotency-Key | ERD 직접 회독 근거 보존 | relearn에 키 전달, 자동 재시도에는 같은 키 |
-| 미지원 기능 | rebuild=501, 신규 과목 추가/AI 회고 범위 제외 | 최신 FE 결정 | 기존 비활성 유지 |
+| 미지원 기능 | AI 회고 제외; 과목 추가/rebuild는 요구사항과 FE 축소안의 릴리스 범위 충돌 | 최신 FE 결정 | 기존 비활성 유지 |
 
 ## 미리보기 식별과 수명
 
-모든 후보 응답에 `previewId:string`을 추가한다. 이는 plan_proposals.id이며 소유자, 작업 종류, 대상 ID, 입력, 기준 plans.revision(계획 없으면 입력 구조 버전)을 저장한다. 후보 유효기간 30분. 소유권 불일치는 404 NO_PREVIEW, 없음은400 NO_PREVIEW, 만료/버전 불일치는409 PREVIEW_STALE, ID 누락은409 PREVIEW_REQUIRED. 성공 적용은 후보를 applied로 기록하고 같은 후보 재적용은 최초 응답을 반환한다. 취소 후보는 재적용 불가.
+모든 후보 응답에 `previewId:string`을 추가한다. 이는 plan_proposals.id이며 소유자, 작업 종류, 대상 ID, 입력, 기준 plans.revision(계획 없으면 입력 구조 버전)을 저장한다. 후보 유효기간은 운영 정책 미확정이며30분은 작성자의 제안값이다. 소유권 불일치는 404 NO_PREVIEW, 없음은400 NO_PREVIEW, 합의된 만료 정책 위반/버전 불일치는409 PREVIEW_STALE, ID 누락은409 PREVIEW_REQUIRED. 성공 적용은 후보를 applied로 기록하고 같은 후보 재적용은 최초 응답을 반환한다. 취소 후보는 재적용 불가.
 
 후보 생성 자체가 기존 계획 revision을 변경하지 않는다. 승인 성공은 revision을 한 번 증가시킨다. 서로 다른 후보 동시 승인은 첫 성공만 유효하며 나머지는 PREVIEW_STALE. 미리보기 단계에서 실제 일정/기록/목표를 변경하지 않는다.
 
