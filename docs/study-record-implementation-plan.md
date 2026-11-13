@@ -15,12 +15,21 @@ Astra-max가 확인한 DB2 완료→p.13 정정 후 회독 근거가 그대로 �
 
 ## 원자 단위
 
-1. 공통 사용자 잠금 및 동일 종료 세션 재전송 허용 + 경합·재시도 테스트.
-2. 기록 정정 트랜잭션에서 기존 회독 근거 무효화/복구 + 다중 기록·범위 구멍·다른 사용자/단원·실패 롤백 테스트.
-3. 책 API 유효 회독 개수 + 0회/순번 구멍/다른 사용자 격리 테스트와 충돌 명세 수정.
+1. 공통 사용자 잠금 + 경합·최신 사용자 상태 테스트.
+2. 동일 종료 세션 재전송 허용 + 같은 기록/다른 기록 재사용 테스트. 잠금과 독립적으로 설명 가능한 변경이므로 별도 커밋한다.
+3. 기록 정정 트랜잭션에서 기존 회독 근거 무효화/복구 + 다중 기록·범위 구멍·다른 사용자/단원·실패 롤백 테스트.
+4. 책 API 유효 회독 개수 + 0회/순번 구멍/다른 사용자 격리 테스트와 충돌 명세 수정.
 
 SQLite 및 격리 PostgreSQL 17에서 검증한다. 각 단위는 검증 후 즉시 커밋하고, stacked PR에 기존 FE/BE/명세 충돌과 한계를 명시한다. 이슈는 만들지 않는다.
 
 ## 후속 범위
 
 completedRanges 입력과 조회 ranges, 엄격한 UUID/본문 모델, 기록 멱등 응답 저장, initial/remedial 신규 회독 자동 생성, null-plan 직접 재학습, 블록 계보·마감 집계, P1 23:30, 퀴즈 savedGrading은 아직 완료한 것으로 표시하지 않는다.
+
+## 1단계 검증 결과 (2026-11-14)
+
+- 네 구현 단위를 각각 커밋했다. FE 전달 내용은 [study-record-handoff.md](study-record-handoff.md).
+- Python3.14 / SQLite 및 격리 PostgreSQL17에서 `python -m pytest -q tests`: **425 passed, 1 skipped** (108.99초). 건너뜀은 SQLite에서 PostgreSQL 사용자별 잠금 독립성 검사이며 PostgreSQL 실행은 통과했다. 신규 검사는 두 DB 합계50개다.
+- 범위 없는 `pytest`는 private AI submodule의 GROQ 키 필수 테스트 수집에서 실패한다. CI와 동일하게 BE `tests`를 명시해 전체 검증했다. 외부 유료 AI 호출 검증으로 표시하지 않는다.
+- `scripts/check_api_spec.py --fe ../FE`: FE71 + 소스 유래5 경로와 Markdown 링크 검사 통과. 이 검사는 런타임 전체 계약 준수를 입증하지 않는다.
+- 기존 PyMuPDF/SWIG deprecation 경고5개. 이번 코드 변경으로 새 DB migration은 없다.
