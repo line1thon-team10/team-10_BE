@@ -74,3 +74,13 @@ def api_client(domain_connection, monkeypatch):
             yield client
     finally:
         engine.dispose()
+
+
+@pytest.fixture
+def demo_user(api_client, monkeypatch):
+    from app.routers import demo, session
+    monkeypatch.setattr(session, "DEMO_MODE", True)
+    monkeypatch.setattr(demo, "DEMO_MODE", True)
+    response = api_client.post("/api/session")
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["anonymousId"]

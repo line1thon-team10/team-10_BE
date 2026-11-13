@@ -102,9 +102,27 @@ class Planner:
             raise ApiError("NOT_DEMO_USER", "데모 날짜가 없는 사용자예요", 400)
         nxt = today + timedelta(days=1)
 
+        # 시험 당일부터는 새 공부 배치를 만들지 않는다. 기록/완료 태스크는 보존한다.
+        for subject in self.data.subjects:
+            exam = subject["exam_date"]
+            if exam is not None and exam <= nxt:
+                self.conn.execute(update(t.study_tasks).where(
+                    t.study_tasks.c.subject_id == subject["id"],
+                    t.study_tasks.c.scheduled_date >= exam,
+                    t.study_tasks.c.status.in_(["planned", "partial"])).values(status="excluded"))
+
+        def can_carry(task):
+            exam = self.data.subject_by_id[task.row["subject_id"]]["exam_date"]
+            return exam is None or nxt < exam
+
         left = []  # (task, 남은 범위)
         for x in self.data.tasks_on(today):
             if x.row["status"] in ("planned", "partial"):
+                if not can_carry(x):
+                    exam = self.data.subject_by_id[x.row["subject_id"]]["exam_date"]
+                    if today < exam and x.row["status"] == "planned" and not x.record:
+                        self.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == x.id).values(status="missed"))
+                    continue
                 rest = remaining_ranges(x)
                 if rest:
                     left.append((x, rest))
@@ -113,7 +131,7 @@ class Planner:
         if prev:
             by_id = {x.id: x for x in self.data.tasks}
             for item in prev["recovery_context"].get("tasks", []):
-                if item["taskId"] in by_id:
+                if item["taskId"] in by_id and can_carry(by_id[item["taskId"]]):
                     left.append((by_id[item["taskId"]], item["ranges"]))
             self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == prev["id"])
                               .values(status="stale", updated_at=_now()))
@@ -137,7 +155,7 @@ class Planner:
             t.daily_plan_totals.c.user_id == self.user["id"], t.daily_plan_totals.c.study_date == today)
             .values(finalized_at=_now()))
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
-            demo_date=nxt, last_assessed_date=nxt, updated_at=_now()))
+            demo_date=nxt, last_assessed_date=today, updated_at=_now()))
 
         if carried_items:
             self._notice(nxt, "carry", f"carry:{nxt.isoformat()}", {"items": carried_items})

@@ -1,10 +1,11 @@
 # ERD와 도메인 경계
 
-현재 ERD는 구조 기준이며 노트에 적힌 모든 제약이 자동 생성 schema.py에 구현되어 있다는 뜻은 아니다. 아래는 구현 시 필요한 영속 규칙이며 이번 문서 브랜치에서 DB를 변경하지 않는다.
+현재 ERD는 구조 기준이며 노트에 적힌 모든 제약이 자동 생성 schema.py에 구현되어 있다는 뜻은 아니다. 아래는 영속 규칙이며, 구현 완료한 항목은 해당 migration과 함께 표시한다.
 
 | API 도메인 | ERD 테이블 | 원자적 변경/소유권 경로 |
 |---|---|---|
 | 세션/온보딩 | users, subjects, onboarding_messages | user→subject; 목표/대화·일정 후보 구분 |
+| 데모 재시도 | demo_day_requests | user_id+idempotency_key 기본 키; next-day 성공 data와 상태 변경을 함께 commit |
 | 일정 | calendar_events, calendar_event_exceptions | event.user_id; event+예외+관련 승인 이동 함께 적용 |
 | 자료 | materials, units, concepts | material→subject→user; 구조 retire·신규 생성·작업 무효화 함께 적용 |
 | 계획 | plans, plan_change_requests, plan_proposals | plan/request.user_id; base revision 확인 후 후보 승인 |
@@ -30,10 +31,10 @@
 
 ## 기존 ERD에 필요한 보완
 
-- demo seed를 날짜에서 추측하지 않도록 users.demo_seed 또는 동등한 사용자 상태 컬럼 필요.
+- demo seed 저장은 `0002_demo_seed`의 nullable `users.demo_seed`로 구현했다. 과거의 불명확한 선택 이력은 null로 유지한다.
 - previewId는 plan_proposals.id 사용. 생성/만료/적용 상태·원 응답을 plan_change_requests/changes에 저장할 스키마를 정한다. 시간 기반30분 만료는 사용하지 않는다. 후보 기준 날짜와 계획·자료·일정·기록 버전 변경을 검증한다.
 - 사용자 입력 구조 revision이 없는 최초 계획은 자료/목표/일정 ID와 updated_at의 정규화 해시로 stale 여부를 검증한다.
 - quiz_items.id를 API questionId로 사용하고 원본 questions.id와 구분한다. 문항별 답안 revision, 답안 해시, 채점 소유 작업 lease 및 최종 응답 스냅샷을 저장할 필드가 필요. processed 표식만으로 외부 호출 동시 실행을 방지할 수 없으므로 조건부 작업 선점/만료 lease를 사용한다.
-- 선택적 Idempotency-Key 지원에는 요청 key/hash/응답/status/만료를 저장할 전용 테이블 또는 동등한 내구 저장소가 필요. 로그에만 남겨 재시도를 구현하지 않는다.
+- 선택적 Idempotency-Key 중 next-day는 `0003_demo_day_requests`의 전용 테이블로 구현했다. 경로/메서드는 테이블 용도로 고정하고 완료된 200 data만 저장한다. 자동 만료는 하지 않는다. 다른 도메인의 요청/status/만료 지원은 별도 구현이 필요하다.
 
 API enum과 DB enum 변환은 [enums.md](enums.md). 필드가 단순히 이름만 다른 경우 DB를 FE 이름으로 바꾸지 않고 응답 조립에서 변환한다.

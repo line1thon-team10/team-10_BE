@@ -14,6 +14,7 @@ class User:
     last_assessed_date: date | None
     created_at: datetime
     updated_at: datetime
+    demo_seed: str | None = None
 
     @classmethod
     def anonymous(cls, *, now: datetime) -> "User":

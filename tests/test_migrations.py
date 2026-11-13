@@ -8,6 +8,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import inspect, text
 
@@ -40,8 +41,8 @@ def test_fresh_upgrade_matches_schema_and_second_upgrade_preserves_data(migratio
     conn = migration_connection
     config = migration_config(conn)
     command.upgrade(config, "head")
-    assert MigrationContext.configure(conn).get_current_heads() == ("0001_baseline",)
-    assert set(inspect(conn).get_table_names()) == set(metadata.tables) | {"alembic_version"}
+    assert MigrationContext.configure(conn).get_current_heads() == tuple(ScriptDirectory.from_config(config).get_heads())
+    assert set(inspect(conn).get_table_names()) == set(current_metadata.tables) | {"alembic_version"}
     assert_no_schema_diff(conn, current_metadata)
     user_id = seed_user(conn)
     command.upgrade(config, "head")
@@ -51,11 +52,11 @@ def test_fresh_upgrade_matches_schema_and_second_upgrade_preserves_data(migratio
 def test_empty_baseline_can_downgrade_and_reupgrade(migration_connection):
     conn = migration_connection
     config = migration_config(conn)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0001_baseline")
     command.downgrade(config, "base")
     assert set(inspect(conn).get_table_names()) <= {"alembic_version"}
     conn.commit()
-    command.upgrade(config, "head")
+    command.upgrade(config, "0001_baseline")
     assert_no_schema_diff(conn, metadata)
 
 
@@ -90,4 +91,4 @@ def test_postgres_sql_rendering_does_not_remove_sqlite_cycle_foreign_keys(migrat
     assert "ALTER TABLE" in output.getvalue()
     conn = migration_connection
     command.upgrade(migration_config(conn), "head")
-    assert_no_schema_diff(conn, metadata)
+    assert_no_schema_diff(conn, current_metadata)
