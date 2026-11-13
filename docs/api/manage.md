@@ -4,9 +4,9 @@
 
 - 미리보기는 후보만 저장. 적용은 previewId와 서버 revision 검증 후 후보 전체를 한 트랜잭션으로 반영. 클라이언트 계산 changes를 저장에 사용하지 않는다.
 - PATCH subjects/:id/preview는 examDate 또는 goal/target 중 하나 이상. target은0..100, examDate는 today 이후. 변경 없으면400 NO_CHANGE. 응답 changes의 before/after는 표시용 string, days는 {date,text}[], note는 string|null, subjectName은 string|null.
-- subject card의 examDate는 draft라면 null, dday도 null. range는 {from:integer|null,to:integer|null,pages:integer}; materials[].toc는 bool. 제거는 status=archived, archive_reason=user_removed이며 기존 학습/퀴즈 이력 삭제 금지.
+- subject card의 examDate는 draft라면 null, dday도 null. range는 {from:integer|null,to:integer|null,pages:integer}; materials[].toc는 {no:integer,title:string,from:integer,to:integer}[]이다. 제거는 status=archived, archive_reason=user_removed이며 기존 학습/퀴즈 이력 삭제 금지.
 - additions는 기존 과목/자료에 범위 추가만. 신규 과목 온보딩 모드 미지원. 1<=from<=to<=실제페이지, minutesPerDay=15..900, days는 중복없는1..7, today<=startDate<=endDate<examDate. 실제 가용시간 넘는 후보는 conflicts에 사유와 leftPages를 반환하고 적용 불가.
-- addition summary는 {pages:integer,minutes:integer,days:integer}, conflicts는 {date:string,reason:string}[], note는 string|null. placements는 입력 범위를 중복/누락 없이 배치한 조각이며 reason은 string.
+- addition summary는 {subjectName:string,materialName:string,from:integer,to:integer,pages:integer,minutesPerDay:integer,totalMinutes:integer,days:integer[],startDate:string,endDate:string}, conflicts는 충돌 수 integer, note는 string|null. placements는 입력 범위를 중복/누락 없이 배치한 조각이며 reason은 string.
 - today action은 more30/rest/postpone. postpone에만 taskId 필수. 기록된 범위는 이동하지 않는다. more30은 가용시간에30분이 없으면409 PLAN_INFEASIBLE. 적용은 action+previewId; postpone taskId는 후보에서 읽는다. 성공 {applied:true}.
 - rebuild는 모든 상태에서501 NOT_READY. 지원하지 않는 기능을 성공처럼 반환하지 않는다.
 
