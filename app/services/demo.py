@@ -1,5 +1,6 @@
 from uuid import UUID
 from datetime import timedelta
+from hashlib import sha256
 
 from sqlalchemy import Connection
 
@@ -9,6 +10,8 @@ from app.repositories.demo import DemoBusyError, DemoRepository
 from app.seed.demo_data import SEEDS
 from app.seed.loader import load_seed
 from app.services.planner import Planner
+
+NEXT_DAY_HASH = sha256(b"POST /api/demo/next-day\n{}").hexdigest()
 
 
 class DemoService:
@@ -44,8 +47,14 @@ class DemoService:
             raise ApiError("SERVER_ERROR", "데모를 준비하지 못했어요. 잠시 후 다시 시도해 주세요", 500) from error
         return self.state()
 
-    def next_day(self) -> dict:
+    def next_day(self, key: UUID | None = None) -> dict:
         user = self._lock_user()
+        if key is not None:
+            saved = self.repo.completed_request(self.user_id, key)
+            if saved is not None:
+                if saved["request_hash"] != NEXT_DAY_HASH:
+                    raise ApiError("IDEMPOTENCY_CONFLICT", "다른 요청에 사용한 재시도 키예요", 409)
+                return saved["response"]
         if not self.repo.has_plan(self.user_id):
             raise ApiError("NO_PLAN", "계획을 먼저 만들어 주세요", 400)
         if user.demo_date is None:
@@ -61,4 +70,7 @@ class DemoService:
                 raise ApiError("SESSION_RUNNING", "집중 모드를 먼저 끝내 주세요", 409) from error
             raise
         self.repo.archive_finished(self.user_id, tomorrow)
-        return self.state(judgment)
+        response = self.state(judgment)
+        if key is not None:
+            self.repo.save_request(self.user_id, key, NEXT_DAY_HASH, response)
+        return response

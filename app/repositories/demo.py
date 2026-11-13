@@ -5,7 +5,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.core.clock import today_for
 from app.core.clock import now_utc
-from app.db.schema import plans, subjects, users
+from app.db.schema import demo_day_requests, plans, subjects, users
 from app.repositories.users import UserRepository
 
 
@@ -54,3 +54,13 @@ class DemoRepository:
         self.connection.execute(update(subjects).where(
             subjects.c.user_id == str(user_id), subjects.c.status == "active", subjects.c.exam_date < today
         ).values(status="archived", archive_reason="exam_finished", archived_at=now, updated_at=now))
+
+    def completed_request(self, user_id: UUID, key: UUID):
+        return self.connection.execute(select(demo_day_requests).where(
+            demo_day_requests.c.user_id == str(user_id), demo_day_requests.c.idempotency_key == str(key)
+        )).mappings().first()
+
+    def save_request(self, user_id: UUID, key: UUID, request_hash: str, response: dict):
+        self.connection.execute(demo_day_requests.insert().values(
+            user_id=str(user_id), idempotency_key=str(key), request_hash=request_hash,
+            response=response, created_at=now_utc()))
