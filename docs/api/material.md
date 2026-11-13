@@ -105,5 +105,3 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `units[].quizless`    | bool     | 예        | 목차 직접 입력 범위               |
 | `units[].inExam`      | bool     | 예 (true) | 시험 범위                         |
 | `units[].evidence`    | array    | 예 ([])   | 나눈 근거 문장 (서버가 만드는 값) |
-
-
