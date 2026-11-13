@@ -75,3 +75,11 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | GET | `/api/tutor/backup` | [tutor.md](tutor.md) | 구현 대상 |
 | GET | `/api/units` | [material.md](material.md) | 구현 대상 |
 | PUT | `/api/units` | [material.md](material.md) | 구현 대상 |
+
+## FE에 없는 원문 요구 계약
+
+| Method | Path | 계약 | 근거 |
+|---|---|---|---|
+| PUT | `/api/quiz/:quizId/answers/:questionId` | [quiz.md](quiz.md) | 와이어 S8·S8-3 문항별 저장 제안 |
+
+FE71개 경로와 위 추가안1개를 분리한다. 이것만으로 원문 요구 전체를 충족한다는 뜻은 아니며 source-audit.md의 미해결 API 항목을 함께 확인한다.

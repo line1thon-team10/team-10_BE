@@ -36,6 +36,9 @@ for file in (args.fe / 'src/mocks/handlers').glob('*.js'):
         path = endpoints[expression[3:]] if expression.startswith('EP.') else re.sub(
             r'\$\{EP\.(\w+)\}', lambda m: endpoints[m[1]], expression[1:-1])
         expected.add((method.upper(), path))
-assert expected == actual, {'missing': sorted(expected-actual), 'extra': sorted(actual-expected)}
-print(f'PASS: {len(actual)} FE operations, unique registry, contract files and Markdown links')
+frontend = {(r['method'],r['path']) for r in rows if not r.get('origin')}
+proposed = actual - frontend
+assert expected == frontend, {'missing': sorted(expected-frontend), 'extra': sorted(frontend-expected)}
+assert all(r.get('origin') == 'wireframe-S8' for r in rows if r.get('origin')), 'Unreviewed source classification'
+print(f'PASS: {len(frontend)} FE operations + {len(proposed)} source-derived proposals, unique registry, contract files and Markdown links')
 print('Runtime behavior and field-schema conformance are NOT verified by this check.')

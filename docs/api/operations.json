@@ -228,6 +228,13 @@
     "optional": false
   },
   {
+    "method": "PUT",
+    "path": "/api/quiz/:quizId/answers/:questionId",
+    "contract": "quiz.md",
+    "optional": false,
+    "origin": "wireframe-S8"
+  },
+  {
     "method": "GET",
     "path": "/api/quiz/:subjectId",
     "contract": "quiz.md",
