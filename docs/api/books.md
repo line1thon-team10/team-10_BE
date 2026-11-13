@@ -9,6 +9,7 @@
 - 단원 점수: 확실 정답 1, 애매 정답 0.5, 오답 0; 난이도 low/mid/high 가중치 1/1.5/2. 전체 가중 정답률 A, 최근 최대20건 B에 대해 100*(alpha*A+(1-alpha)*B). 최근 건수 <10이면 alpha=.5, <20이면 .4, 그 외 .3. 최대99.
 - 80미만 경험 후 회복 모드. 회복 모드에서는 같은 날짜 확정 풀이를 묶어 전일 점수 대비 상승을 최대5(해당 날짜 해당 범위 전체 재학습과 문제 뽑기 풀이 근거가 모두 있으면15)로 제한, 하락은 그대로. 날짜/answered_at/attempt ID 순으로 계산하고 HALF_UP 정수 반올림. risk<50, shaky<80, stable>=80.
 - 부분/전체 학습과 회독은 별개다. 회독은 ERD learning_passes의 유효 근거로 판정하며 단순 기록 호출 횟수로 증가시키지 않는다. 제목/태스크 예상시간 편집은 회독을 늘리지 않는다.
+- round는 `invalidated_at=null`인 회독 행의 개수(0 이상 정수)다. `pass_number`는 삭제하지 않는 이력 순번이므로 최댓값으로 세지 않는다. 유효 근거가 없으면0이며 FE 초안의 기본값1을 실제 완료 근거로 사용하지 않는다.
 
 - **4-2/LV-03, 원문 pp.10,18:** 1회독 완료 후80점 미만이면 틀린 개념의 페이지만 그 과목 다음 공부일에 보충 태스크로 추가한다. 보충은 진도율 제외, 삭제 금지, 완료 시2회독 자격. 회복 중 stable 승격은 보충 완료와 서로 다른2일 이상의 결과를 모두 요구한다.
 - 하루 등급 상승은 risk→shaky 또는 shaky→stable 한 단계만 허용한다. risk에서 바로 stable이 되는 계산은 표시 점수를79로 제한한다. 회복 상한과 등급 상한 중 더 낮은 것을 적용한다.
@@ -28,7 +29,7 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `subjects[].units[].no` · `title` · `from` · `to` | –      | 아니요    |                                              |
 | `subjects[].units[].grade`                        | string | 예        | `stable` · `shaky` · `risk` · null (퀴즈 전) |
 | `subjects[].units[].score`                        | number | 예        | 0~99                                        |
-| `subjects[].units[].round`                        | number | 예 (1)    | 회독                                         |
+| `subjects[].units[].round`                        | integer | 아니요    | 유효 회독 수, 없으면0                         |
 | `subjects[].units[].note`                         | string | 예        | 단원 메모                                    |
 | `subjects[].units[].blocks[].state`               | string | 아니요    | 블록 상태                                    |
 | `subjects[].units[].blocks[].supplement`          | bool   | 예        | 보충 학습                                    |

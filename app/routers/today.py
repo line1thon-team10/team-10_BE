@@ -11,12 +11,25 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
+from app.repositories.locking import UserBusyError, lock_user
 from app.services.planner import Planner
+from app.services.learning_evidence import revalidate_record_passes
 from app.services.study import OPEN_RATE, StudyData, Task, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
 
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
+
+
+def _lock_record_user(conn: Connection, user: dict) -> dict:
+    """demo/focus와 같은 잠금에서 기록과 파생 근거를 원자적으로 바꾼다."""
+    try:
+        fresh = lock_user(conn, uuid.UUID(user["id"]))
+    except UserBusyError as exc:
+        raise ApiError("REQUEST_IN_PROGRESS", "다른 요청이 처리 중이에요. 잠시 후 다시 시도해 주세요", 409) from exc
+    if fresh is None:
+        raise ApiError("UNKNOWN_SESSION", "사용자를 찾지 못했어요", 401)
+    return fresh.to_mapping()
 
 
 @router.get("/today")
@@ -94,7 +107,8 @@ def _ranges_until(task: Task, to_page: int) -> list[dict]:
     return out
 
 
-def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], study_date, session_id=None) -> None:
+def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], study_date, session_id=None,
+                 *, user_id: str) -> None:
     now = now_utc()
     if task.record:
         rec_id = task.record["id"]
@@ -119,6 +133,7 @@ def _save_record(conn: Connection, task: Task, result: str, ranges: list[dict], 
     if status == "completed":
         conn.execute(update(t.study_blocks).where(t.study_blocks.c.id == task.row["block_id"],
                                                   t.study_blocks.c.stacked_at.is_(None)).values(stacked_at=now))
+    revalidate_record_passes(conn, user_id, rec_id, now)
 
 
 def _check_session(conn: Connection, task: Task, session_id: str | None) -> str | None:
@@ -130,13 +145,14 @@ def _check_session(conn: Connection, task: Task, session_id: str | None) -> str 
     if s["status"] not in ("ended", "auto_stopped"):
         raise ApiError("SESSION_RUNNING", "집중 모드를 먼저 끝내 주세요", 409)
     used = conn.execute(select(t.study_records.c.id).where(t.study_records.c.session_id == session_id)).first()
-    if used:
+    if used and (task.record is None or used[0] != task.record["id"]):
         raise ApiError("SESSION_USED", "이미 기록에 붙은 집중 시간이에요", 409)
     return session_id
 
 
 @router.post("/records")
 def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    user = _lock_record_user(conn, user)
     today = today_for(user)
     data = StudyData(conn, user["id"])
     task = _find_task(data, body.taskId)
@@ -151,7 +167,7 @@ def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connec
         ranges = []
     session_id = _check_session(conn, task, body.sessionId)
     before = data.progress(today)
-    _save_record(conn, task, body.result, ranges, today, session_id)
+    _save_record(conn, task, body.result, ranges, today, session_id, user_id=user["id"])
 
     after_data = StudyData(conn, user["id"])
     after = after_data.progress(today)
@@ -196,6 +212,7 @@ class FixIn(BaseModel):
 @router.patch("/tasks/{task_id}/record")
 def fix_record(task_id: str, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """기록한 뒤 끝낸 페이지 고치기 (HM-03). 이월·진행률은 다시 계산돼요"""
+    user = _lock_record_user(conn, user)
     today = today_for(user)
     data = StudyData(conn, user["id"])
     task = _find_task(data, task_id)
@@ -204,7 +221,7 @@ def fix_record(task_id: str, body: FixIn, user: dict = Depends(current_user), co
     if task.first is None or not (task.first <= body.toPage <= task.last):
         raise ApiError("BAD_PAGE", f"p.{task.first}부터 p.{task.last} 사이로 적어 주세요")
     result = "done" if body.toPage >= task.last else "partial"
-    _save_record(conn, task, result, _ranges_until(task, body.toPage), task.record["study_date"])
+    _save_record(conn, task, result, _ranges_until(task, body.toPage), task.record["study_date"], user_id=user["id"])
     after = StudyData(conn, user["id"])
     fixed = _find_task(after, task_id)
     return ok({"taskId": task_id, "status": after.task_view(fixed)["status"], "doneTo": fixed.done_to,

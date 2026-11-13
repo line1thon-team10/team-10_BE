@@ -19,7 +19,7 @@ def get_books(user: dict = Depends(current_user), conn: Connection = Depends(get
     today = today_for(user)
     data = StudyData(conn, user["id"])
     rounds = dict(conn.execute(
-        select(t.learning_passes.c.unit_id, func.max(t.learning_passes.c.pass_number))
+        select(t.learning_passes.c.unit_id, func.count(t.learning_passes.c.id))
         .where(t.learning_passes.c.unit_id.in_(list(data.units)), t.learning_passes.c.invalidated_at.is_(None))
         .group_by(t.learning_passes.c.unit_id)).all())
 
@@ -40,7 +40,7 @@ def get_books(user: dict = Depends(current_user), conn: Connection = Depends(get
         for u in [u for u in data.units.values() if u["subject_id"] == s["id"]]:
             units.append({
                 "no": unit_no(u["code"]), "title": u["title"], "from": u["start_page"], "to": u["end_page"],
-                "grade": u["mastery_level"], "score": u["mastery_score"], "round": rounds.get(u["id"], 1),
+                "grade": u["mastery_level"], "score": u["mastery_score"], "round": rounds.get(u["id"], 0),
                 "note": None, "blocks": blocks_by_unit[u["id"]],
             })
         all_blocks = [b for u in units for b in u["blocks"]]
