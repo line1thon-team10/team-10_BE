@@ -6,7 +6,7 @@
 - Note.id는 원본 question ID를 나타내는 불투명 ID. history는 {date:string,result:sureWrong|unsureWrong|unsureRight|sureRight,score:number|null}[]이며 날짜 오름차순. score는 서술형만, streak는 0..2, canRetry는 서버 오늘>=next_review_date.
 - 오답 또는 애매 정답은 active/review_step=0, 다음 날 복습. 이후 확실 정답이면 1단계와 3일 후 복습, 그때 확실 정답이면 resolved. 예정일 전 반복 정답으로 단계를 건너뛰지 않는다. canRetry=false이면 409 REVIEW_NOT_DUE.
 - retry는 choice/text/confidence 규칙과 채점 실패 답안 보존 정책을 quiz와 공유한다. question+복습 예정일 단위 중복 재전송은 같은 결과 반환, 다음 복습 건으로 처리하지 않는다.
-- custom-quiz는 소유 과목의 현재 단원 번호만, 중복 번호 금지. count는 1..50, difficulty는 low/mid/high, weight는 FE enum 사전의 허용값. 완료·출제 가능한 범위만 선택. 부족하면 실제 count와 note 반환, 0개면 NO_QUESTIONS. 정답은 미포함.
+- custom-quiz는 소유 과목의 현재 단원 번호만, 중복 번호 금지. count는 1..50, difficulty는 low/mid/high, weight는 even/weak. even은 단원별 균등 배정, weak는 낮은 숙달도 단원 우선(동점 단원 번호), 단원 내 미풀이 문항 우선. 완료·출제 가능한 범위만 선택. 부족하면 실제 count와 note 반환, 0개면 NO_QUESTIONS. 정답은 미포함.
 - relearn은 과목/단원 전체 현재 범위를 재학습했다는 명시적 완료 기록이다. 같은 날짜·단원 중복은 409 ALREADY. round는 저장된 유효 근거 재판정값, relearnedOn은 서버 today. 문항 점수를 임의 상승시키지 않는다.
 
 ## 요청·응답 필드
