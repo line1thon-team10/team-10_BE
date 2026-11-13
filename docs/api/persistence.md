@@ -23,13 +23,15 @@
 - subjects(user_id,code), plans(user_id), notices(user_id,dedupe_key), quiz_attempts(quiz_item_id), 기록의 task/session 연결 중복 제한.
 - 현재 units(material_id,sort_order), 현재 concepts(unit_id,code)와(unit_id,sort_order): retired_at IS NULL 부분 유일.
 - study_tasks(plan_id,block_id): status IN ('planned','partial') 부분 유일. 과거 carried_over와 현재 배치는 공존 가능.
-- 사용자당 진행 집중 세션 하나: status IN ('running','paused') 부분 유일. 열린 session_segment도 세션당 하나.
+- 사용자당 진행 집중 세션 하나: status IN ('running','paused') 부분 유일. 열린 session_segment도 세션당 하나. `0004_focus_contract`의 두 부분 인덱스로 구현했다.
 - 문항별 채점 작업은 quiz_item+답안 revision당 하나. 오래된 revision 결과는 반영하지 않는다. 최종 집계 작업은 quiz_session당 현재 대표 작업 하나. 결과 적용은 quiz_session 잠금+attempt/mastery 반영 표식으로 중복 금지.
 - calendar_event_exceptions(event_id,occurrence_date) 유일. 범위 시작<=끝, 시각 시작<끝, 점수0..100, 비음수 시간/개수.
 
 원문 erd-constraints.sql이 없어 위 내용은 이번 명세의 제약 요구사항이다. 배포 시 마이그레이션으로 작성하고 SQLite뿐 아니라 PostgreSQL에서 검증해야 한다.
 
 ## 기존 ERD에 필요한 보완
+
+- 집중 시작 당시 `expected_seconds`와 `quote`는 `0004_focus_contract`로 저장한다. 기존 데이터 처리와 downgrade는 [migration 문서](../db-migrations.md)를 따른다.
 
 - demo seed 저장은 `0002_demo_seed`의 nullable `users.demo_seed`로 구현했다. 과거의 불명확한 선택 이력은 null로 유지한다.
 - previewId는 plan_proposals.id 사용. 생성/만료/적용 상태·원 응답을 plan_change_requests/changes에 저장할 스키마를 정한다. 시간 기반30분 만료는 사용하지 않는다. 후보 기준 날짜와 계획·자료·일정·기록 버전 변경을 검증한다.

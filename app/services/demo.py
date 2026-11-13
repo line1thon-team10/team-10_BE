@@ -10,6 +10,7 @@ from app.repositories.demo import DemoBusyError, DemoRepository
 from app.seed.demo_data import SEEDS
 from app.seed.loader import load_seed
 from app.services.planner import Planner
+from app.services.focus import FocusService
 
 NEXT_DAY_HASH = sha256(b"POST /api/demo/next-day\n{}").hexdigest()
 
@@ -62,6 +63,8 @@ class DemoService:
         last = self.repo.last_exam(self.user_id)
         if last is None or user.demo_date >= last:
             raise ApiError("DEMO_END", "마지막 시험일까지만 이동할 수 있어요", 400)
+        # 조회가 없었더라도 실제 자동 종료 기한부터 정산한다. 같은 사용자 잠금/트랜잭션이다.
+        FocusService(self.connection, user.to_mapping(), user.demo_date).active()
         tomorrow = user.demo_date + timedelta(days=1)
         try:
             judgment = Planner(self.connection, user.to_mapping()).advance_day()

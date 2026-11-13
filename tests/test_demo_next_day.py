@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import func, select, update
 
-from app.db.schema import study_records, study_sessions, study_tasks, subjects, users
+from app.db.schema import study_records, study_sessions, study_session_segments, study_tasks, subjects, users
 from app.repositories.demo import DemoRepository
 from app.services.planner import Planner
 
@@ -105,8 +105,12 @@ def test_active_focus_blocks_day_closure(api_client,settled_demo_user,domain_con
     from app.core.clock import now_utc
     conn=domain_connection
     task=conn.scalar(select(study_tasks.c.id))
-    conn.execute(study_sessions.insert().values(id=str(uuid4()),user_id=settled_demo_user,task_id=task,status=status,
-                 started_at=now_utc(),created_at=now_utc(),study_date=date(2026,11,9)))
+    sid = str(uuid4())
+    at = now_utc()
+    conn.execute(study_sessions.insert().values(id=sid,user_id=settled_demo_user,task_id=task,status=status,
+                 started_at=at,created_at=at,study_date=date(2026,11,9)))
+    conn.execute(study_session_segments.insert().values(id=str(uuid4()),session_id=sid,sort_order=1,
+                 started_at=at,ended_at=at if status=="paused" else None))
     conn.commit()
     response=advance(api_client,settled_demo_user)
     assert response.status_code==409 and response.json()["error"]["code"]=="SESSION_RUNNING"

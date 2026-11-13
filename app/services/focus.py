@@ -6,30 +6,21 @@
   알림이 뜬 시점에서 자동 종료하고, 그 기록은 속도 보정에서 빼요
 - 화면 상태 이름: active | paused | ended (DB는 running | paused | ended | auto_stopped)
 """
-import hashlib
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, func, select, update
 
 from app.core.responses import ApiError
 from app.db import schema as t
-from app.services.study import StudyData
+from app.repositories.focus import FocusRepository
+from app.domain.focus import quote_for
+from app.repositories.locking import UserBusyError, lock_user
 
 CHECK_WAIT = timedelta(minutes=10)
 FRONT_STATUS = {"running": "active", "paused": "paused", "ended": "ended", "auto_stopped": "ended"}
-QUOTES = [  # 고정 문구 10개 (HM-10, 프론트 seed.js focusQuotes와 같음)
-    "벼락치기 말고, 피뢰침.",
-    "지금은 이 범위만 보면 돼요.",
-    "오늘 한 페이지가 시험 날의 한 문제예요.",
-    "다 못 해도 괜찮아요. 한 만큼 쌓여요.",
-    "밀려도 무너지지 않아요. 다시 맞추면 돼요.",
-    "천천히 읽은 페이지가 오래 남아요.",
-    "오늘의 블록 하나, 지금 쌓는 중이에요.",
-    "어려운 곳에서 멈춘 것도 공부예요.",
-    "한 번 더 본 개념은 덜 흔들려요.",
-    "시험은 한 번, 준비는 매일 조금씩.",
-]
+
 
 
 def now() -> datetime:  # 테스트에서 바꿔 끼울 수 있게 함수로 둬요
@@ -47,9 +38,45 @@ class FocusService:
         self.conn = conn
         self.user = user
         self.today = today
+        self.at = None
+
+    def _prepare(self):
+        if self.at is not None:
+            return
+        try:
+            fresh = lock_user(self.conn, uuid.UUID(self.user["id"]))
+        except UserBusyError as exc:
+            raise ApiError("REQUEST_IN_PROGRESS", "다른 요청이 처리 중이에요. 잠시 후 다시 시도해 주세요", 409) from exc
+        if fresh is None:
+            raise ApiError("UNKNOWN_SESSION", "사용자를 찾지 못했어요", 401)
+        self.user = fresh.to_mapping()
+        self.at = now()
+        self.today = self.user.get("demo_date") or self.at.astimezone(ZoneInfo(self.user["timezone"])).date()
+
+    def _active_row(self):
+        row = self.conn.execute(select(t.study_sessions).where(
+            t.study_sessions.c.user_id == self.user["id"],
+            t.study_sessions.c.status.in_(["running", "paused"]))).mappings().first()
+        return self._check(dict(row)) if row else None
+
+    def _snapshot(self, s):
+        values = {}
+        if s.get("expected_seconds") is None:
+            minutes = self.conn.scalar(select(t.study_tasks.c.estimated_minutes).where(t.study_tasks.c.id == s["task_id"]))
+            values["expected_seconds"] = max(1, int(minutes or 30)) * 60
+        if s.get("quote") is None:
+            values["quote"] = quote_for(s["id"])
+        if values:
+            self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == s["id"]).values(**values))
+            s = {**s, **values}
+        return s
 
     # ---------- 읽기 ----------
     def _session(self, session_id: str) -> dict:
+        try:
+            session_id = str(uuid.UUID(str(session_id)))
+        except ValueError as exc:
+            raise ApiError("INVALID_INPUT", "올바른 세션 UUID가 필요해요", 422) from exc
         s = self.conn.execute(select(t.study_sessions).where(
             t.study_sessions.c.id == session_id, t.study_sessions.c.user_id == self.user["id"])).mappings().first()
         if not s:
@@ -66,32 +93,37 @@ class FocusService:
         for g in segs:
             start, end = _aware(g["started_at"]), _aware(g["ended_at"]) or at
             if start < at:
-                total += (min(end, at) - start).total_seconds()
+                total += max(0, (min(end, at) - start).total_seconds())
         return total
 
-    def _expected_seconds(self, s: dict) -> int:
-        minutes = self.conn.execute(select(t.study_tasks.c.estimated_minutes).where(
-            t.study_tasks.c.id == s["task_id"])).scalar() or 30
-        return minutes * 60
-
-    # ---------- 2배 확인·자동 종료 (HM-09) ----------
+    # ---------- 2배 확인·자동 종료 ----------
     def _check(self, s: dict) -> dict:
+        s = self._snapshot(s)
+        segs = self._segments(s["id"])
+        # 서버 시계가 되돌아가도 역전 구간을 기록하지 않는다.
+        boundaries = [_aware(s["started_at"])] + [_aware(g["ended_at"] or g["started_at"]) for g in segs]
+        self.at = max(self.at, *boundaries)
         if s["status"] != "running":
             return s
-        segs = self._segments(s["id"])
-        current = now()
-        limit = s["last_confirmed_elapsed_seconds"] + 2 * self._expected_seconds(s)
+        if sum(g["ended_at"] is None for g in segs) != 1:
+            raise ApiError("SERVER_ERROR", "집중 측정 구간을 확인하지 못했어요", 500)
+        limit = s["last_confirmed_elapsed_seconds"] + 2 * s["expected_seconds"]
         prompted = _aware(s["check_prompted_at"])
         if prompted is None:
-            if self._elapsed(segs, current) < limit:
+            if self._elapsed(segs, self.at) < limit:
                 return s
-            # 순공부 시간이 기준에 닿은 실제 시각 = 열린 구간 시작 + (기준 − 닫힌 구간 합)
-            closed = sum((_aware(g["ended_at"]) - _aware(g["started_at"])).total_seconds() for g in segs if g["ended_at"])
-            opened = next(g for g in segs if g["ended_at"] is None)
-            prompted = _aware(opened["started_at"]) + timedelta(seconds=limit - closed)
-            self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == s["id"]).values(
-                check_prompted_at=prompted))
-        if current >= prompted + CHECK_WAIT:
+            remaining = limit
+            for g in segs:
+                start = _aware(g["started_at"])
+                end = _aware(g["ended_at"]) or self.at
+                duration = max(0, (end - start).total_seconds())
+                if remaining <= duration:
+                    prompted = start + timedelta(seconds=remaining)
+                    break
+                remaining -= duration
+            self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == s["id"])
+                              .values(check_prompted_at=prompted))
+        if self.at >= prompted + CHECK_WAIT:
             self._close(s["id"], prompted, status="auto_stopped", excluded=True)
         return self._session(s["id"])
 
@@ -99,7 +131,7 @@ class FocusService:
         self.conn.execute(update(t.study_session_segments).where(
             t.study_session_segments.c.session_id == session_id, t.study_session_segments.c.ended_at.is_(None))
             .values(ended_at=at))
-        measured = round(self._elapsed(self._segments(session_id), at))
+        measured = int(self._elapsed(self._segments(session_id), at))
         values = dict(status=status, ended_at=at, measured_seconds=measured, check_prompted_at=None, paused_at=None)
         if excluded:
             values["excluded_from_calibration"] = True
@@ -107,118 +139,146 @@ class FocusService:
 
     # ---------- 화면 모양 ----------
     def view(self, s: dict) -> dict:
-        s = self._check(s)
-        data = StudyData(self.conn, self.user["id"])
-        task = next((x for x in data.tasks if x.id == s["task_id"]), None)
-        subject = data.subject_by_id.get(task.row["subject_id"]) if task else None
+        self._prepare()
+        self._active_row()  # 다른 과거 세션 조회에서도 오늘 합계의 자동 종료를 먼저 정산한다.
+        s = self._check(self._session(s["id"]))
+        repo = FocusRepository(self.conn, self.user["id"])
+        task = repo.task(s["task_id"])
+        if task is None:
+            raise ApiError("SESSION_NOT_FOUND", "집중 기록을 찾지 못했어요", 404)
+        raw_ranges = repo.ranges(task)
+        records = repo.record_ranges(task["id"])
+        ranges, pages_by_material = [], {}
+        for r in raw_ranges:
+            if r["start_page"] is None or r["end_page"] is None:
+                continue
+            done = [min(rec["end_page"], r["end_page"]) for rec in records
+                    if rec["unit_id"] == r["unit_id"] and rec["end_page"] is not None
+                    and rec["start_page"] <= r["end_page"] and rec["end_page"] >= r["start_page"]]
+            ranges.append({"id":r["id"], "materialId":r["material_id"], "unitId":r["unit_id"],
+                           "conceptId":r["concept_id"], "from":r["start_page"], "to":r["end_page"],
+                           "doneTo":max(done) if done else None})
+            pages_by_material.setdefault(r["material_id"],set()).update(range(r["start_page"],r["end_page"]+1))
+        first = ranges[0] if len(ranges)==1 else None
+        material = {"id":ranges[0]["materialId"], "page":ranges[0]["from"]} if ranges else None
         segs = self._segments(s["id"])
-        current = now()
-        if s["status"] in ("ended", "auto_stopped"):
-            active = s["measured_seconds"] or 0
-            end_at = _aware(s["ended_at"])
-        else:
-            active = self._elapsed(segs, current)
-            end_at = current
-        wall = (end_at - _aware(s["started_at"])).total_seconds()
-        material_id = None
-        if task and task.ranges:
-            material_id = data.units[task.ranges[0]["unit_id"]]["material_id"]
-        recorded = self.conn.execute(select(t.study_records.c.id).where(
-            t.study_records.c.session_id == s["id"])).first() is not None
+        ended = s["status"] in ("ended", "auto_stopped")
+        active = s["measured_seconds"] or 0 if ended else self._elapsed(segs,self.at)
+        end_at = _aware(s["ended_at"]) if ended else self.at
+        wall = max(0,(end_at - _aware(s["started_at"])).total_seconds())
+        recorded = self.conn.execute(select(t.study_records.c.id).where(t.study_records.c.session_id==s["id"])).first() is not None
+        today_minutes, subject_minutes = self._totals(repo, task["subject_id"])
         return {
-            "id": s["id"], "taskId": s["task_id"],
-            "subjectId": subject["id"] if subject else None, "subjectName": subject["name"] if subject else None,
-            "task": {"title": task.row["title"], "from": task.first, "to": task.last, "pages": task.pages,
-                     "minutes": task.row["estimated_minutes"]} if task else None,
-            "status": FRONT_STATUS[s["status"]],
-            "quote": QUOTES[int(hashlib.md5(s["id"].encode()).hexdigest(), 16) % len(QUOTES)],
-            "material": {"id": material_id, "page": task.first if task else 1},
-            "minutes": int(active // 60), "pausedMinutes": int(max(0, wall - active) // 60),
-            "checkIn": s["status"] == "running" and s["check_prompted_at"] is not None,
-            "autoStopped": s["status"] == "auto_stopped",
-            "excludeFromPace": bool(s["excluded_from_calibration"]),
-            "recorded": recorded,
-            "todayMinutes": self._sum_minutes(t.study_sessions.c.study_date == self.today, s, active),
-            "subjectMinutes": self._sum_minutes(
-                t.study_sessions.c.task_id.in_(select(t.study_tasks.c.id).where(
-                    t.study_tasks.c.subject_id == (subject["id"] if subject else None))), s, active),
+            "id":s["id"], "taskId":s["task_id"], "subjectId":task["subject_id"], "subjectName":task["subject_name"],
+            "task":{"title":task["title"], "from":first["from"] if first else None, "to":first["to"] if first else None,
+                    "pages":sum(len(pages) for pages in pages_by_material.values()), "ranges":ranges,
+                    "minutes":s["expected_seconds"] / 60},
+            "status":FRONT_STATUS[s["status"]], "quote":s["quote"], "material":material,
+            "minutes":int(active // 60), "pausedMinutes":int(max(0,wall-active)//60),
+            "checkIn":s["status"]=="running" and s["check_prompted_at"] is not None,
+            "autoStopped":s["status"]=="auto_stopped", "excludeFromPace":bool(s["excluded_from_calibration"]),
+            "recorded":recorded, "todayMinutes":today_minutes, "subjectMinutes":subject_minutes,
         }
 
-    def _sum_minutes(self, cond, s: dict, active_now: float) -> int:
-        """오늘 총·과목 누적 = 끝난 측정 세션의 합 (+ 지금 재고 있는 세션)"""
-        done = self.conn.execute(select(func.coalesce(func.sum(t.study_sessions.c.measured_seconds), 0)).where(
-            t.study_sessions.c.user_id == self.user["id"], cond,
-            t.study_sessions.c.status.in_(["ended", "auto_stopped"]))).scalar()
-        extra = active_now if s["status"] in ("running", "paused") else 0
-        return int((done + extra) // 60)
+    def _totals(self, repo, subject_id):
+        zone = ZoneInfo(self.user.get("timezone") or "Asia/Seoul")
+        start_day = datetime.combine(self.today,time.min,zone).astimezone(timezone.utc)
+        end_day = datetime.combine(self.today+timedelta(days=1),time.min,zone).astimezone(timezone.utc)
+        today_seconds, subject_seconds = 0.0, 0.0
+        for segment in repo.all_segments():
+            start = _aware(segment["started_at"])
+            end = min(_aware(segment["ended_at"]) or self.at,self.at)
+            seconds = max(0,(end-start).total_seconds())
+            if segment["subject_id"]==subject_id:
+                subject_seconds += seconds
+            if self.user.get("demo_date") is not None:
+                if segment["study_date"] == self.today:
+                    today_seconds += seconds
+            else:
+                today_seconds += max(0,(min(end,end_day)-max(start,start_day)).total_seconds())
+        return int(today_seconds//60), int(subject_seconds//60)
 
     # ---------- 동작 ----------
+    def get(self, session_id):
+        self._prepare()
+        return self.view(self._session(session_id))
+
     def active(self) -> dict | None:
-        s = self.conn.execute(select(t.study_sessions).where(
-            t.study_sessions.c.user_id == self.user["id"],
-            t.study_sessions.c.status.in_(["running", "paused"]))).mappings().first()
-        if not s:
-            return None
-        v = self.view(dict(s))
-        return v if v["status"] != "ended" else None
+        self._prepare()
+        s = self._active_row()
+        return self.view(s) if s and s["status"] in ("running", "paused") else None
 
     def start(self, task_id: str) -> dict:
-        data = StudyData(self.conn, self.user["id"])
-        task = next((x for x in data.tasks if x.id == task_id), None)
+        self._prepare()
+        try:
+            task_id = str(uuid.UUID(str(task_id)))
+        except ValueError as exc:
+            raise ApiError("INVALID_INPUT", "올바른 태스크 UUID가 필요해요", 422) from exc
+        running = self._active_row()
+        if running and running["status"] in ("running", "paused") and running["task_id"] == task_id:
+            return self.view(running)
+        task = self.conn.execute(select(t.study_tasks).join(t.subjects, t.study_tasks.c.subject_id == t.subjects.c.id)
+            .join(t.plans, t.study_tasks.c.plan_id == t.plans.c.id).where(
+                t.study_tasks.c.id == task_id, t.subjects.c.user_id == self.user["id"],
+                t.plans.c.user_id == self.user["id"], t.plans.c.approved_at.is_not(None),
+                t.subjects.c.status == "active", t.study_tasks.c.scheduled_date == self.today)).mappings().first()
         if not task:
-            raise ApiError("TASK_NOT_FOUND", "태스크를 찾지 못했어요", 404)
-        if task.row["status"] not in ("planned", "partial"):
-            raise ApiError("TASK_DONE", "이미 끝낸 태스크예요")
-        running = self.conn.execute(select(t.study_sessions).where(
-            t.study_sessions.c.user_id == self.user["id"],
-            t.study_sessions.c.status.in_(["running", "paused"]))).mappings().first()
-        if running and running["task_id"] == task_id:
-            return self.view(dict(running))  # 새로고침·다시 들어옴 → 이어서
-        if running:
+            raise ApiError("TASK_NOT_FOUND", "오늘의 활성 태스크를 찾지 못했어요", 404)
+        if task["status"] == "completed":
+            raise ApiError("ALREADY", "이미 끝낸 태스크예요", 409)
+        if task["status"] not in ("planned", "partial"):
+            raise ApiError("TASK_NOT_FOUND", "시작할 수 있는 태스크를 찾지 못했어요", 404)
+        if running and running["status"] in ("running", "paused"):
             raise ApiError("OTHER_ACTIVE", "다른 태스크 공부가 아직 진행 중이에요", 409)
-        sid, at = str(uuid.uuid4()), now()
+        sid, at = str(uuid.uuid4()), self.at
         self.conn.execute(t.study_sessions.insert().values(
             id=sid, user_id=self.user["id"], task_id=task_id, status="running", started_at=at,
+            expected_seconds=max(1, int(task["estimated_minutes"] or 30)) * 60, quote=quote_for(sid),
             last_confirmed_elapsed_seconds=0, study_date=self.today, created_at=at))
         self.conn.execute(t.study_session_segments.insert().values(
             id=str(uuid.uuid4()), session_id=sid, sort_order=1, started_at=at))
         return self.view(self._session(sid))
 
     def pause(self, session_id: str) -> dict:
+        self._prepare()
         s = self._check(self._session(session_id))
+        if s["status"] == "paused":
+            return self.view(s)
         if s["status"] != "running":
-            raise ApiError("NOT_ACTIVE", "공부 중일 때만 멈출 수 있어요")
-        at = now()
+            raise ApiError("NOT_ACTIVE", "공부 중일 때만 멈출 수 있어요", 409)
+        at = self.at
         self.conn.execute(update(t.study_session_segments).where(
             t.study_session_segments.c.session_id == session_id, t.study_session_segments.c.ended_at.is_(None))
             .values(ended_at=at))
         values = dict(status="paused", paused_at=at)
         if s["check_prompted_at"] is not None:  # 확인 대기 중 멈춤 = 아직 공부 중이라는 뜻
             values.update(check_prompted_at=None,
-                          last_confirmed_elapsed_seconds=round(self._elapsed(self._segments(session_id), at)))
+                          last_confirmed_elapsed_seconds=int(self._elapsed(self._segments(session_id), at)))
         self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == session_id).values(**values))
         return self.view(self._session(session_id))
 
     def resume(self, session_id: str) -> dict:
         """멈춘 상태면 다시 시작, 공부 중이면 '아직 공부 중이에요?'에 [계속] 응답"""
+        self._prepare()
         s = self._check(self._session(session_id))
-        at = now()
+        at = self.at
         if s["status"] == "paused":
             order = len(self._segments(session_id)) + 1
             self.conn.execute(t.study_session_segments.insert().values(
                 id=str(uuid.uuid4()), session_id=session_id, sort_order=order, started_at=at))
             self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == session_id).values(
                 status="running", paused_at=None))
-        elif s["status"] == "running":
+        elif s["status"] == "running" and s["check_prompted_at"] is not None:
             self.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id == session_id).values(
                 check_prompted_at=None,
-                last_confirmed_elapsed_seconds=round(self._elapsed(self._segments(session_id), at))))
-        else:
-            raise ApiError("ENDED", "이미 끝난 공부예요")
+                last_confirmed_elapsed_seconds=int(self._elapsed(self._segments(session_id), at))))
+        elif s["status"] != "running":
+            raise ApiError("ENDED", "이미 끝난 공부예요", 409)
         return self.view(self._session(session_id))
 
     def end(self, session_id: str) -> dict:
+        self._prepare()
         s = self._check(self._session(session_id))
         if s["status"] in ("running", "paused"):
-            self._close(session_id, now(), status="ended")
+            self._close(session_id, self.at, status="ended")
         return self.view(self._session(session_id))

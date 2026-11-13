@@ -1,0 +1,4 @@
+[
+  {"table": "study_sessions", "name": "uq_focus_active_user", "columns": ["user_id"], "where": "status IN ('running', 'paused')"},
+  {"table": "study_session_segments", "name": "uq_focus_open_segment", "columns": ["session_id"], "where": "ended_at IS NULL"}
+]

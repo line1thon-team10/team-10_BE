@@ -1,7 +1,7 @@
 # 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.
-# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 부분 유일 인덱스(erd-constraints.sql)는 아직 미반영.
+# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.
 from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,
-                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid)
+                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 
 metadata = MetaData()
@@ -290,6 +290,8 @@ study_sessions = Table(
     Column("measured_seconds", Integer, nullable=True),
     Column("excluded_from_calibration", Boolean, nullable=False, default=False),
     Column("study_date", Date, nullable=False),
+    Column("expected_seconds", Integer, nullable=True),
+    Column("quote", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_study_sessions_1", "user_id", "study_date"),
 )
@@ -608,3 +610,8 @@ ai_usage_logs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_ai_usage_logs_1", "created_at"),
 )
+
+Index("uq_focus_active_user", study_sessions.c.user_id, unique=True,
+      postgresql_where=text("status IN ('running', 'paused')"), sqlite_where=text("status IN ('running', 'paused')"))
+Index("uq_focus_open_segment", study_session_segments.c.session_id, unique=True,
+      postgresql_where=text("ended_at IS NULL"), sqlite_where=text("ended_at IS NULL"))
