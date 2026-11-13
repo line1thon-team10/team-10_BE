@@ -103,7 +103,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
     seed_day = d.SEED_DATES[seed]
     has_plan = seed != "empty"
     conn.execute(update(t.users).where(t.users.c.id == user_id).values(
-        demo_date=seed_day, last_assessed_date=seed_day,
+        demo_date=seed_day, demo_seed=seed, last_assessed_date=seed_day,
         onboarding_status="completed" if has_plan else "draft", updated_at=now))
     if not has_plan:
         return

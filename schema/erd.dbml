@@ -9,6 +9,7 @@ Table users {
   timezone varchar [not null, default: 'Asia/Seoul']
   onboarding_status varchar [not null, default: 'draft', note: 'draft / completed. 최초 계획 승인 때 completed']
   demo_date date [note: '데모 전용 가상 날짜. 일반 사용자는 null']
+  demo_seed varchar [note: '실제로 선택한 empty/day9/overdue. 기존 선택값을 알 수 없거나 일반 사용자면 null']
   last_assessed_date date [note: '자정 판정 완료일. 미접속 기간을 순서대로 처리한 뒤 갱신']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
