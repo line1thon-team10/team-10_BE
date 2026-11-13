@@ -1,0 +1,67 @@
+name: line1-2026
+x-api: &api
+  image: ${BE_IMAGE:?BE_IMAGE must be an immutable image digest}
+  env_file: ./runtime.env
+  environment:
+    DATABASE_URL: postgresql+psycopg://line1:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/line1
+    STORAGE_DIR: /app/storage
+    AI_ENGINE_PATH: /app/vendor/team-10_AI
+  volumes:
+    - storage:/app/storage
+    - ai_cache:/app/cache
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: line1
+      POSTGRES_USER: line1
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U line1 -d line1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  migrate:
+    <<: *api
+    command: [python, -m, alembic, upgrade, head]
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    <<: *api
+    restart: unless-stopped
+    ports:
+      - '${BIND_IP:?BIND_IP is required}:${API_PORT:-3047}:8000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+volumes:
+  postgres:
+  storage:
+  ai_cache:

@@ -1,0 +1,111 @@
+name: Build and deploy RPI
+on:
+  push:
+    branches: [main, feat/rpi-deployment]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: line1-rpi-deployment
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/line1thon-team10/2026-line1-be
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: team10_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d team10_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    outputs:
+      image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read pinned AI commit
+        id: ai
+        run: echo "sha=$(git rev-parse HEAD:vendor/team-10_AI)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: line1thon-team10/team-10_AI
+          ref: ${{ steps.ai.outputs.sha }}
+          path: vendor/team-10_AI
+          ssh-key: ${{ secrets.AI_SUBMODULE_SSH_KEY }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install and test
+        env:
+          TEST_POSTGRES_URL: postgresql+psycopg://postgres:test@127.0.0.1:5432/team10_test
+        run: |
+          python -m pip install -r requirements.txt -r requirements-ai.txt pytest==9.2.0 httpx==0.28.1
+          python -m pip check
+          python -m pytest -q tests
+          cp deploy/runtime.env.example deploy/runtime.env
+          BE_IMAGE="$IMAGE@sha256:$(printf 'a%.0s' {1..64})" POSTGRES_PASSWORD=test BIND_IP=127.0.0.1 docker compose -f deploy/compose.yml config --quiet
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: build
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/line1thon-team10/team-10_BE
+            org.opencontainers.image.revision=${{ github.sha }}
+            dev.line1.ai-revision=${{ steps.ai.outputs.sha }}
+      - name: Require private image visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          visibility=$(gh api /orgs/line1thon-team10/packages/container/2026-line1-be --jq .visibility)
+          test "$visibility" = private
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/rpi-deployment'
+    runs-on: [self-hosted, Linux, ARM64, line1-deploy]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Apply prebuilt image on RPI4
+        env:
+          BE_IMAGE: ${{ needs.build.outputs.image }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          key=/home/ubuntu/.ssh/line1-deploy
+          target=ubuntu@100.78.68.53
+          ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" 'mkdir -p /home/ubuntu/apps/2026-line1'
+          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes deploy/compose.yml deploy/apply.sh "$target:/home/ubuntu/apps/2026-line1/"
+          printf '%s\n' "$REGISTRY_TOKEN" | ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
+            "set -eu; export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; ln -s /home/ubuntu/.docker/cli-plugins \"\$DOCKER_CONFIG/cli-plugins\"; docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin >/dev/null; bash /home/ubuntu/apps/2026-line1/apply.sh '$BE_IMAGE'"
+      - name: Verify public endpoint
+        run: curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors https://2026-line1.leehyowon14.dev/api/health

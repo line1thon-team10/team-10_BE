@@ -9,3 +9,8 @@ node_modules/
 .pytest_cache/
 # 비공개 AI 저장소 자료는 공개 저장소에 올리지 않아요
 seed_quiz.json
+# 배포 환경과 DB 백업은 RPI에서만 관리
+deploy/*.env
+deploy/backups/
+deploy/deployed-image.txt
+deploy/.deploy.lock
