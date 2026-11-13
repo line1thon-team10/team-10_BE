@@ -224,8 +224,10 @@ class FocusService:
                 t.subjects.c.status == "active", t.study_tasks.c.scheduled_date == self.today)).mappings().first()
         if not task:
             raise ApiError("TASK_NOT_FOUND", "오늘의 활성 태스크를 찾지 못했어요", 404)
+        if task["status"] == "completed":
+            raise ApiError("ALREADY", "이미 끝낸 태스크예요", 409)
         if task["status"] not in ("planned", "partial"):
-            raise ApiError("TASK_DONE", "이미 끝낸 태스크예요", 409)
+            raise ApiError("TASK_NOT_FOUND", "시작할 수 있는 태스크를 찾지 못했어요", 404)
         if running and running["status"] in ("running", "paused"):
             raise ApiError("OTHER_ACTIVE", "다른 태스크 공부가 아직 진행 중이에요", 409)
         sid, at = str(uuid.uuid4()), self.at

@@ -99,7 +99,9 @@ def test_start_rejects_ineligible_tasks(api_client,clock,demo_user,end_focus,dom
         conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==row["taskId"]).values(status=change))
     conn.commit()
     response = api_client.post("/api/study/sessions",headers=headers(demo_user),json={"taskId":row["taskId"]})
-    assert response.status_code == (409 if change in ("completed","excluded") else 404)
+    assert response.status_code == (409 if change=="completed" else 404)
+    if change=="completed":
+        assert response.json()["error"]["code"]=="ALREADY"
     assert conn.scalar(select(func.count()).select_from(t.study_sessions)) == 1
 
 
