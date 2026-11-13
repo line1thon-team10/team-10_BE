@@ -13,7 +13,7 @@ def _list(name: str, default: str) -> list[str]:
 
 
 # 로컬은 SQLite 파일, 배포는 postgresql+psycopg://... 로 바꿔요
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{ROOT / 'pirochim.db'}")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or f"sqlite:///{ROOT / 'pirochim.db'}"
 
 # 프론트 주소 (Vite 개발 서버 + Vercel 배포 주소)
 CORS_ORIGINS = _list("CORS_ORIGINS", "http://localhost:5173")
