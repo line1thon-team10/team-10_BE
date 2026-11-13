@@ -1,0 +1,52 @@
+# review API
+
+## 구현 규칙 (아래 원문 필드 표보다 우선)
+
+- group 필수 date/unit/count. date는 날짜 내림차순, unit은 과목 ID+단원 순서, count는 오답 횟수 내림차순. 빈 결과는 total=0,groups=[],weakConcepts=[].
+- Note.id는 원본 question ID를 나타내는 불투명 ID. history는 {date:string,result:sureWrong|unsureWrong|unsureRight|sureRight,score:number|null}[]이며 날짜 오름차순. score는 서술형만, streak는 0..2, canRetry는 서버 오늘>=next_review_date.
+- 오답 또는 애매 정답은 active/review_step=0, 다음 날 복습. 이후 확실 정답이면 1단계와 3일 후 복습, 그때 확실 정답이면 resolved. 예정일 전 반복 정답으로 단계를 건너뛰지 않는다. canRetry=false이면 409 REVIEW_NOT_DUE.
+- retry는 choice/text/confidence 규칙과 채점 실패 답안 보존 정책을 quiz와 공유한다. question+복습 예정일 단위 중복 재전송은 같은 결과 반환, 다음 복습 건으로 처리하지 않는다.
+- custom-quiz는 소유 과목의 현재 단원 번호만, 중복 번호 금지. count는 1..50, difficulty는 low/mid/high, weight는 FE enum 사전의 허용값. 완료·출제 가능한 범위만 선택. 부족하면 실제 count와 note 반환, 0개면 NO_QUESTIONS. 정답은 미포함.
+- relearn은 과목/단원 전체 현재 범위를 재학습했다는 명시적 완료 기록이다. 같은 날짜·단원 중복은 409 ALREADY. round는 저장된 유효 근거 재판정값, relearnedOn은 서버 today. 문항 점수를 임의 상승시키지 않는다.
+
+## 요청·응답 필드
+
+FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, 변경 사항은 decisions.md를 적용한다.
+
+#### `GET /api/review/notes?group=date|unit|count`
+
+| 응답                                                             | 타입   | null 가능 | 설명                      |
+| ---------------------------------------------------------------- | ------ | --------- | ------------------------- |
+| `group` · `total`                                                | –      | 아니요    |                           |
+| `groups[].key` · `label`                                         | string | 아니요    |                           |
+| `groups[].items[]`                                               | Note[] | 아니요    | 아래 Note                 |
+| `weakConcepts[].subjectId` · `subjectName` · `concept` · `count` | –      | 아니요    | 취약 개념 (오답 2회 이상) |
+
+Note: `id` · `subjectId` · `subjectName` · `unitNo` · `unitTitle` · `concept` · `question` · `page` · `type` · `wrongCount` · `lastDate` · `result` (`sureWrong` · `unsureWrong` · `unsureRight` · `resolved`) · `score` (서술형, null 가능) · `streak` (확실 정답 연속, 2면 해결) · `canRetry` bool · `history` array · `mockFilled` (null 가능)
+
+#### `GET /api/review/notes/:id/question` · `POST /api/review/notes/:id/retry`
+
+| 요청 (`retry`) | 타입   | 필수        | 설명                   |
+| -------------- | ------ | ----------- | ---------------------- |
+| `choice`       | number | choice만    | 보기 번호, 아니면 null |
+| `text`         | string | 단답 · 서술 | 아니면 null            |
+| `confidence`   | string | 예          | `sure` · `unsure`      |
+
+- `question` 응답: `noteId` · `type` · `prompt` · `options` · `mockFilled` (null 가능)
+- `retry` 응답: `note` (Note) · `correct` bool · `confidence` · `score` (null 가능) · `explanation` · `wrongCountBefore` · `unitChange` `{ unitNo, before{ score, grade }, after{…} }`
+
+#### `POST /api/review/custom-quiz` — 문제 뽑기 (RV-02)
+
+| 요청         | 타입     | 필수 | 설명                   |
+| ------------ | -------- | ---- | ---------------------- |
+| `subjectId`  | string   | 예   |                        |
+| `units`      | number[] | 예   | 단원 번호              |
+| `difficulty` | string   | 예   | `low` · `mid` · `high` |
+| `count`      | number   | 예   | 문항 수                |
+| `weight`     | string   | 예   | 출제 비중 (위 S10 절)  |
+
+응답: `quizId` · `count` · `difficulty` · `note` (null 가능)
+
+#### `POST /api/review/relearn` — 범위 전체 재학습 (RV-03)
+
+요청: `subjectId` string · `unitNo` number (둘 다 필수). 응답: `subjectId` · `unitNo` · `round` · `relearnedOn`
