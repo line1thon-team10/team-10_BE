@@ -7,14 +7,14 @@
 - 화면 상태 이름: active | paused | ended (DB는 running | paused | ended | auto_stopped)
 """
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, func, select, update
 
 from app.core.responses import ApiError
 from app.db import schema as t
-from app.services.study import StudyData
+from app.repositories.focus import FocusRepository
 from app.domain.focus import quote_for
 from app.repositories.locking import UserBusyError, lock_user
 
@@ -140,50 +140,63 @@ class FocusService:
     # ---------- 화면 모양 ----------
     def view(self, s: dict) -> dict:
         self._prepare()
+        self._active_row()  # 다른 과거 세션 조회에서도 오늘 합계의 자동 종료를 먼저 정산한다.
         s = self._check(self._session(s["id"]))
-        data = StudyData(self.conn, self.user["id"])
-        task = next((x for x in data.tasks if x.id == s["task_id"]), None)
-        subject = data.subject_by_id.get(task.row["subject_id"]) if task else None
+        repo = FocusRepository(self.conn, self.user["id"])
+        task = repo.task(s["task_id"])
+        if task is None:
+            raise ApiError("SESSION_NOT_FOUND", "집중 기록을 찾지 못했어요", 404)
+        raw_ranges = repo.ranges(task)
+        records = repo.record_ranges(task["id"])
+        ranges, pages_by_material = [], {}
+        for r in raw_ranges:
+            if r["start_page"] is None or r["end_page"] is None:
+                continue
+            done = [min(rec["end_page"], r["end_page"]) for rec in records
+                    if rec["unit_id"] == r["unit_id"] and rec["end_page"] is not None
+                    and rec["start_page"] <= r["end_page"] and rec["end_page"] >= r["start_page"]]
+            ranges.append({"id":r["id"], "materialId":r["material_id"], "unitId":r["unit_id"],
+                           "conceptId":r["concept_id"], "from":r["start_page"], "to":r["end_page"],
+                           "doneTo":max(done) if done else None})
+            pages_by_material.setdefault(r["material_id"],set()).update(range(r["start_page"],r["end_page"]+1))
+        first = ranges[0] if len(ranges)==1 else None
+        material = {"id":ranges[0]["materialId"], "page":ranges[0]["from"]} if ranges else None
         segs = self._segments(s["id"])
-        current = self.at
-        if s["status"] in ("ended", "auto_stopped"):
-            active = s["measured_seconds"] or 0
-            end_at = _aware(s["ended_at"])
-        else:
-            active = self._elapsed(segs, current)
-            end_at = current
-        wall = (end_at - _aware(s["started_at"])).total_seconds()
-        material_id = None
-        if task and task.ranges:
-            material_id = data.units[task.ranges[0]["unit_id"]]["material_id"]
-        recorded = self.conn.execute(select(t.study_records.c.id).where(
-            t.study_records.c.session_id == s["id"])).first() is not None
+        ended = s["status"] in ("ended", "auto_stopped")
+        active = s["measured_seconds"] or 0 if ended else self._elapsed(segs,self.at)
+        end_at = _aware(s["ended_at"]) if ended else self.at
+        wall = max(0,(end_at - _aware(s["started_at"])).total_seconds())
+        recorded = self.conn.execute(select(t.study_records.c.id).where(t.study_records.c.session_id==s["id"])).first() is not None
+        today_minutes, subject_minutes = self._totals(repo, task["subject_id"])
         return {
-            "id": s["id"], "taskId": s["task_id"],
-            "subjectId": subject["id"] if subject else None, "subjectName": subject["name"] if subject else None,
-            "task": {"title": task.row["title"], "from": task.first, "to": task.last, "pages": task.pages,
-                     "minutes": task.row["estimated_minutes"]} if task else None,
-            "status": FRONT_STATUS[s["status"]],
-            "quote": s["quote"],
-            "material": {"id": material_id, "page": task.first if task else 1},
-            "minutes": int(active // 60), "pausedMinutes": int(max(0, wall - active) // 60),
-            "checkIn": s["status"] == "running" and s["check_prompted_at"] is not None,
-            "autoStopped": s["status"] == "auto_stopped",
-            "excludeFromPace": bool(s["excluded_from_calibration"]),
-            "recorded": recorded,
-            "todayMinutes": self._sum_minutes(t.study_sessions.c.study_date == self.today, s, active),
-            "subjectMinutes": self._sum_minutes(
-                t.study_sessions.c.task_id.in_(select(t.study_tasks.c.id).where(
-                    t.study_tasks.c.subject_id == (subject["id"] if subject else None))), s, active),
+            "id":s["id"], "taskId":s["task_id"], "subjectId":task["subject_id"], "subjectName":task["subject_name"],
+            "task":{"title":task["title"], "from":first["from"] if first else None, "to":first["to"] if first else None,
+                    "pages":sum(len(pages) for pages in pages_by_material.values()), "ranges":ranges,
+                    "minutes":s["expected_seconds"] / 60},
+            "status":FRONT_STATUS[s["status"]], "quote":s["quote"], "material":material,
+            "minutes":int(active // 60), "pausedMinutes":int(max(0,wall-active)//60),
+            "checkIn":s["status"]=="running" and s["check_prompted_at"] is not None,
+            "autoStopped":s["status"]=="auto_stopped", "excludeFromPace":bool(s["excluded_from_calibration"]),
+            "recorded":recorded, "todayMinutes":today_minutes, "subjectMinutes":subject_minutes,
         }
 
-    def _sum_minutes(self, cond, s: dict, active_now: float) -> int:
-        """오늘 총·과목 누적 = 끝난 측정 세션의 합 (+ 지금 재고 있는 세션)"""
-        done = self.conn.execute(select(func.coalesce(func.sum(t.study_sessions.c.measured_seconds), 0)).where(
-            t.study_sessions.c.user_id == self.user["id"], cond,
-            t.study_sessions.c.status.in_(["ended", "auto_stopped"]))).scalar()
-        extra = active_now if s["status"] in ("running", "paused") else 0
-        return int((done + extra) // 60)
+    def _totals(self, repo, subject_id):
+        zone = ZoneInfo(self.user.get("timezone") or "Asia/Seoul")
+        start_day = datetime.combine(self.today,time.min,zone).astimezone(timezone.utc)
+        end_day = datetime.combine(self.today+timedelta(days=1),time.min,zone).astimezone(timezone.utc)
+        today_seconds, subject_seconds = 0.0, 0.0
+        for segment in repo.all_segments():
+            start = _aware(segment["started_at"])
+            end = min(_aware(segment["ended_at"]) or self.at,self.at)
+            seconds = max(0,(end-start).total_seconds())
+            if segment["subject_id"]==subject_id:
+                subject_seconds += seconds
+            if self.user.get("demo_date") is not None:
+                if segment["study_date"] == self.today:
+                    today_seconds += seconds
+            else:
+                today_seconds += max(0,(min(end,end_day)-max(start,start_day)).total_seconds())
+        return int(today_seconds//60), int(subject_seconds//60)
 
     # ---------- 동작 ----------
     def active(self) -> dict | None:
