@@ -1,6 +1,6 @@
 # 집중 모드 계약 보정 계획
 
-부모: `feat/demo-package` / PR #9. 이번 단계는 집중 API와 이를 보호하는 저장 규칙이다. 학습 기록·퀴즈 전체 계약 보정은 별도 단계로 유지한다. Astra-max는 PR #9 immutable HEAD를 읽기 전용으로 검토한다.
+계획 수립 시 부모: `feat/demo-package` / PR #9. 검토 중 발견한 시연 범위 모순을 PR #10(`fix/demo-quiz-scope`)으로 먼저 고쳐 최종 집중 브랜치는 그 위에 쌓는다. 이번 단계는 집중 API와 이를 보호하는 저장 규칙이다. 학습 기록·퀴즈 전체 계약 보정은 별도 단계로 유지한다. Astra-max는 PR #9 immutable HEAD를 읽기 전용으로 검토한다.
 
 ## 기준과 발견한 차이
 
