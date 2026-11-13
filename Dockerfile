@@ -12,6 +12,8 @@ COPY --chown=app:app migrations ./migrations
 COPY --chown=app:app alembic.ini ./
 COPY --chown=app:app vendor/team-10_AI/services ./vendor/team-10_AI/services
 COPY --chown=app:app vendor/team-10_AI/seed_quiz.json ./vendor/team-10_AI/seed_quiz.json
+COPY --chown=app:app vendor/team-10_AI/data/demo ./vendor/team-10_AI/data/demo
+COPY --chown=app:app vendor/team-10_AI/data/ground_truth ./vendor/team-10_AI/data/ground_truth
 USER app
 RUN python -c "from app.ai.engine import MODULES, module; [module(name) for name in MODULES]"
 EXPOSE 8000

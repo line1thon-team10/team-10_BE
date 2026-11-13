@@ -23,7 +23,7 @@ Windows에서는 `.venv/Scripts/python`을 사용한다. AI 저장소가 비공�
 - 기존 `.env`에 외부 AI 경로가 들어 있으면 그 값이 우선한다. submodule을 사용하려면 비우거나 제거한다.
 - submodule을 초기화하지 않았으면 `/api/health?ai=true`의 `ai.found=false`, AI 호출은 초기화 명령을 포함한 모듈 로딩 오류를 반환한다. 빈 디렉터리를 정상 설치로 표시하지 않는다.
 - Python 패키지는 BE의 `requirements.txt`와 `requirements-ai.txt`를 함께 사용한다. AI 원본 requirements의 PyMuPDF 충돌을 보정한 기존 BE 목록을 유지했다. AI 업데이트 PR에서 이 목록의 호환성도 재확인한다. gitlink 고정이 Python 전이 의존성 전체의 lock을 뜻하지는 않는다.
-- AI의 `seed_quiz.json`도 submodule에서 읽는다. BE에 복사하거나 ignore를 무시해 추가하지 않는다.
+- 현재 데모는 submodule의 `data/demo` PDF와 `data/ground_truth` 목차를 읽는다. 구 DS/OS/NW `seed_quiz.json`은 현재 시드에 쓰지 않는다. 원본 AI 파일을 BE에 복사하거나 ignore를 무시해 추가하지 않는다. 새 문항은 BE `app/seed/package_questions.py`의 로컬 데모 문항이다.
 
 ## 저장소별 변경 순서
 
@@ -47,7 +47,7 @@ submodule 안에 미커밋 변경이 있으면 먼저 AI 작업으로 처리한�
 
 ## 빌드와 검증
 
-CI가 생기면 checkout에 recursive submodule과 비공개 AI 읽기 권한을 설정한다. Docker 빌드 전에도 submodule을 초기화하고 해당 소스를 빌드 컨텍스트에 포함한다. 현재 저장소에는 배포 workflow/Dockerfile이 없어 이번 변경에서 배포 파이프라인을 만들지는 않는다.
+현재 `.github/workflows/deploy-rpi.yml`은 BE gitlink의 AI 커밋을 읽어 비공개 저장소를 체크아웃한다. Dockerfile은 services와 데모 PDF·목차 폴더를 함께 포함한다. 자세한 빌드·배포는 [RPI 배포 문서](rpi-deployment.md)를 따른다. 새 시드 코드만 배포하고 AI 데이터 폴더를 제외하면 시드 적재가 실패한다.
 
 ```bash
 git submodule status --recursive

@@ -16,5 +16,4 @@ docs
 .github
 scripts
 vendor/team-10_AI/test
-vendor/team-10_AI/data
 deploy
