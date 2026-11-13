@@ -4,7 +4,7 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 프론트(team-10_FE)는 이 서버의 `/api/...`를 불러요.
 
 ```
-프론트 (Vercel) ──HTTP──▶ 백엔드 FastAPI ──함수 호출──▶ AI 모듈 (team-10_AI/services)
+프론트 (Vercel) ──HTTP──▶ 백엔드 FastAPI ──함수 호출──▶ AI submodule (vendor/team-10_AI/services)
                               │
                               └── DB (로컬 SQLite / 배포 PostgreSQL)
 ```
@@ -20,13 +20,21 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 
 ## 로컬 실행
 
-폴더 구조는 세 저장소를 나란히 두는 걸 기준으로 해요.
+BE는 AI 저장소의 특정 커밋을 submodule로 포함해요. 별도 AI 형제 폴더는 필요하지 않아요. [AI 의존성·stacked 개발 안내](docs/ai-dependency.md)를 참고하세요.
 
 ```
 피뢰침/
   team-10_BE/   ← 여기
-  team-10_AI/
+    vendor/team-10_AI/  ← BE에 고정된 AI 커밋
   team-10_FE/
+```
+
+먼저 submodule을 포함해 clone하거나 기존 checkout에서 초기화하세요. AI 저장소 읽기 권한이 필요합니다.
+
+```bash
+git clone --recurse-submodules https://github.com/line1thon-team10/team-10_BE.git
+# 기존 checkout에서는 BE 루트에서 실행
+git submodule update --init --recursive
 ```
 
 1. 가상환경과 패키지 (Python 3.12 권장)
@@ -95,6 +103,7 @@ app/
   ai/engine.py     AI 모듈 불러오기
   routers/         API (프론트 endpoints.js 기준으로 추가)
   seed/            데모 시드 값과 적재
+vendor/team-10_AI/ AI 소스 submodule (별도 저장소/커밋)
 schema/            ERD·참고 명세 원본
 scripts/gen_schema ERD → schema.py 생성기 (Node)
 ```
@@ -115,7 +124,7 @@ cd scripts/gen_schema && npm install && node gen_schema.js
 - 집중 모드: 서버 시계로 순공부 구간을 쌓아 재요(멈춘 시간 제외, 새로고침해도 이어짐). 예상 시간의 2배가 지나면 `checkIn`, 10분 무응답이면 알림 시점에서 자동 종료하고 속도 보정에서 빼요. 기록할 때 `sessionId`를 붙이면 측정 시간이 남아요(세션당 기록 1번).
 - 서술형 AI 채점은 `GROQ_API_KEY`가 있어야 해요. 없거나 실패하면 저장된 채점(시연 문항 70점)을 쓰고 결과에 `essayGrading: saved`로 표시해요.
 - 더 풀기는 '이미 푼 문항은 안 나옴' 규칙이라, 시드의 3단원처럼 문항을 다 푼 단원은 `NO_QUESTIONS`예요. AI 문항 생성(quiz_bank)을 붙이면 해결돼요.
-- 퀴즈 시드는 비공개 AI 저장소의 `seed_quiz.json`을 `AI_ENGINE_PATH`에서 바로 읽어요. 이 공개 저장소에는 복사하지 않아요. 배포 서버에도 AI 코드가 같이 있어야 해요.
+- 퀴즈 시드는 비공개 AI 저장소의 `seed_quiz.json`을 `AI_ENGINE_PATH`에서 바로 읽어요. 이 공개 저장소에는 복사하지 않아요. 배포 빌드에서도 submodule을 초기화해 해당 BE 커밋에 고정된 AI 소스를 포함해야 해요.
 
 - 윈도우 스마트 앱 컨트롤 때문에 SQLAlchemy 2.1·psycopg의 확장 모듈이 막혀서 SQLAlchemy 2.0을 써요. 로컬은 SQLite라 psycopg가 필요 없어요.
 - ERD 노트의 부분 유일 인덱스(`erd-constraints.sql`)는 아직 받지 못해서 반영 전이에요.

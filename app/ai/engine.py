@@ -25,6 +25,11 @@ MODULES = {
 
 
 def _prepare_path() -> None:
+    if not (AI_ENGINE_PATH / "services").is_dir():
+        raise ModuleNotFoundError(
+            "AI 소스를 찾지 못했어요. BE 루트에서 "
+            "git submodule update --init --recursive를 실행하거나 AI_ENGINE_PATH를 확인하세요."
+        )
     path = str(AI_ENGINE_PATH)
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -40,7 +45,7 @@ def module(name: str):
 
 def status() -> dict:
     """어떤 AI 모듈을 불러올 수 있는지 (/api/health에서 확인용)"""
-    result = {"path": str(AI_ENGINE_PATH), "found": AI_ENGINE_PATH.is_dir(),
+    result = {"path": str(AI_ENGINE_PATH), "found": (AI_ENGINE_PATH / "services").is_dir(),
               "groqKey": bool(os.getenv("GROQ_API_KEY")), "modules": {}}
     if not result["found"]:
         return result

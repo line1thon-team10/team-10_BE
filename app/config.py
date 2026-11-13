@@ -18,8 +18,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{ROOT / 'pirochim.db'}")
 # 프론트 주소 (Vite 개발 서버 + Vercel 배포 주소)
 CORS_ORIGINS = _list("CORS_ORIGINS", "http://localhost:5173")
 
-# 현민님 AI 코드(team-10_AI) 위치. 한 서버로 합쳐서 함수를 직접 불러요
-AI_ENGINE_PATH = Path(os.getenv("AI_ENGINE_PATH", str(ROOT.parent / "team-10_AI"))).resolve()
+# 기본은 BE가 커밋으로 고정한 submodule. 개발용 상대 경로도 BE 루트 기준이에요.
+_ai_path = Path(os.getenv("AI_ENGINE_PATH", "").strip() or "vendor/team-10_AI")
+AI_ENGINE_PATH = (_ai_path if _ai_path.is_absolute() else ROOT / _ai_path).resolve()
 
 # 업로드한 PDF 저장 위치. AI 퀴즈 생성이 서버 안 파일 경로를 읽어서 AI_PDF_ROOT와 같게 맞춰요
 STORAGE_DIR = Path(os.getenv("STORAGE_DIR", str(ROOT / "storage"))).resolve()
