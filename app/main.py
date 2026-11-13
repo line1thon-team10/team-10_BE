@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.ai import engine as ai_engine
 from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
+from app.core.cache import ApiNoStoreMiddleware
 from app.core.responses import install_error_handlers, ok
 from app.db.session import check_db_revision
 from app.routers import books, demo, plan, quiz, session, study, today
@@ -29,6 +30,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ApiNoStoreMiddleware)
 install_error_handlers(app)
 
 app.include_router(session.router)

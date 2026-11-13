@@ -1,27 +1,18 @@
 """익명 세션 (NF-01) — 프론트 EP.session"""
-import uuid
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import Connection
 
 from app.config import DEMO_MODE
-from app.core.clock import now_utc
 from app.core.responses import ok
-from app.db.schema import users
 from app.db.session import get_conn
-from app.seed.demo_data import DEFAULT_SEED
-from app.seed.loader import load_seed
+from app.schemas.session import SessionCreate, SessionResponse
+from app.services.session import SessionService
 
 router = APIRouter(prefix="/api", tags=["세션"])
 
 
-@router.post("/session")
-def create_session(conn: Connection = Depends(get_conn)):
+@router.post("/session", response_model=SessionResponse)
+def create_session(payload: SessionCreate | None = None, conn: Connection = Depends(get_conn)):
     """새 익명 ID를 발급해요. 데모 모드면 기본 시드(11/9 오후 5시)를 바로 넣어요."""
-    user_id = str(uuid.uuid4())
-    now = now_utc()
-    conn.execute(users.insert().values(
-        id=user_id, timezone="Asia/Seoul", onboarding_status="draft", created_at=now, updated_at=now))
-    if DEMO_MODE:
-        load_seed(conn, user_id, DEFAULT_SEED)
+    user_id = SessionService(conn).create(demo_mode=DEMO_MODE)
     return ok({"anonymousId": user_id})

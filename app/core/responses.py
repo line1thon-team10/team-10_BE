@@ -24,6 +24,8 @@ class ApiError(Exception):
 def _fail(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse(
         status_code=status,
+        # 처리되지 않은 500은 사용자 middleware 바깥에서 반환될 수 있다.
+        headers={"Cache-Control": "no-store"},
         content={"success": False, "error": {"code": code, "message": message}},
     )
 
