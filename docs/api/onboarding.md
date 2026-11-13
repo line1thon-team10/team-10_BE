@@ -2,7 +2,7 @@
 
 ## 구현 규칙 (아래 원문 필드 표보다 우선)
 
-- subjects[].status는 시험/목표 미수집 pending, 추가 응답 필요 asking, 시험일·목표 확인 완료 confirmed. done은 과목이 하나 이상이고 모두 confirmed일 때 true.
+- subjects[].status는 시험/목표 미수집 pending, 추가 응답 필요 asking, 시험일·목표 확인 완료 confirmed. **와이어 S1:** done은 과목이 하나 이상이고 각 과목의 시험일·목표 학점·시험 총 목표·기타 정보4칸을 확인한 경우에만 true. 선택 정보가 없을 때의 명시적 없음 응답 표현은 요구사항에 정의되지 않아 확인 상태로 구분하며 null만으로 확인 완료를 추정하지 않는다.
 - 메시지는 사용자 소유 대화에 저장한다. 해석 실패 시 승인된 과목/일정은 변경하지 않는다. 불명확한 날짜/시간은 질문하고 추측해 확정하지 않는다.
 - Event의 days(중복 없는 1..7, 비어 있지 않음) 또는 date 중 정확히 하나를 받는다. start < end, 자정을 넘는 일정은 두 일정으로 입력한다.
 - create는 kind/title/start/end와 days 또는 date 필수. PATCH는 부분 수정 허용하되 병합 후 동일 검증. 이벤트 수정/삭제는 draft 온보딩에서만 허용하며 승인 후에는 409 ONBOARDING_COMPLETED; 승인 후 변경은 schedules 사용.
