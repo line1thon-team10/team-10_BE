@@ -1,0 +1,4 @@
+[submodule "vendor/team-10_AI"]
+	path = vendor/team-10_AI
+	url = https://github.com/line1thon-team10/team-10_AI.git
+	branch = main
