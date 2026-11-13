@@ -21,7 +21,7 @@
 | 추가 계획 conflicts | integer 충돌 개수 | mock 구현과 일치 | 없음 |
 | 여러 옵션 중 불가능 | enabled:false, 실행 거절 | 거짓 실행안 방지 | P2에서 disabled 표시/클릭 차단 |
 | 수동 신규 단원 | PUT units의 id 생략 허용 | TOC 응답에 id 없음 | undefined 유지 가능 |
-| 재시도 키 | 선택적 Idempotency-Key | 외부 계약 강제 변경을 피한 보완 | 자동 mutation 재시도 도입 때만 |
+| 재시도 키 | 일반 요청은 선택적, relearn은 필수 Idempotency-Key | ERD 직접 회독 근거 보존 | relearn에 키 전달, 자동 재시도에는 같은 키 |
 | 미지원 기능 | rebuild=501, 신규 과목 추가/AI 회고 범위 제외 | 최신 FE 결정 | 기존 비활성 유지 |
 
 ## 미리보기 식별과 수명
@@ -43,6 +43,8 @@
 | DELETE /schedules/:id 또는 /subjects/:id의 빈 시간 응답 | POST /plan/empty-time body {option,previewId} |
 
 경로는 모두 /api 접두사. toPlanDraft/toResplit/toReplan/toPlanPreview/toAdditionPreview/toVoicePreview/toEmptyTime가 previewId를 보존하도록 변경해야 한다. 속도 보정 pace는 subjectId+서버에 저장된 calibration ID/revision으로 제안을 검증하며 오래된 제안은 PREVIEW_STALE; FE가 서버 반환 calibrationId를 전달하는 보완도 함께 적용한다.
+
+추가 FE 보완: `toTask`는 from/to가 null일 때 pages=0, `toPaceAlert`는 calibrationId를 보존하고 postPace에서 전달한다. P2 toReplan은 enabled를 보존한다. `postRelearn`은 요청당 Idempotency-Key를 생성하고 재시도 시 유지한다. quiz adapter는 quizId를 보존한다.
 
 ## null 및 기본값의 구체적인 예
 
