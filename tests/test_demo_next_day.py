@@ -123,3 +123,15 @@ def test_missing_dates_and_maximum_date_do_not_advance(api_client,demo_user,doma
     response=advance(api_client,demo_user)
     assert response.status_code==400 and response.json()["error"]["code"]==code
     assert conn.scalar(select(users.c.demo_date).where(users.c.id==demo_user))==day
+
+
+@pytest.mark.parametrize("seed",["day9","overdue"])
+def test_demo_walks_each_day_until_last_exam(api_client,demo_user,seed):
+    response=api_client.post("/api/demo/seed",json={"seed":seed},headers=auth(demo_user))
+    assert response.status_code==200
+    for day in range(10,19):
+        response=advance(api_client,demo_user)
+        assert response.status_code==200,response.text
+        assert response.json()["data"]["today"]==f"2026-11-{day}"
+        assert response.json()["data"]["seed"]==seed
+    assert advance(api_client,demo_user).json()["error"]["code"]=="DEMO_END"
