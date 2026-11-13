@@ -16,7 +16,6 @@ from app.services.study import OPEN_RATE, StudyData, Task, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
 
-TUTOR_SUGGESTIONS = ["AVL 트리 회전은 언제 해?", "BST에서 자식이 2개인 노드는 어떻게 지워?", "편향 트리는 왜 느려?"]
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
 
 
@@ -40,10 +39,22 @@ def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get
                    "readiness": data.readiness(s)["readiness"]} for s in data.subjects],
         "recentDays": data.recent_days(today),
         "notice": _notice(conn, user, today),
-        "tutorSuggestions": TUTOR_SUGGESTIONS,
+        "tutorSuggestions": _tutor_suggestions(data, today),
         "paceAlert": None,    # 속도 보정 알림 (PL-07) — 측정 기록 3일치가 쌓이면
         "replan": Planner(conn, user).replan_view(),
     })
+
+
+def _tutor_suggestions(data: StudyData, today) -> list[str]:
+    """오늘의 실제 단원에서 질문을 만든다. 옛 데모 과목을 고정하지 않는다."""
+    suggestions = []
+    for subject in data.subjects:
+        task = next((task for task in data.tasks_on(today)
+                     if task.row["subject_id"] == subject["id"] and data.unit_of(task)), None)
+        if task:
+            unit = data.unit_of(task)
+            suggestions.append(f"{subject['name']}의 {unit['title']} 핵심 개념을 설명해 줘.")
+    return suggestions[:3]
 
 
 def _notice(conn: Connection, user: dict, today) -> dict | None:
