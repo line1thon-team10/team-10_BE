@@ -5,7 +5,7 @@
 - 미리보기는 후보만 저장. 적용은 previewId와 서버 revision 검증 후 후보 전체를 한 트랜잭션으로 반영. 클라이언트 계산 changes를 저장에 사용하지 않는다.
 - PATCH subjects/:id/preview는 examDate 또는 goal/target 중 하나 이상. target은0..100, examDate는 today 이후. 변경 없으면400 NO_CHANGE. 응답 changes의 before/after는 표시용 string, days는 {date,text}[], note는 string|null, subjectName은 string|null.
 - subject card의 examDate는 draft라면 null, dday도 null. range는 {from:integer|null,to:integer|null,pages:integer}; materials[].toc는 {no:integer,title:string,from:integer,to:integer}[]이다. 제거는 status=archived, archive_reason=user_removed이며 기존 학습/퀴즈 이력 삭제 금지.
-- additions는 기존 과목/자료에 범위 추가만. 신규 과목은 아래 draft 생성→온보딩→계획 승인으로 지원한다. 1<=from<=to<=실제페이지, minutesPerDay=15..900, days는 중복없는1..7, today<=startDate<=endDate<examDate. 실제 가용시간 넘는 후보는 conflicts에 사유와 leftPages를 반환하고 적용 불가.
+- additions는 기존 과목/자료에 범위 추가만. 신규 과목은 아래 draft 생성→온보딩→계획 승인으로 지원한다. 1<=from<=to<=실제페이지, 시간 목표라면 minutesPerDay는 양의 정수, days는 중복없는1..7, today<=startDate<=endDate<examDate. 실제 가용시간 넘는 후보는 conflicts에 사유와 leftPages를 반환하고 적용 불가.
 - addition summary는 {subjectName:string,materialName:string,from:integer,to:integer,pages:integer,minutesPerDay:integer,totalMinutes:integer,days:integer[],startDate:string,endDate:string}, conflicts는 충돌 수 integer, note는 string|null. placements는 입력 범위를 중복/누락 없이 배치한 조각이며 reason은 string.
 - today action은 more30/rest/postpone. postpone에만 taskId 필수. 기록된 범위는 이동하지 않는다. more30은 가용시간에30분이 없으면409 PLAN_INFEASIBLE. 적용은 action+previewId; postpone taskId는 후보에서 읽는다. 성공 {applied:true}.
 - rebuild는 모든 상태에서501 NOT_READY. 지원하지 않는 기능을 성공처럼 반환하지 않는다.
@@ -50,11 +50,12 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `subjectId`             | string   | 예   |         |
 | `materialId`            | string   | 예   |         |
 | `from` · `to`           | number   | 예   | 쪽 범위 |
-| `minutesPerDay`         | number   | 예   |         |
+| `minutesPerDay` | integer | 둘 중 하나 | 하루 목표 분 |
+| `totalPages` | integer | 둘 중 하나 | 총 목표 페이지 |
 | `days`                  | number[] | 예   | 요일    |
 | `startDate` · `endDate` | string   | 예   |         |
 
-미리보기 응답: `summary` · `placements[]` `{ date, start, end, from, to, minutes, reason }` · `conflicts` · `leftPages` · `note`. 적용 응답은 화면이 읽지 않아요.
+미리보기 응답: `previewId` · `summary` · `placements[]` `{ date, start, end, from, to, minutes, reason }` · `conflicts` · `leftPages` · `note`. 적용 응답은 화면이 읽지 않아요.
 
 #### `POST /api/plan/today/preview` → `POST /api/plan/today` — 오늘 계획 (PL-10) · `POST /api/plan/rebuild`
 
@@ -77,4 +78,11 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 4. S5에서 확인 후 `POST /api/plan/approve`에 `{previewId}`를 전달한다. 후보에 담긴 과목만 활성화하고 기존 기록·점수·책·보충을 보존한다. 취소/이탈은 기존 계획을 바꾸지 않는다. 재접속 시 draft는 재사용 가능하다.
 
 GET subjects의 카드에 `status:"draft"|"active"|"archived"`를 추가한다. examDate/dday/goal/goalTotal/target은 미확정이면 null. range는 `{from,to,pages}`이며 다중 자료/비연속이면 from/to=null, pages는 자료별 시험 범위 합집합이다. materials[].toc에는 `unitId`를 추가한다. 시험 종료 자동 보관은 시험일 당일이 아닌 **다음 날** 수행한다(와이어 S14).
+
+
+## 범위 추가의 목표 선택 (와이어 S13)
+
+additions/preview 요청은 subjectId/materialId/from/to/days/startDate/endDate와 **minutesPerDay 또는 totalPages 중 정확히 하나**다. 총 페이지 목표는1..선택 범위 페이지 수, 선택 범위의 첫 페이지부터 그 수만큼 배정한다. 시간 목표는 선택 범위 전체를 해당 일일 목표 내에서 배정한다. 범위 추가는 해당 과목만 재배분하고 다른 과목 계획은 보존한다.
+
+summary의 minutesPerDay는 총 페이지 모드에서 null, totalPages는 실제 목표 페이지 정수, goalType은 time/pages이다. placements[]에는 materialId/unitId/ranges/pages를 추가하고 from/to는 단일 범위일 때만 값이 있다. conflicts>0 또는 leftPages>0이면 적용을 허용하지 않고409 PLAN_INFEASIBLE. 성공 적용 응답은 `{applied:true}`다.
 
