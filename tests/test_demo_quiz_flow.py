@@ -37,5 +37,5 @@ def test_keyless_demo_grading_returns_saved_feedback_and_book_changes(api_client
     assert result["essayGrading"] == "saved" and result["bookChanges"]
     essay = next(q for q in result["items"] if q["type"] == "essay")
     assert essay["score"] == 70 and essay["feedback"]["good"] and essay["feedback"]["miss"]
-    assert essay["evidence"]["page"] == 16 and essay["evidence"]["quote"]
+    assert essay["evidence"]["page"] == 13 and essay["evidence"]["quote"]
     assert result["summary"]["total"] == 6 and result["summary"]["correct"] == 5

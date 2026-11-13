@@ -13,7 +13,7 @@ DEFAULT_SEED = "day9"
 SEED_DATES = {"empty": date(2026, 11, 3), "day9": date(2026, 11, 9), "overdue": date(2026, 11, 9)}
 PLAN_START = date(2026, 11, 3)
 MIN_PER_PAGE = 2.5
-PACKAGE_VERSION = "demo-package-2026-11-14"
+PACKAGE_VERSION = "demo-package-2026-11-14-v2"
 SUBJECTS = [
     {"code": "AI", "name": "인공지능", "asset": "artificial_intelligence", "color": "#4F46E5",
      "exam_date": date(2026, 11, 12), "target_grade": "A+", "target_score": 90},
