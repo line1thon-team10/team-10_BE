@@ -79,9 +79,12 @@ def test_other_users_task_is_not_found_and_cannot_start_session(api_client, doma
         select(study_tasks.c.id).join(subjects, study_tasks.c.subject_id == subjects.c.id)
         .where(subjects.c.user_id == first).limit(1)
     )
+    original_sessions = set(domain_connection.scalars(select(study_sessions.c.id)))
     domain_connection.commit()
     response = api_client.post("/api/study/sessions", json={"taskId": task_id},
                                headers={"X-Anonymous-Id": second})
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "TASK_NOT_FOUND"
-    assert domain_connection.scalar(select(func.count()).select_from(study_sessions)) == 0
+    assert set(domain_connection.scalars(select(study_sessions.c.id))) == original_sessions
+    assert domain_connection.scalar(select(func.count()).select_from(study_sessions).where(
+        study_sessions.c.user_id == second)) == 0
