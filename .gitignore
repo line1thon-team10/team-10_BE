@@ -7,3 +7,5 @@ __pycache__/
 storage/
 node_modules/
 .pytest_cache/
+# 비공개 AI 저장소 자료는 공개 저장소에 올리지 않아요
+seed_quiz.json

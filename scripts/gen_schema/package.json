@@ -1,0 +1,8 @@
+{
+  "name": "gen-schema",
+  "private": true,
+  "description": "schema/erd.dbml에서 app/db/schema.py를 만드는 도구",
+  "dependencies": {
+    "@dbml/core": "3.9.5"
+  }
+}

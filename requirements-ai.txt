@@ -1,0 +1,15 @@
+# 현민님 AI 코드(team-10_AI)를 한 서버에서 돌리기 위한 패키지.
+# team-10_AI/requirements.txt는 PyMuPDF==1.26.7과 pymupdf4llm==2.1이 충돌해서 설치가 실패해요.
+# pymupdf4llm 2.1은 PyMuPDF 2.1이 필요해서 PyMuPDF만 2.1로 바꿨어요 (설치·모듈 불러오기 확인).
+PyMuPDF==2.1
+pymupdf4llm==2.1
+pymupdf_layout==2.1
+groq==1.7.0
+google-genai==3.2.0
+numpy==2.5.4
+networkx==3.7
+onnxruntime==1.31.1
+tenacity==9.1.4
+requests==2.34.2
+PyYAML==6.0.3
+tabulate==0.10.0
