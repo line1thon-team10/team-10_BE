@@ -1,0 +1,468 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/books",
+    "contract": "books.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/calendar",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/demo/ai",
+    "contract": "session.md",
+    "optional": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/demo/ai",
+    "contract": "session.md",
+    "optional": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/demo/next-day",
+    "contract": "session.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/demo/reset",
+    "contract": "session.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/demo/seed",
+    "contract": "session.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/demo/state",
+    "contract": "session.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/materials",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/materials",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/materials/:id/file",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/materials/:id/units",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/materials/jobs/:jobId",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/materials/toc",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/monthly",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/monthly/report",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/onboarding",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/onboarding/calendar",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/onboarding/events",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/onboarding/events/:id",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/onboarding/events/:id",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/onboarding/events/voice",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/onboarding/message",
+    "contract": "onboarding.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/additions",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/additions/preview",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/approve",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/plan/draft",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/empty-time",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/pace",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/rebuild",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/replan",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/plan/replan/options",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/plan/resplit",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/plan/resplit",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/resplit",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/resplit/apply",
+    "contract": "plan.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/today",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/plan/today/preview",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/quiz/:quizId/answers/:questionId",
+    "contract": "quiz.md",
+    "optional": false,
+    "origin": "wireframe-S8",
+    "source": "와이어 S8/S8-3; BE AnswerInput/AnswerSaved"
+  },
+  {
+    "method": "GET",
+    "path": "/api/quiz/:subjectId",
+    "contract": "quiz.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/quiz/:subjectId/more",
+    "contract": "quiz.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/quiz/:subjectId/result",
+    "contract": "quiz.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/quiz/:subjectId/submit",
+    "contract": "quiz.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/quiz/today",
+    "contract": "quiz.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/records",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/records/interpret",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/review/custom-quiz",
+    "contract": "review.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/review/notes",
+    "contract": "review.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/review/notes/:id/question",
+    "contract": "review.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/review/notes/:id/retry",
+    "contract": "review.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/review/relearn",
+    "contract": "review.md",
+    "optional": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/schedules/:id",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/schedules/:id",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/schedules/:id/preview",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/schedules/:id/preview",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
+    "method": "POST",
+    "path": "/api/schedules/voice",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/schedules/voice/apply",
+    "contract": "calendar.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/session",
+    "contract": "session.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/study/sessions",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/study/sessions/:id",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/study/sessions/:id/end",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/study/sessions/:id/pause",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/study/sessions/:id/resume",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/study/sessions/active",
+    "contract": "focus.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/subjects",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/subjects",
+    "contract": "manage.md",
+    "optional": false,
+    "origin": "BE-subject-draft",
+    "source": "PDF pp.13,17; 와이어 S13/S14; BE SubjectInput/SubjectAddChangeInput"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/subjects/:id",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/subjects/:id",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/subjects/:id/preview",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/subjects/:id/preview",
+    "contract": "manage.md",
+    "optional": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/tasks/:id/record",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/today",
+    "contract": "study.md",
+    "optional": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/tutor",
+    "contract": "tutor.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/tutor/backup",
+    "contract": "tutor.md",
+    "optional": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/units",
+    "contract": "material.md",
+    "optional": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/units",
+    "contract": "material.md",
+    "optional": false
+  }
+]

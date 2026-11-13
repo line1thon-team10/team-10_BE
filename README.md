@@ -14,8 +14,8 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 | 무엇 | 어디 |
 | --- | --- |
 | DB 구조 | `schema/erd.dbml` (효원님 ERD) → `app/db/schema.py`로 자동 생성 |
-| API 경로·응답 모양 | 프론트 `team-10_FE/src/api/endpoints.js`, `src/api/adapters/`, `docs/api-draft.md` |
-| 참고 명세 | `schema/openapi-0.7.0.json` (효원님 OpenAPI, 대회 후 서비스 버전 기준) |
+| API 구현 기준 명세 | [API 명세 1.0](docs/api/README.md) — FE 기준 계약·상태 전이·오류·수용 기준 (팀 합의 전 제안) |
+| 구버전 참고 명세 | `schema/openapi-0.7.0.json` — 현재 FE 계약과 경로/응답이 달라 직접 구현 기준으로 사용하지 않음 |
 | 기능·규칙 | 피뢰침 요구사항 정의서 v2 |
 
 ## 로컬 실행
