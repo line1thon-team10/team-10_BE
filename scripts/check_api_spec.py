@@ -39,6 +39,10 @@ for file in (args.fe / 'src/mocks/handlers').glob('*.js'):
 frontend = {(r['method'],r['path']) for r in rows if not r.get('origin')}
 proposed = actual - frontend
 assert expected == frontend, {'missing': sorted(expected-frontend), 'extra': sorted(frontend-expected)}
-assert all(r.get('origin') == 'wireframe-S8' for r in rows if r.get('origin')), 'Unreviewed source classification'
-print(f'PASS: {len(frontend)} FE operations + {len(proposed)} source-derived proposals, unique registry, contract files and Markdown links')
+allowed_origins = {'wireframe-S8', 'BE-schedule-edit', 'BE-subject-draft'}
+for row in rows:
+    if row.get('origin'):
+        assert row['origin'] in allowed_origins, row
+        assert isinstance(row.get('source'), str) and row['source'].strip(), row
+print(f'PASS: {len(frontend)} FE operations + {len(proposed)} source-derived operations, unique registry, contract files and Markdown links')
 print('Runtime behavior and field-schema conformance are NOT verified by this check.')

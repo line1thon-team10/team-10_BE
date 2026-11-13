@@ -232,7 +232,8 @@
     "path": "/api/quiz/:quizId/answers/:questionId",
     "contract": "quiz.md",
     "optional": false,
-    "origin": "wireframe-S8"
+    "origin": "wireframe-S8",
+    "source": "와이어 S8/S8-3; BE AnswerInput/AnswerSaved"
   },
   {
     "method": "GET",
