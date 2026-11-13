@@ -4,6 +4,7 @@ from sqlalchemy import Connection, func, select, update
 from sqlalchemy.exc import DBAPIError
 
 from app.core.clock import today_for
+from app.core.clock import now_utc
 from app.db.schema import plans, subjects, users
 from app.repositories.users import UserRepository
 
@@ -43,3 +44,13 @@ class DemoRepository:
             .order_by(subjects.c.exam_date, subjects.c.id).limit(1)
         ).first()
         return None if row is None else {"subjectId": row.id, "name": row.name, "examDate": row.exam_date.isoformat()}
+
+    def last_exam(self, user_id: UUID):
+        return self.connection.scalar(select(func.max(subjects.c.exam_date)).where(
+            subjects.c.user_id == str(user_id), subjects.c.status == "active"))
+
+    def archive_finished(self, user_id: UUID, today):
+        now = now_utc()
+        self.connection.execute(update(subjects).where(
+            subjects.c.user_id == str(user_id), subjects.c.status == "active", subjects.c.exam_date < today
+        ).values(status="archived", archive_reason="exam_finished", archived_at=now, updated_at=now))

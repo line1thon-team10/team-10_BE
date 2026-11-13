@@ -9,7 +9,6 @@ from app.db.session import get_conn
 from app.schemas.demo import DemoCommand, DemoResponse, DemoSeed
 from app.seed.demo_data import DEFAULT_SEED
 from app.services.demo import DemoService
-from app.services.planner import Planner
 
 router = APIRouter(prefix="/api/demo", tags=["데모"])
 
@@ -39,5 +38,4 @@ def demo_reset(payload: DemoCommand | None = None, user: dict = Depends(current_
 @router.post("/next-day", response_model=DemoResponse)
 def demo_next_day(payload: DemoCommand | None = None, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     _require_demo()
-    judgment = Planner(conn, user).advance_day()
-    return ok(DemoService(conn, user["id"]).state(judgment))
+    return ok(DemoService(conn, user["id"]).next_day())

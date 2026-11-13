@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import timedelta
 
 from sqlalchemy import Connection
 
@@ -7,6 +8,7 @@ from app.core.responses import ApiError
 from app.repositories.demo import DemoBusyError, DemoRepository
 from app.seed.demo_data import SEEDS
 from app.seed.loader import load_seed
+from app.services.planner import Planner
 
 
 class DemoService:
@@ -41,3 +43,22 @@ class DemoService:
         except ApiError as error:
             raise ApiError("SERVER_ERROR", "데모를 준비하지 못했어요. 잠시 후 다시 시도해 주세요", 500) from error
         return self.state()
+
+    def next_day(self) -> dict:
+        user = self._lock_user()
+        if not self.repo.has_plan(self.user_id):
+            raise ApiError("NO_PLAN", "계획을 먼저 만들어 주세요", 400)
+        if user.demo_date is None:
+            raise ApiError("BAD_DATE", "데모 날짜가 없는 사용자예요", 400)
+        last = self.repo.last_exam(self.user_id)
+        if last is None or user.demo_date >= last:
+            raise ApiError("DEMO_END", "마지막 시험일까지만 이동할 수 있어요", 400)
+        tomorrow = user.demo_date + timedelta(days=1)
+        try:
+            judgment = Planner(self.connection, user.to_mapping()).advance_day()
+        except ApiError as error:
+            if error.code == "ACTIVE_STUDY_SESSION":
+                raise ApiError("SESSION_RUNNING", "집중 모드를 먼저 끝내 주세요", 409) from error
+            raise
+        self.repo.archive_finished(self.user_id, tomorrow)
+        return self.state(judgment)
