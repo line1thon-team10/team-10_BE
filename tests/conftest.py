@@ -36,3 +36,13 @@ def migration_connection(request, tmp_path):
                     connection.commit()
     finally:
         engine.dispose()
+
+
+@pytest.fixture
+def domain_connection(migration_connection):
+    from alembic import command
+    from app.db.migrations import migration_config
+
+    command.upgrade(migration_config(migration_connection), "head")
+    migration_connection.commit()
+    return migration_connection
