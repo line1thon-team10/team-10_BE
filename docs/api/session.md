@@ -1,5 +1,19 @@
 # session API
 
+## 세션 발급 구현 범위
+
+`feat/session-domain`에서는 `POST /api/session`과 공통 익명 인증을 구현·검증한다. 요청 본문은 생략하거나 빈 객체를 보내며, 정의되지 않은 필드는 `422 INVALID_INPUT`이다. 응답에는 `anonymousId`만 포함하고, 사용자 내부 상태나 다른 사용자 ID를 추가하지 않는다.
+
+- `app/domain/user.py`: UUID v4, Asia/Seoul, draft 및 빈 사용자 상태 생성.
+- `app/repositories/users.py`: 사용자 저장·조회. 자체 commit 없이 요청의 트랜잭션에 참여한다.
+- `app/services/session.py`: 사용자 생성과 선택적인 day9 시드를 같은 트랜잭션으로 적용한다. 시드 실패 시 생성된 사용자·관련 행을 함께 rollback한다.
+- `app/core/auth.py`: UUID를 조회 전에 검증하고 사용자 레포지토리로 인증한다. [공통 계약](common.md)의 중복 헤더 규칙을 따른다.
+- `/api/` 응답은 `Cache-Control: no-store`를 적용하며, 처리되지 않은 500 오류도 내부 정보 없이 no-store로 반환한다.
+
+기존 FE mock의 `mock-...` ID는 mock 내부 값이며 실제 BE 자격이 아니다. FE의 실제 연동은 서버가 반환한 UUID를 보관하는 기존 흐름을 유지한다. 기존 BE가 잘못된 UUID를 DB에 직접 조회하던 동작은 `401 UNKNOWN_SESSION`으로 보정했다.
+
+이 범위에서 ERD 변경은 없다. 아래 데모 API의 seed 지속 저장, firstExam 보정, next-day 중복 처리·종료일 제한은 **후속 데모 계약 작업**이다. 세션 생성 시 데모 시드 적재 검증이 데모 API 전체 구현 완료를 뜻하지 않는다.
+
 ## 구현 규칙 (아래 원문 필드 표보다 우선)
 
 - 새 세션은 DEMO_MODE일 때 day9, 일반 모드일 때 빈 사용자로 생성한다. 데모 비활성 상태에서 seed/reset/next-day는 403 DEMO_DISABLED.
