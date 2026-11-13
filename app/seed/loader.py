@@ -8,6 +8,7 @@ from sqlalchemy import Connection, delete, select, update
 
 from app.core.clock import now_utc
 from app.db import schema as t
+from app.domain.focus import quote_for
 from app.seed import demo_data as d
 from app.seed.package import load_package
 
@@ -159,6 +160,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
     completed_units = defaultdict(lambda: {"pages": set(), "records": [], "day": None})
     day9_index = 0
     focus_task_id = None
+    focus_expected_seconds = None
     for day, scode, unit_no, ttype, ranges, minutes, reason in d.PLAN:
         if day < seed_day:
             done = True
@@ -183,6 +185,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             status="completed" if done else "planned", created_at=now))
         if seed == "day9" and day == seed_day and not done and focus_task_id is None:
             focus_task_id = task_id
+            focus_expected_seconds = minutes * 60
         for i, (uno, sp, ep) in enumerate(ranges):
             conn.execute(t.study_task_ranges.insert().values(
                 id=_id(), task_id=task_id, unit_id=unit_id[f"{scode}{uno}"], start_page=sp, end_page=ep,
@@ -230,7 +233,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
         conn.execute(t.study_sessions.insert().values(
             id=session_id, user_id=user_id, task_id=focus_task_id, status="running",
             started_at=started_at, study_date=seed_day, last_confirmed_elapsed_seconds=0,
-            created_at=now))
+            expected_seconds=focus_expected_seconds, quote=quote_for(session_id), created_at=now))
         conn.execute(t.study_session_segments.insert().values(
             id=_id(), session_id=session_id, sort_order=1, started_at=started_at))
 

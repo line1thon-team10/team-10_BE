@@ -275,7 +275,9 @@ Table study_sessions {
   ended_at timestamptz [note: '10분 무응답이면 실제 정지는 확인 알림 시각으로 소급']
   measured_seconds int [note: '서버가 segments 합계로 확정. 분 표시는 응답에서 변환']
   excluded_from_calibration boolean [not null, default: false, note: 'auto_stopped는 true']
-  study_date date [not null, note: '시작 시 사용자/데모 날짜. 일반 시간은 사용자 자정에서 분할, 데모는 이 날짜에 귀속. running/paused 동안 demo 날짜 전환·seed는 409로 거절']
+  study_date date [not null, note: '일반 시간은 사용자 자정에서 분할, 데모는 이 날짜에 귀속. 활성 세션 중 next-day는 거절, seed/reset은 사용자 잠금 아래 교체 허용']
+  expected_seconds int [note: '시작 당시 예상 시간 초. 기존 직접 적재와 호환을 위해 nullable, 서비스 첫 접근에서 보완']
+  quote text [note: '시작 시 고정한 문구. 기존 직접 적재는 첫 접근에서 보완']
   created_at timestamptz [not null]
   indexes { (user_id, study_date) }
 }

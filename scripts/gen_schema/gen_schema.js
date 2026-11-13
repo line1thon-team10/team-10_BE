@@ -60,9 +60,9 @@ function defaultOf(f) {
 
 const out = [];
 out.push('# 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.');
-out.push('# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 부분 유일 인덱스(erd-constraints.sql)는 아직 미반영.');
+out.push('# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.');
 out.push('from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,');
-out.push('                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid)');
+out.push('                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)');
 out.push('from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB');
 out.push('');
 out.push('metadata = MetaData()');
@@ -101,5 +101,13 @@ for (const t of schema.tables) {
   out.push('');
 }
 
+// DBML에서 표현할 수 없는 집중 부분 인덱스도 재생성 시 보존한다.
+const focusIndexes = JSON.parse(fs.readFileSync(path.join(root, 'schema', 'focus-indexes.json'), 'utf8'));
+for (const index of focusIndexes) {
+  const columns = index.columns.map(c => `${index.table}.c.${c}`).join(', ');
+  out.push(`Index(${py(index.name)}, ${columns}, unique=True,`);
+  out.push(`      postgresql_where=text(${py(index.where)}), sqlite_where=text(${py(index.where)}))`);
+}
+out.push('');
 fs.writeFileSync(path.join(root, 'app', 'db', 'schema.py'), out.join('\n'));
 console.log(`tables: ${schema.tables.length}, fks: ${Object.keys(fks).length}, use_alter: ${[...useAlter].join(', ') || '-'}`);
