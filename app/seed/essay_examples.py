@@ -14,13 +14,13 @@ def evaluation_key(prompt, correct_answer, answer):
 
 DEMO_ESSAY = {
     "code": "AI2-Q05",
-    "generation_version": "demo-package-2026-11-14",
-    "prompt": "랜덤 포레스트가 여러 결정 트리의 예측을 결합하는 방식과 장점을 설명하세요.",
-    "correct_answer": "서로 다르게 학습한 여러 결정 트리의 예측을 분류는 투표, 회귀는 평균으로 결합해 단일 트리의 과적합을 줄인다.",
-    "answer": "여러 결정 트리를 학습시켜 분류 결과를 투표로 정합니다.",
+    "generation_version": "demo-package-2026-11-14-v2",
+    "prompt": "로지스틱 회귀에서 선형 결합 결과를 어떻게 분류 확률로 바꾸는지 설명하세요.",
+    "correct_answer": "선형 결합 결과를 시그모이드 함수 등에 통과시켜 분류 확률을 추정한다.",
+    "answer": "선형 결합 결과로 분류 확률을 추정합니다.",
     "score": 70,
-    "good": ["여러 결정 트리를 사용하며 분류 결과를 투표로 결합한다는 설명이 맞아요."],
-    "missing": ["회귀에서는 평균으로 결합한다는 점과 단일 트리의 과적합을 줄이는 장점을 보완해 주세요."],
+    "good": ["선형 결합 결과를 사용해 분류 확률을 추정한다는 설명이 맞아요."],
+    "missing": ["선형 결합 결과를 시그모이드 함수 등에 통과시키는 변환 과정을 보완해 주세요."],
 }
 DEMO_ESSAY_KEY = evaluation_key(DEMO_ESSAY["prompt"], DEMO_ESSAY["correct_answer"], DEMO_ESSAY["answer"])
 

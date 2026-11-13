@@ -72,7 +72,10 @@ def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_f
     subject = next(s for s in after["subjects"] if s["name"] == "인공지능")
     quiz = api_client.get(f"/api/quiz/{subject['id']}",headers=headers)
     assert quiz.status_code == 200 and len(quiz.json()["data"]["questions"]) == 6
-    assert any(q["type"] == "essay" for q in quiz.json()["data"]["questions"])
+    questions = quiz.json()["data"]["questions"]
+    assert any(q["type"] == "essay" for q in questions)
+    # 이번 시연에서 새 문항은 실제 기록한 AI2 p.12–13만 사용한다.
+    assert all(12 <= int(q["page"].removeprefix("p.")) <= 13 for q in questions if q["tag"] is None)
 
 
 def test_overdue_has_no_focus_and_requests_replan(api_client, demo_user):
