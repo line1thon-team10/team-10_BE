@@ -220,7 +220,7 @@ class QuizService:
             if q["code"] in SAVED_ESSAY:
                 score, good, miss = SAVED_ESSAY[q["code"]]
                 return score, good, miss, "fallback"
-            return 0, [], ["지금은 서술형 채점을 하지 못했어요. 잠시 뒤 다시 확인해 주세요."], "failed"
+            raise ApiError("AI_FAILED", "서술형 채점을 하지 못했어요. 답안을 유지한 채 다시 제출해 주세요.", 503)
 
     def submit(self, session: dict, answers: list[dict]) -> None:
         if session["status"] == "submitted":
