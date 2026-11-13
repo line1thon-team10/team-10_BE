@@ -1,108 +1,74 @@
-# material API
+# 자료·단원 API
 
-## 구현 규칙 (아래 원문 필드 표보다 우선)
+근거: PDF-01·07·08(p.16), 와이어 S3·S4. FE의 자료 목록 `files[]`는 이미 다중 PDF를 지원한다. **수정 대상은 단원 조회·저장의 자료 식별과 개념별 시험 범위**다. 기존 BE `schema/openapi-0.7.0.json`의 `UnitsReplace`, `ConceptInput` 의미를 채택하고 FE 경로/필드 이름을 유지한다.
 
-- v1 업로드는 PDF만, 최대 크기는 운영 정책 미확정. 이전 초안의 50 MiB는 근거 없는 제안이므로 확정 제한에서 철회한다. MIME과 실제 PDF 구문 검사; 415 NOT_PDF, 413 FILE_TOO_LARGE. 암호로 잠겨 분석 불가하면 400 BAD_REQUEST. 파일 저장명은 서버가 생성한다.
-- **PDF-01, 원문 p.16 / 와이어 S3:** 과목당 PDF 여러 개를 지원한다. 새 업로드가 기존 자료를 자동 교체하지 않는다. 명시적인 동일 자료 교체만 기존 분석 작업을 취소하고 해당 자료 구조를 새 버전으로 만든다. 기존 기록/문항의 과거 참조는 보존한다. 승인된 계획에 영향을 주는 구조 편집은 409 PLAN_CHANGE_REQUIRED; 관리 변경 흐름으로 진행한다.
-- 접수는 200 {materialId,jobId}; DB 작업 생성과 파일 저장 실패를 정리한 뒤 반환. 동일 사용자·subjectId·파일 SHA256의 완료 작업은 재사용, 진행 작업은 같은 jobId 반환, 실패 작업은 새 시도로 재접수.
-- status는 running/done/failed. current는 0 기반, steps.length 미만. done이면 progress=100, failedStep/reason=null; failed이면 failedStep=current와 한국어 reason. running progress는 0..99. 이전 구조 버전 작업은 현재 단원을 덮어쓰지 않는다.
-- **PDF-07, 원문 pp.1,16:** OCR 성공과 퀴즈 가능 여부를 별도로 판정한다. OCR 성공은 단원을 저장하고 ocr=true. OCR 품질/근거 신뢰도가 낮을 때만 quizless=true이며 OCR이라는 이유만으로 전부 퀴즈에서 제외하지 않는다. 품질 판별 기준은 원문 p.22의 AI 확인 항목으로 미확정이다. 분석 실패만 수동 목차 입력으로 안내. 업로드 파일명으로 OCR/성공 여부를 결정하지 않는다.
-- 다중 자료를 구분하도록 GET /units는 subjectId+materialId, PUT /units와 POST /materials/toc는 subjectId+materialId를 필수로 받는다(기존 FE 계약 수정 필요). units[].no는 자료 내 번호이므로 다른 자료에 같은 번호가 있을 수 있다. 단원 식별은 unitId, 페이지 범위 식별은 materialId를 사용한다.
-- 수동 목차는 subjectId/materialId/text로 미리 파싱한 units를 반환한다. PUT /units로 확정한다. 신규 수동 단원의 id는 생략 허용하며 서버가 발급(원문 필수 표보다 우선). no는 자료 내 유일한 양의 정수, title은 비어 있지 않음, 1<=from<=to<=실제 페이지 수. 현재 단원 범위는 겹치지 않는다.
-- 자료 없는 수동 목차는 400 NO_MATERIAL. 목차/ OCR 단원은 quizless를 서버가 결정하며 클라이언트 false로 해제 불가. difficulty=null은 AI 추정 없음으로 허용.
-- PUT /units는 전체 현재 단원 목록 교체. 빈 배열은 400 NO_UNITS. 제목/순서 변경은 ID 유지, 페이지/개념 의미 변경은 retire 후 신규 ID. 과거 이력을 새 단원으로 재연결하지 않는다.
-- evidence는 string[]이며 실제 근거 설명만 반환, 좌표 상자는 이번 버전에서 제공하지 않는다. file은 {name:string,pages:integer} 또는 null.
-- GET file은 정규화된 PDF, 없으면 404 NO_FILE. 경로/스토리지 키는 반환하지 않는다. 근거 페이지는 이 파일의 실제 페이지와 일치해야 한다.
+## 자료 업로드·조회
 
-## 요청·응답 필드
+| 요청 | 입력 | `data` 응답 |
+|---|---|---|
+| `GET /api/materials` | 없음 | `{subjects:[{id,name,color,files:[{id,name,pages,status,jobId,quizless,ocr}]}]}` |
+| `POST /api/materials` | FormData `subjectId`, `file` 필수 | `{materialId,jobId}` |
+| `GET /api/materials/jobs/:jobId` | 소유 작업 ID | `{jobId,materialId,subjectId,status,ocr,steps,current,failedStep,progress,reused,reason}` |
+| `GET /api/materials/:id/file` | 자료 ID | PDF binary, 없으면 `404 NO_FILE` |
+| `POST /api/materials/toc` | `{subjectId,materialId,text}` | `{units:[{no,title,from,to}]}`; 파싱만 하고 저장하지 않음 |
 
-FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, 변경 사항은 decisions.md를 적용한다.
+ID/이름/reason은 string, pages/current/failedStep/progress는 integer, steps는 string[], reused/ocr/quizless는 bool. 목록의 pages/jobId/ocr/quizless는 분석 전 null 가능. 작업의 ocr/reason/failedStep은 아직 판정되지 않았거나 해당 없으면 null. status는 running/done/failed. running의 progress=0..99, done=100, current는 0 기반 단계 인덱스. failedStep은 실패한 current, reason은 한국어 안내다.
 
-#### `GET /api/materials` — 과목별 자료
+- 과목당 여러 PDF를 보존한다. 새 업로드가 기존 자료를 교체하지 않는다. 동일 사용자·과목·파일 SHA256의 완료/진행 작업은 재사용, 실패 작업은 새 시도로 접수한다.
+- PDF MIME과 실제 구문을 검증한다. 비PDF `415 NOT_PDF`, 잠금/손상으로 읽을 수 없으면 `400 BAD_REQUEST`. 운영 업로드 상한을 넘으면 `413 FILE_TOO_LARGE`; 50MiB를 제품 요구로 고정하지 않는다.
+- OCR 성공이면 `ocr=true`. 저품질일 때만 `quizless=true`. OCR이라는 이유만으로 전부 퀴즈에서 제외하지 않는다. 분석 실패 시 수동 목차 입력을 안내한다. 품질 임계값은 p.22의 AI 확인 사항이며 FE는 서버 판정값으로 표시한다.
+- 파일 저장과 작업 접수를 완료한 뒤 200을 반환한다. 오래된 분석 작업은 새 구조를 덮어쓰지 않는다. 스토리지 경로는 노출하지 않는다.
 
-| 응답                               | 타입   | null 가능 | 설명                          |
-| ---------------------------------- | ------ | --------- | ----------------------------- |
-| `subjects[].id` · `name` · `color` | string | 아니요    |                               |
-| `subjects[].files[].id`            | string | 아니요    |                               |
-| `subjects[].files[].name`          | string | 아니요    |                               |
-| `subjects[].files[].pages`         | number | 예        |                               |
-| `subjects[].files[].status`        | string | 아니요    | `running` · `done` · `failed` |
-| `subjects[].files[].jobId`         | string | 예        | 분석 중이면                   |
-| `subjects[].files[].quizless`      | bool   | 예        | 이 파일 범위는 퀴즈 없음      |
-| `subjects[].files[].ocr`           | bool   | 예        | 글자 인식으로 분석한 스캔본   |
+## 단원 조회·전체 저장
 
-#### `POST /api/materials` — 업로드 (FormData)
+`GET /api/units?subjectId=…&materialId=…`: 두 ID 모두 필수다. `PUT /api/units`의 편집 요청은 아래 형식이다. 기존 단원/개념은 ID를 보내고 신규 항목만 ID를 생략한다.
 
-| 요청        | 타입   | 필수 | 설명 |
-| ----------- | ------ | ---- | ---- |
-| `subjectId` | string | 예   |      |
-| `file`      | File   | 예   | PDF  |
+```json
+{
+  "subjectId": "subject-id",
+  "materialId": "material-id",
+  "units": [{
+    "id": "unit-id", "no": 1, "title": "자료구조", "from": 1, "to": 12,
+    "difficulty": "low", "inExam": true,
+    "concepts": [{"id": "concept-id", "title": "스택", "from": 1, "to": 5, "inExam": true}]
+  }]
+}
+```
 
-| 응답         | 타입   | null 가능 |
-| ------------ | ------ | --------- |
-| `materialId` | string | 아니요    |
-| `jobId`      | string | 아니요    |
+- `subjectId/materialId/units` 필수, units는 비어 있지 않은 배열. 각 단원의 no/title/from/to/concepts/inExam 필수, difficulty는 low/mid/high/null이며 생략 시 null. 개념의 title/from/to/inExam 필수. 배열 순서가 개념 순서다.
+- no는 **자료 내** 유일한 양의 정수. `unitId`가 식별자이며 `unitNo`는 표시용이다. 서로 다른 PDF의 1단원을 합치지 않는다.
+- 페이지는 실제 PDF 기준 정수 `1 <= from <= to <= pages`. 단원끼리 겹치지 않으며 개념은 소속 단원 안에 있어야 한다. 개념 간 중첩은 허용하고 페이지 집계는 합집합이다. `concepts:[]`는 수동 목차 등 개념을 추출하지 못한 경우 허용한다.
+- 최종 시험 범위는 inExam=true 단원의 선택된 개념 페이지 합집합이다. 개념이 없는 단원은 단원 페이지 전체를 사용한다. 개념이 있지만 모두 제외하면 그 단원의 시험 범위는 0쪽이다. 보충/문항도 이 식별 관계를 사용한다.
+- quizless/ocr/evidence는 서버 출력이며 편집 요청에서 받지 않는다. 수동 입력만으로 문항 근거가 생성됐다고 간주하지 않는다.
+- 제목·순서·난이도·inExam만 변경하면 ID 유지. 페이지/개념 구성 변경은 영향받은 구조만 retire 후 신규 ID. 삭제된 단원의 과거 문항·학습 기록·점수를 보존하며 새 ID에 복제하지 않는다.
 
-#### `GET /api/materials/jobs/:jobId` — 분석 진행
+GET의 `data` 및 저장 완료의 `data.structure`:
 
-| 응답         | 타입     | null 가능 | 설명                          |
-| ------------ | -------- | --------- | ----------------------------- |
-| `jobId`      | string   | 아니요    |                               |
-| `materialId` | string   | 아니요    |                               |
-| `subjectId`  | string   | 아니요    |                               |
-| `status`     | string   | 아니요    | `running` · `done` · `failed` |
-| `ocr`        | bool     | 예        | 스캔본: 글자 인식으로 분석    |
-| `steps`      | string[] | 아니요    | 단계 이름                     |
-| `current`    | number   | 아니요    | 지금 단계 번호                |
-| `failedStep` | number   | 예        | 실패한 단계                   |
-| `progress`   | number   | 예        | 진행 %                        |
-| `reused`     | bool     | 예        | 저장된 결과 재사용 (PDF-06)   |
-| `reason`     | string   | 예        | 실패 이유                     |
+```json
+{
+  "subjectId": "subject-id", "materialId": "material-id",
+  "file": {"id": "material-id", "name": "강의.pdf", "pages": 50},
+  "units": [{
+    "id": "unit-id", "no": 1, "title": "자료구조", "from": 1, "to": 12,
+    "difficulty": "low", "inExam": true, "quizless": false,
+    "evidence": ["목차와 본문 제목에 근거"],
+    "concepts": [{"id": "concept-id", "title": "스택", "from": 1, "to": 5, "inExam": true}]
+  }]
+}
+```
 
-#### `POST /api/materials/toc` — 목차 붙여넣기 (S3-2)
+존재하지 않는/타인 자료는 `404 NO_MATERIAL`, 빈 단원은 `400 NO_UNITS`, 소속 불일치·페이지 오류는 `422 INVALID_INPUT`. 자료가 없는 경우에는 먼저 자료 목록의 `files:[]`를 표시하며 불완전한 ID로 GET units를 호출하지 않는다.
 
-| 요청        | 타입   | 필수 |
-| ----------- | ------ | ---- |
-| `subjectId` | string | 예   |
-| `text`      | string | 예   |
+## 개념별 시험 범위와 승인 후 편집
 
-응답 `units[]`: `no` number · `title` string · `from` number · `to` number
+`PATCH /api/materials/:id/units` (`:id`는 materialId):
 
-#### `PATCH /api/materials/:id/units` — 시험 범위 체크 (S4, PDF-08)
+```json
+{"unitId":"unit-id","inExam":true,"concepts":[{"conceptId":"concept-id","inExam":false}]}
+```
 
-| 요청     | 타입   | 필수 |
-| -------- | ------ | ---- |
-| `unitNo` | number | 예   |
-| `inExam` | bool   | 예   |
+unitId 필수, inExam 또는 비어 있지 않은 concepts 중 하나 이상 필요. 생략한 단원/개념 상태는 유지한다. concepts의 중복 ID, 다른 단원 소속 ID는 거절한다. 단원 체크 해제 시 개념의 선택 상태는 보존하되 유효 시험 범위에서는 제외한다.
 
-응답: `subjectId` string · `unitNo` number · `inExam` bool
+PUT/PATCH 모두 승인 계획이 없으면 바로 저장하고 `{applied:true,previewId:null,structure:위 구조}`를 반환한다. 승인 계획이 있으면 **아무것도 변경하지 않고** `{applied:false,previewId,structure:후보 구조,changes:[{label,before,after}],days:[{date,text}],note}`를 반환한다. changes 값은 표시용 string, note는 string|null이다. FE는 비교 화면을 표시한다.
 
-#### `GET /api/materials/:id/file` — 원본 PDF (QZ-13 · 집중 모드 자료 열기)
-
-응답: PDF 파일 그대로 (`Content-Type: application/pdf`, `success` 틀 없음). 없으면 `404 NO_FILE`.
-
-#### `GET /api/units?subjectId=` · `PUT /api/units` — 단원 (S4)
-
-| 요청 (`PUT`)           | 타입     | 필수 | 설명                   |
-| ---------------------- | -------- | ---- | ---------------------- |
-| `subjectId`            | string   | 예   |                        |
-| `units[].id`           | string   | 예   |                        |
-| `units[].no` · `title` | –        | 예   |                        |
-| `units[].concepts`     | string[] | 예   |                        |
-| `units[].from` · `to`  | number   | 예   | 쪽 범위                |
-| `units[].difficulty`   | string   | 선택 | `low` · `mid` · `high` |
-| `units[].quizless`     | bool     | 선택 |                        |
-
-| 응답                  | 타입     | null 가능 | 설명                              |
-| --------------------- | -------- | --------- | --------------------------------- |
-| `subjectId`           | string   | 아니요    |                                   |
-| `file`                | object   | 예        | 자료 정보 (화면 표시용)           |
-| `units[].id`          | string   | 아니요    |                                   |
-| `units[].no`          | number   | 아니요    |                                   |
-| `units[].title`       | string   | 아니요    |                                   |
-| `units[].concepts`    | string[] | 예 ([])   |                                   |
-| `units[].from` · `to` | number   | 아니요    |                                   |
-| `units[].difficulty`  | string   | 예        | `low` · `mid` · `high` (AI 추정)  |
-| `units[].quizless`    | bool     | 예        | 목차 직접 입력 범위               |
-| `units[].inExam`      | bool     | 예 (true) | 시험 범위                         |
-| `units[].evidence`    | array    | 예 ([])   | 나눈 근거 문장 (서버가 만드는 값) |
+승인은 동일 PUT/PATCH 경로에 `{previewId}`만 전달한다. 성공 `{applied:true,previewId,structure:확정 구조}`. [후보 공통 규칙](decisions.md)을 적용해 해당 과목의 남은 범위만 재배분하고 기존 학습·퀴즈·책·보충은 보존한다. 구조 교체로 ID가 바뀌면 응답 구조를 다시 저장한다. 모든 시험 범위를 제외하거나 가용시간에 배정 불가하면 `409 PLAN_INFEASIBLE`, 승인 직전 다른 편집이 적용됐으면 `409 PREVIEW_STALE`이다.
