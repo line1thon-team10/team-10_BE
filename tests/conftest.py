@@ -84,3 +84,21 @@ def demo_user(api_client, monkeypatch):
     response = api_client.post("/api/session")
     assert response.status_code == 200, response.text
     return response.json()["data"]["anonymousId"]
+
+
+@pytest.fixture
+def end_focus(api_client):
+    def finish(user):
+        headers = {"X-Anonymous-Id": user}
+        active = api_client.get("/api/study/sessions/active", headers=headers).json()["data"]
+        if active:
+            response = api_client.post(f"/api/study/sessions/{active['id']}/end", headers=headers)
+            assert response.status_code == 200, response.text
+    return finish
+
+
+@pytest.fixture
+def settled_demo_user(demo_user, end_focus):
+    """날짜 이동 검사는 시연 집중 세션 종료 후 진행한다."""
+    end_focus(demo_user)
+    return demo_user

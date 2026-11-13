@@ -166,6 +166,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
         approved_at=datetime.combine(d.PLAN_START, time(21, 0), KST)))
     totals = defaultdict(lambda: [0, 0])  # (날짜, 과목) → [새 범위 p, 전체 p]
     day9_index = 0
+    focus_task_id = None
     for day, scode, unit_no, ttype, ranges, minutes, reason in d.PLAN:
         if day < seed_day:
             done = True
@@ -188,6 +189,8 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             id=task_id, plan_id=plan_id, subject_id=sid, block_id=block_id, task_type=ttype, title=title,
             scheduled_date=day, estimated_minutes=minutes, placement_reason=reason,
             status="completed" if done else "planned", created_at=now))
+        if seed == "day9" and day == seed_day and not done and focus_task_id is None:
+            focus_task_id = task_id
         for i, (uno, sp, ep) in enumerate(ranges):
             conn.execute(t.study_task_ranges.insert().values(
                 id=_id(), task_id=task_id, unit_id=unit_id[f"{scode}{uno}"], start_page=sp, end_page=ep,
@@ -220,6 +223,17 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             evidence_key="initial" if kind == "initial" else f"seed-{code}-{no}",
             evidence_snapshot={"schemaVersion": "1", "recordIds": [], "requiredRanges": [list(unit_pages[code])]},
             completed_at=datetime.combine(d.D(dd), time(16, 0), KST), completed_date=d.D(dd)))
+
+    if focus_task_id is not None:
+        # 실제 서버 시계로 42분을 되돌린다. 가상 학습 날짜와 측정 시각은 분리한다.
+        session_id = _id()
+        started_at = now - timedelta(minutes=42)
+        conn.execute(t.study_sessions.insert().values(
+            id=session_id, user_id=user_id, task_id=focus_task_id, status="running",
+            started_at=started_at, study_date=seed_day, last_confirmed_elapsed_seconds=0,
+            created_at=now))
+        conn.execute(t.study_session_segments.insert().values(
+            id=_id(), session_id=session_id, sort_order=1, started_at=started_at))
 
     _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, material_of, now)
 
