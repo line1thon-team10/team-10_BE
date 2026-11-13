@@ -6,8 +6,8 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 |---|---|---|---|
 | GET | `/api/books` | [books.md](books.md) | 구현 대상 |
 | GET | `/api/calendar` | [calendar.md](calendar.md) | 구현 대상 |
-| GET | `/api/demo/ai` | [session.md](session.md) | 개발 선택 |
-| POST | `/api/demo/ai` | [session.md](session.md) | 개발 선택 |
+| GET | `/api/demo/ai` | [session.md](session.md) | 선택 기능 |
+| POST | `/api/demo/ai` | [session.md](session.md) | 선택 기능 |
 | POST | `/api/demo/next-day` | [session.md](session.md) | 구현 대상 |
 | POST | `/api/demo/reset` | [session.md](session.md) | 구현 대상 |
 | POST | `/api/demo/seed` | [session.md](session.md) | 구현 대상 |
@@ -33,7 +33,7 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | GET | `/api/plan/draft` | [plan.md](plan.md) | 구현 대상 |
 | POST | `/api/plan/empty-time` | [calendar.md](calendar.md) | 구현 대상 |
 | POST | `/api/plan/pace` | [study.md](study.md) | 구현 대상 |
-| POST | `/api/plan/rebuild` | [manage.md](manage.md) | 501 고정 |
+| POST | `/api/plan/rebuild` | [manage.md](manage.md) | 구현 대상 |
 | POST | `/api/plan/replan` | [study.md](study.md) | 구현 대상 |
 | GET | `/api/plan/replan/options` | [study.md](study.md) | 구현 대상 |
 | DELETE | `/api/plan/resplit` | [plan.md](plan.md) | 구현 대상 |
@@ -42,6 +42,7 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | POST | `/api/plan/resplit/apply` | [plan.md](plan.md) | 구현 대상 |
 | POST | `/api/plan/today` | [manage.md](manage.md) | 구현 대상 |
 | POST | `/api/plan/today/preview` | [manage.md](manage.md) | 구현 대상 |
+| PUT | `/api/quiz/:quizId/answers/:questionId` | [quiz.md](quiz.md) | 원문/BE 기반 추가 |
 | GET | `/api/quiz/:subjectId` | [quiz.md](quiz.md) | 구현 대상 |
 | POST | `/api/quiz/:subjectId/more` | [quiz.md](quiz.md) | 구현 대상 |
 | GET | `/api/quiz/:subjectId/result` | [quiz.md](quiz.md) | 구현 대상 |
@@ -55,6 +56,9 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | POST | `/api/review/notes/:id/retry` | [review.md](review.md) | 구현 대상 |
 | POST | `/api/review/relearn` | [review.md](review.md) | 구현 대상 |
 | DELETE | `/api/schedules/:id` | [calendar.md](calendar.md) | 구현 대상 |
+| PATCH | `/api/schedules/:id` | [calendar.md](calendar.md) | 원문/BE 기반 추가 |
+| DELETE | `/api/schedules/:id/preview` | [calendar.md](calendar.md) | 원문/BE 기반 추가 |
+| PATCH | `/api/schedules/:id/preview` | [calendar.md](calendar.md) | 원문/BE 기반 추가 |
 | POST | `/api/schedules/voice` | [calendar.md](calendar.md) | 구현 대상 |
 | POST | `/api/schedules/voice/apply` | [calendar.md](calendar.md) | 구현 대상 |
 | POST | `/api/session` | [session.md](session.md) | 구현 대상 |
@@ -75,11 +79,3 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | GET | `/api/tutor/backup` | [tutor.md](tutor.md) | 구현 대상 |
 | GET | `/api/units` | [material.md](material.md) | 구현 대상 |
 | PUT | `/api/units` | [material.md](material.md) | 구현 대상 |
-
-## FE에 없는 원문 요구 계약
-
-| Method | Path | 계약 | 근거 |
-|---|---|---|---|
-| PUT | `/api/quiz/:quizId/answers/:questionId` | [quiz.md](quiz.md) | 와이어 S8·S8-3 문항별 저장 제안 |
-
-FE71개 경로와 위 추가안1개를 분리한다. 이것만으로 원문 요구 전체를 충족한다는 뜻은 아니며 source-audit.md의 미해결 API 항목을 함께 확인한다.

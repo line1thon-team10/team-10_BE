@@ -314,6 +314,30 @@
     "optional": false
   },
   {
+    "method": "PATCH",
+    "path": "/api/schedules/:id",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/schedules/:id/preview",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/schedules/:id/preview",
+    "contract": "calendar.md",
+    "optional": false,
+    "origin": "BE-schedule-edit",
+    "source": "와이어 S11; PDF p.13; BE ScheduleEditSingleInput/ScheduleEditFutureInput"
+  },
+  {
     "method": "POST",
     "path": "/api/schedules/voice",
     "contract": "calendar.md",
