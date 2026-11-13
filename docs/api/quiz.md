@@ -17,6 +17,19 @@
 - **QZ-11, 원문 pp.11,18:** 더 풀기는 같은 단원 미풀이5문항을 제공한다. 이전 초안의1~4개 부분 제공 규칙을 철회한다. 5개 미만이면 세트를 생성하지 않고 NO_QUESTIONS로 준비 부족을 알린다. 충분한 사전 문항 준비가 요구사항이며 단원당10개 이상 생성 여부는 p.22의 AI 확인 항목이다. 동일 일자/단원 재요청은 기존 생성 세트 반환. 문항 부족 자체로 무제한 AI 생성을 시작하지 않는다.
 - 완료 결과의 items/summary/unitChanges/bookChanges는 같은 확정 스냅샷. 이후 학습이 바뀌어도 과거 before/after를 재작성하지 않는다. more 배열은 완료된 자식 세트만 포함하고 재귀 순환 금지.
 
+## 문항별 저장 계약 추가 (와이어 S8·S8-3, NF-02)
+
+기존 FE는 마지막 bulk submit만 호출한다. 와이어의 [다음] 답 저장/서술형 비동기 채점을 만족시키기 위해 다음 API가 추가로 필요하다. 이는 공통 Job/202 API와 별개다.
+
+`PUT /api/quiz/:quizId/answers/:questionId`
+
+- header X-Anonymous-Id, body {choice:integer|null,text:string|null,confidence:sure|unsure,revision:integer}. 최초 revision=0, 이후 서버가 반환한 revision 사용.
+- 200 data:{quizId,questionId,saved:true,revision:integer,gradingStatus:pending|processing|completed|failed}. 점수·정답·해설은 반환하지 않는다. 저장 후 다음 문제로 진행 가능.
+- 문항별 답안 저장을 먼저 커밋한 뒤 서술형 채점 작업을 큐에 넣는다. 마지막 submit은 저장된 전체 답안을 봉인하고 채점 완료분을 재사용한다. 기존 answers bulk도 호환 입력으로 검증/저장하되 동일 attempt를 중복 생성하지 않는다.
+- 같은 revision+동일 입력 재전송은 같은 응답; 같은 revision+다른 입력은409 ANSWER_CONFLICT. 새 답안을 허용하는 미제출 상태에서는 이전 채점 작업의 answer revision을 무효화해 오래된 결과가 덮어쓰지 못하게 한다. 제출 완료 후 변경은409 QUIZ_FINALIZED.
+- GET 문항 응답에 quizId와 savedAnswers:[{questionId,choice,text,confidence,revision}]를 추가한다. 새로고침 후 풀이 복구. 정확한 정답/채점 결과는 완료된 결과 조회에만 공개한다.
+- AI 실패는 답 저장 성공 자체를 취소하지 않는다. 마지막 submit의503 AI_FAILED 및 재시도 규칙 유지. 문제 진행 API와 최종 결과 API를 구별한다.
+
 ## 요청·응답 필드
 
 FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, 변경 사항은 decisions.md를 적용한다.
