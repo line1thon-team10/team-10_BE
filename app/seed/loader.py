@@ -1,5 +1,4 @@
 """시드를 DB에 넣어요. 한 사용자의 데이터만 지우고 다시 넣어서 다른 사용자에게 영향이 없어요."""
-import json
 import uuid
 from collections import defaultdict
 from datetime import datetime, time, timedelta
@@ -7,20 +6,12 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, delete, select, update
 
-from app.config import AI_ENGINE_PATH
 from app.core.clock import now_utc
-from app.core.responses import ApiError
 from app.db import schema as t
 from app.seed import demo_data as d
+from app.seed.package import load_package
 
 KST = ZoneInfo("Asia/Seoul")
-
-
-def _read_quiz_seed() -> dict:
-    path = AI_ENGINE_PATH / d.QUIZ_SEED_FILE
-    if not path.is_file():
-        raise ApiError("QUIZ_SEED_MISSING", f"퀴즈 시드를 찾지 못했어요: {path} (AI_ENGINE_PATH 확인)", 500)
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _id() -> str:
@@ -103,15 +94,15 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
     seed_day = d.SEED_DATES[seed]
     has_plan = seed != "empty"
     conn.execute(update(t.users).where(t.users.c.id == user_id).values(
-        demo_date=seed_day, demo_seed=seed, last_assessed_date=seed_day,
+        demo_date=seed_day, demo_seed=seed, last_assessed_date=seed_day - timedelta(days=1),
         onboarding_status="completed" if has_plan else "draft", updated_at=now))
     if not has_plan:
         return
 
     # 과목·자료·단원·개념
-    quiz = _read_quiz_seed()
+    subject_defs, quiz, mastery = load_package()
     subject_id, unit_id, unit_pages, concept_id, material_of = {}, {}, {}, {}, {}
-    for s in d.SUBJECTS:
+    for s in subject_defs:
         sid = subject_id[s["code"]] = _id()
         conn.execute(t.subjects.insert().values(
             id=sid, user_id=user_id, code=s["code"], name=s["name"], color=s["color"], status="active",
@@ -122,15 +113,15 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
         fname, pages = s["file"]
         mid = _id()
         conn.execute(t.materials.insert().values(
-            id=mid, subject_id=sid, original_name=fname, source_format="pdf", sha256=f"seed-{s['code']}",
-            page_count=pages, extraction_method="text", analysis_version="seed-1",
+            id=mid, subject_id=sid, original_name=fname, source_format="pdf", sha256=s["sha256"],
+            page_count=pages, extraction_method="text", analysis_version=d.PACKAGE_VERSION,
             analysis_status="succeeded", quiz_enabled=True, question_generation_status="ready",
             created_at=now, updated_at=now))
         for no, (title, start, end, diff, concepts) in enumerate(s["units"], start=1):
             code = f"{s['code']}{no}"
             uid = unit_id[code] = _id()
             unit_pages[code] = (start, end)
-            score, level, recovery = d.MASTERY.get(code, (None, None, False))
+            score, level, recovery = mastery.get(code, (None, None, False))
             emphasis = 1.5 if s["emphasized_content"] and title.startswith("트리") else 1.0
             conn.execute(t.units.insert().values(
                 id=uid, material_id=mid, code=code, title=title, sort_order=no, quantity_basis="page",
@@ -165,6 +156,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
         id=plan_id, user_id=user_id, revision=1, created_at=now,
         approved_at=datetime.combine(d.PLAN_START, time(21, 0), KST)))
     totals = defaultdict(lambda: [0, 0])  # (날짜, 과목) → [새 범위 p, 전체 p]
+    completed_units = defaultdict(lambda: {"pages": set(), "records": [], "day": None})
     day9_index = 0
     focus_task_id = None
     for day, scode, unit_no, ttype, ranges, minutes, reason in d.PLAN:
@@ -183,7 +175,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             stacked_at=datetime.combine(day, time(16, 0), KST) if done else None, created_at=now))
         title = {"review": "총복습", "remedial": "보충"}.get(ttype, "")
         if unit_no:
-            utitle = d.SUBJECTS[[s["code"] for s in d.SUBJECTS].index(scode)]["units"][unit_no - 1][0]
+            utitle = subject_defs[[s["code"] for s in subject_defs].index(scode)]["units"][unit_no - 1][0]
             title = f"{unit_no}단원 {utitle}" + (" 보충" if ttype == "remedial" else "")
         conn.execute(t.study_tasks.insert().values(
             id=task_id, plan_id=plan_id, subject_id=sid, block_id=block_id, task_type=ttype, title=title,
@@ -205,6 +197,10 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
                 id=rec_id, task_id=task_id, result="completed", recorded_at=datetime.combine(day, time(16, 0), KST),
                 study_date=day, updated_at=now))
             for uno, sp, ep in ranges:
+                evidence = completed_units[f"{scode}{uno}"]
+                evidence["pages"].update(range(sp, ep + 1))
+                evidence["records"].append(rec_id)
+                evidence["day"] = day
                 conn.execute(t.study_record_ranges.insert().values(
                     id=_id(), record_id=rec_id, unit_id=unit_id[f"{scode}{uno}"], start_page=sp, end_page=ep))
 
@@ -214,15 +210,18 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
             planned_new_pages=new_p, planned_total_pages=total_p, planned_unpaged_minutes=0,
             finalized_at=now if day < seed_day else None, updated_at=now))
 
-    # 1회독을 끝낸 단원 (11/9 이전 기록 기준). DS2는 11/8 보충까지 끝나 2회독
-    passes = [("DS1", 1, "initial", 4), ("DS2", 1, "initial", 5), ("DS2", 2, "remedial", 8),
-              ("OS1", 1, "initial", 3), ("NW1", 1, "initial", 8)]
-    for code, no, kind, dd in passes:
+    # 완료된 페이지와 기록 ID로 회독 근거를 구성한다. 오늘 완료한 DB2/OS2도 포함한다.
+    for code, evidence in completed_units.items():
+        start_page, end_page = unit_pages[code]
+        if not set(range(start_page, end_page + 1)) <= evidence["pages"]:
+            continue
+        day = evidence["day"]
         conn.execute(t.learning_passes.insert().values(
-            id=_id(), unit_id=unit_id[code], pass_number=no, completion_kind=kind,
-            evidence_key="initial" if kind == "initial" else f"seed-{code}-{no}",
-            evidence_snapshot={"schemaVersion": "1", "recordIds": [], "requiredRanges": [list(unit_pages[code])]},
-            completed_at=datetime.combine(d.D(dd), time(16, 0), KST), completed_date=d.D(dd)))
+            id=_id(), unit_id=unit_id[code], pass_number=1, completion_kind="initial",
+            evidence_key="initial",
+            evidence_snapshot={"schemaVersion": "1", "recordIds": evidence["records"],
+                               "requiredRanges": [[start_page, end_page]]},
+            completed_at=datetime.combine(day, time(16, 0), KST), completed_date=day))
 
     if focus_task_id is not None:
         # 실제 서버 시계로 42분을 되돌린다. 가상 학습 날짜와 측정 시각은 분리한다.
@@ -239,7 +238,7 @@ def load_seed(conn: Connection, user_id: str, seed: str) -> None:
 
 
 def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, material_of, now) -> None:
-    """문항 77개 · 시드 날짜 전까지의 풀이 기록 · 취약 문항 · 시드 날짜의 오늘 퀴즈 구성"""
+    """패키지 문항·풀이 기록·취약 문항·오늘 퀴즈 구성"""
     question_id = {}
     for q in quiz["questions"]:
         qid = question_id[q["id"]] = _id()
@@ -250,11 +249,11 @@ def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, m
             id=qid, unit_id=unit_id[q["unit"]], concept_id=concept_id.get(q["concept"]), code=q["id"],
             type=qtype, difficulty=d.DIFF_MAP.get(q["difficulty"], "low"), prompt=q["question"], choices=choices,
             correct_answer=q["answer"], explanation=q.get("explanation"),
-            origin="seed" if q.get("source") == "daily" else "generated", generation_version="seed_quiz-2026-11-05",
+            origin="seed" if q.get("source") == "daily" else "generated", generation_version=d.PACKAGE_VERSION,
             created_at=now))
         conn.execute(t.question_sources.insert().values(
             id=_id(), question_id=qid, material_id=material_of[q["unit"]],
-            start_page=q["page"], end_page=q["page"], quote=None))
+            start_page=q["page"], end_page=q["page"], quote=q.get("quote")))
 
     subj_of_q = {q["id"]: q["unit"][:2] for q in quiz["questions"]}
     # 날짜·과목별 퀴즈 1개로 묶어서 풀이 기록을 넣어요
@@ -277,7 +276,7 @@ def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, m
                 id=item_id, quiz_session_id=qsid, question_id=question_id[a["question"]], sort_order=i + 1,
                 inclusion_reason="new"))
             conn.execute(t.quiz_attempts.insert().values(
-                id=_id(), quiz_item_id=item_id, answer="", confidence=d.CONF_MAP[a["confidence"]],
+                id=_id(), quiz_item_id=item_id, answer=a["answer"], confidence=d.CONF_MAP[a["confidence"]],
                 is_correct=a["correct"], grading_status="graded", essay_score=a.get("essay_score"),
                 answered_at=at, answered_date=day, finalized_at=at, graded_at=at, mastery_applied_at=at))
             latest[a["question"]] = (a, day)
@@ -289,7 +288,7 @@ def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, m
                 question_id=question_id[code], status="active", review_step=0,
                 next_review_date=day + timedelta(days=1), last_weak_at=datetime.combine(day, time(20, 0), KST)))
 
-    # 시드 날짜의 오늘 퀴즈 (데이터 세트 4장: 자료구조 7 · 운영체제 13 · 네트워크 5)
+    # 오늘 단원당 새 문제 5 + 취약 문항 (AI 6 · DB 8 · OS 6)
     if seed_day.isoformat() == "2026-11-09":
         studied_units = {code for codes in d.TODAY_UNITS.values() for code in codes}
         for scode, codes in quiz["pending_quizzes_1109"].items():

@@ -52,7 +52,7 @@ def test_archive_on_day_after_exam_preserves_records_and_other_user(api_client, 
     conn.execute(update(users).where(users.c.id == settled_demo_user).values(demo_date=date(2026,11,11)))
     conn.commit()
     assert advance(api_client,settled_demo_user).status_code == 200
-    ds=select(subjects).where(subjects.c.user_id == settled_demo_user,subjects.c.code=="DS")
+    ds=select(subjects).where(subjects.c.user_id == settled_demo_user,subjects.c.code=="AI")
     assert conn.execute(ds).mappings().one()["status"] == "active"
     count=conn.scalar(select(func.count()).select_from(study_records))
     conn.commit()
@@ -60,7 +60,7 @@ def test_archive_on_day_after_exam_preserves_records_and_other_user(api_client, 
     row=conn.execute(ds).mappings().one()
     assert row["status"]=="archived" and row["archive_reason"]=="exam_finished" and row["archived_at"] is not None
     assert conn.scalar(select(func.count()).select_from(study_records))==count
-    assert conn.scalar(select(subjects.c.status).where(subjects.c.user_id==other,subjects.c.code=="DS"))=="active"
+    assert conn.scalar(select(subjects.c.status).where(subjects.c.user_id==other,subjects.c.code=="AI"))=="active"
 
 
 def test_failure_after_day_closure_rolls_back_every_write(api_client,settled_demo_user,domain_connection,monkeypatch):
