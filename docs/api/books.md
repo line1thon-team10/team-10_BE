@@ -27,7 +27,7 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `subjects[].collected`                            | number | 아니요    | 쌓인 책 수 (예정 제외)                       |
 | `subjects[].units[].no` · `title` · `from` · `to` | –      | 아니요    |                                              |
 | `subjects[].units[].grade`                        | string | 예        | `stable` · `shaky` · `risk` · null (퀴즈 전) |
-| `subjects[].units[].score`                        | number | 예        | 0~100                                        |
+| `subjects[].units[].score`                        | number | 예        | 0~99                                        |
 | `subjects[].units[].round`                        | number | 예 (1)    | 회독                                         |
 | `subjects[].units[].note`                         | string | 예        | 단원 메모                                    |
 | `subjects[].units[].blocks[].state`               | string | 아니요    | 블록 상태                                    |
@@ -39,3 +39,8 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `readiness[].progressRate`                        | number | 예        | 진도율 %                                     |
 | `readiness[].mastery`                             | number | 예        | 숙달도 % (null이면 식을 숨김)                |
 | `readiness[].studiedPages` · `totalPages`         | number | 예        | 진도율 분자 · 분모                           |
+
+
+## 다중 자료 식별
+
+`subjects[].units[]`에 `id`(unitId), `materialId` string을 필수로 추가한다. no는 자료 내 표시 순번이다. blocks[]에는 `id`(영속 책 ID)를 포함하고, blocks[].task가 있으면 `id`(taskId), `pages`, `ranges`([학습 범위 형식](study.md))를 함께 반환한다. 복합 범위의 from/to/doneTo는 null이다. FE는 unitId/blockId로 렌더링·선택하고 서버 pages를 사용한다. 다른 PDF의 같은 단원 번호·페이지를 합산 중복 제거하지 않는다.
