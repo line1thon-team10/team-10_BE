@@ -15,6 +15,7 @@ from app.ai import engine as ai
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.services.study import StudyData, unit_no
+from app.seed.essay_examples import saved_evaluation
 
 NEW_PER_UNIT = 5
 MORE_COUNT = 5
@@ -23,13 +24,6 @@ DIFF_KO = {"low": "하", "mid": "중", "high": "상"}
 TYPE_KO = {"choice": "객관식", "ox": "OX", "short": "단답형", "essay": "서술형"}
 CONF_KO = {"sure": "확실", "unsure": "애매"}
 TAGS = {"weak": "어제 오답", "carried_over": "어제 안 푼 문제", "extra": "더 풀기", "practice": "문제 뽑기"}
-
-# AI 채점이 안 될 때 쓰는 저장된 채점 (데이터 세트 4장 시연 문항)
-SAVED_ESSAY = {
-    "DS3-06": (70, ["후속자(오른쪽 서브트리의 최솟값)로 바꾸는 건 맞아요."],
-               ["후속자를 원래 자리에서 지우는 단계가 빠졌어요. 후속자는 왼쪽 자식이 없어서 자식이 0개나 1개인 경우로 처리하면 돼요."]),
-}
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -217,9 +211,9 @@ class QuizService:
                  "page": src.get("start_page") or 1, "source_text": src.get("quote") or ""}, text)
             return r["score"], r["strengths"], r["missing_points"], "graded"
         except Exception:  # noqa: BLE001 — AI 실패·키 없음은 저장된 채점으로 (NF-10)
-            if q["code"] in SAVED_ESSAY:
-                score, good, miss = SAVED_ESSAY[q["code"]]
-                return score, good, miss, "fallback"
+            saved = saved_evaluation(q, text)
+            if saved is not None:
+                return saved
             raise ApiError("AI_FAILED", "서술형 채점을 하지 못했어요. 답안을 유지한 채 다시 제출해 주세요.", 503)
 
     def submit(self, session: dict, answers: list[dict]) -> None:
