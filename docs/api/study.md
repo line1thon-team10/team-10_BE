@@ -10,12 +10,13 @@
 - interpret는 text를 페이지 후보로만 해석, 기록 저장 없음. 모호하거나 범위 밖이면 400 PARSE_FAILED.
 - **BK-03/4-5, 원문 pp.2,11,19:** P1 dayClose는 (오늘 모든 태스크 기록 또는 서버 현지시각23:30 이후)이고 진행률>=70일 때 사용자/날짜당 한 번. 일반 기록은 toast 또는 event:null. 중복 제출로 박스를 재발급하지 않는다.
 - 이월은 기존 배치를 carried_over로 보존하고 같은 block_id로 새 배치를 만든다. 미완료 페이지는 합집합으로 계산. **RC-02/4-8, 원문 p.12:** 과목별 누적 밀린 페이지 >= ceil((그 과목 전체 범위 페이지 / 그 과목 태스크가 있는 날 수)×0.5)이면 replan, 미만이면 다음 공부일로 carry. 남은 날 평균이나 과목 합산 기준으로 대체하지 않는다. 예:140/8=17.5, 임계9쪽;8쪽은 carry,9쪽은 replan. 미완료가 0이면 none, 남은 계획일이 0이면 배정 불가 안내.
-- replan A는 가용 시간 내 추가 배정, B는 미학습·비강조 범위를 제외, C는 남은 범위를 압축 복습. **RC-05:** 보충 태스크는 삭제하거나 범위 축소하지 않고 날짜만 조정한다. 기록된 범위를 삭제하지 않는다. 불가능한 안은 enabled:false. 세 안을 항상 반환하되 모두 불가능해도 거짓 실행안을 만들지 않는다.
+- replan A는 가용 시간 내 추가 배정, B는 미학습·비강조 범위를 제외, C는 남은 범위를 압축 복습. **RC-05:** 보충 태스크는 삭제하거나 범위 축소하지 않고 날짜만 조정한다. 기록된 범위를 삭제하지 않는다. [나중에]는 후보/알림을 제거하지 않으며 다음 접속 때 다시 표시한다(RC-04). 불가능한 안은 enabled:false. 세 안을 항상 반환하되 모두 불가능해도 거짓 실행안을 만들지 않는다.
 - GET replan/options는 {options,saved,previewId}. POST replan은 key A/B/C와 previewId. 적용 {event:{type:"box",reason:"recover",...}}. 선택한 disabled 안은 400 BAD_KEY.
 - 속도 보정은 최근 3일의 유효 종료 측정 시간/실제 완료 페이지로 계산하며 autoStopped/excluded는 제외. **PL-07/4-11, 원문 pp.12,16:** 3일 측정 후 현재 기준 속도와20% 이상 차이일 때 과목당 하루 한 번 제안한다. 샘플/조건 부족이면 paceAlert:null. apply:false는 제안만 해제, true는 승인 속도와 미래 예상 시간 갱신; 일정 초과 시 replan=true. P2가 P4보다 먼저 표시된다.
 
 ## 집계와 누락된 중첩 형식
 
+- **와이어 S6·S15:** 홈/일별 달성률은 그날 계획된 새 학습+보충의 task별 완료량/계획량이다. 동일 task 안 중복 범위는 제거하지만 새 학습 task와 보충 task를 같은 페이지라는 이유로 하나로 합치지 않는다. 과목 진도율의 고유 새 범위 집계와 구분한다.
 - rate는 min(100, HALF_UP(100*donePages/totalPages)), 분모0이면0. 판정은 반올림 전 비율로 한다. quiz.remainPages=max(0,ceil(.7*출제가능계획페이지)-출제가능완료페이지). 일반 progress와 quiz용 분모를 구분한다.
 - Task.from/to/unitNo는 총복습처럼 단일 범위를 지정할 수 없으면 null. FE toTask는 null일 때 pages=0으로 처리해야 한다. 현재 표의 non-null보다 이 규칙이 우선한다.
 - replan options[].lines는 string[], effect/preview는 string, enabled는 bool. options 응답은 표의 전체 replan 객체에 previewId를 더한 형태이다(앞 규칙의 {options,saved,previewId}는 요약).
