@@ -8,7 +8,7 @@
 - empty-time 적용은 option+previewId. rest는 공부 추가 없음, pull은 기존 미래 태스크를 앞당김, advance는 미학습 다음 범위 배정. 날짜·가용 시간·시험일·기록 보존 규칙 준수. 성공 {applied:true}.
 - voice는 일정/이동 후보만 저장하며 승인 전 일정/태스크 변경 금지. event는 {title,date,start,end,repeat,label}, moves[].pieces는 실제 분할 범위. apply에 previewId 필수, 성공 {applied:true}.
 - study block은 id/subjectId/subjectName/color/title/date/start/end/reason/status가 string, from/to는 integer|null, minutes는 integer, supplement/moved는 bool. exams는 {subjectId,name,examDate,color}[], summary는 과목 ID별 {minutes:integer,count:integer}.
-- monthly subjects는 {id,name,color}[], days[].labels는 string[]. plan/done은 고유 페이지 수, rate는 분모0이면0. future에 완료량을 예측하지 않는다. estimated는 실제 측정 시간이 없는 계획 기반 표시에만 사용.
+- monthly subjects는 {id,name,color}[], days[].labels는 string[]. **와이어 S15·S15-1:** plan/done과 achievement는 새 범위와 보충을 포함한 일별 task 완료/계획 페이지 합, rate는 분모0이면0. subjects[].pages/share는 새 범위 고유 페이지 기준이며 보충 제외. 두 분모를 혼용하지 않는다. future에 완료량을 예측하지 않는다. estimated는 실제 측정 시간이 없는 계획 기반 표시에만 사용.
 - report는 숫자 집계이며 AI 회고를 생성하지 않는다. from은 해당 월1일, until은 min(today,월말), 미래월은 studyDays=0 등 빈 집계. grades[].before는 {grade:string,score:number} 또는 null, after는 {grade:string,score:number}. share는 과목 학습페이지/전체 학습페이지의 백분율, 0분모면0.
 
 ## 요청·응답 필드
