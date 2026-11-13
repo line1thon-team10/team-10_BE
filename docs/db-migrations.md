@@ -2,6 +2,17 @@
 
 스키마 변경은 Alembic revision으로 관리한다. 서버 시작은 현재 DB의 revision이 코드의 단일 head와 같은지만 읽어서 확인하며, `create_all()`이나 자동 upgrade를 실행하지 않는다. 배포 순서는 **DB 백업 → 마이그레이션 단일 실행 → 서버 worker 시작**이다.
 
+## 데모 계약 revision
+
+- `0002_demo_seed`: `users.demo_seed` nullable 컬럼을 추가한다. 기존 사용자의 이력을 날짜로 추정하거나 seed를 다시 적재하지 않는다. 기존 값은 null, 이후 실제 seed/reset에서 선택값을 기록한다.
+- `0003_demo_day_requests`: next-day의 사용자별 재시도 키·요청 해시·성공 응답·생성 시각을 저장한다. 경로/메서드는 next-day로 고정하고 완료된 200 응답만 보관한다. 일반적인 전체 API 재시도 저장소가 아니다.
+
+기존 baseline DB도 백업 후 `python -m alembic upgrade head`로 순서대로 올린다. 현재 모델을 직접 `create_all()`하거나 기존 DB에 baseline을 다시 stamp하지 않는다. 테스트는 fresh upgrade, baseline 사용자 데이터 보존, 각 revision downgrade/reupgrade와 PostgreSQL 스키마 일치를 확인한다.
+
+재시도 기록은 자동 만료하지 않고 seed/reset에서도 보존한다. 용량 관리는 후속 운영 정책이며 임의 정리는 하지 않는다. `0003` downgrade는 응답 기록을, `0002` downgrade는 저장한 seed 선택값을 잃는다. 운영에서 schema downgrade만 실행하면 중복 방지 이력이 사라질 수 있으므로 코드를 함께 검토하고 현재 DB를 먼저 백업해야 한다. 이 PR은 운영 DB에 migration을 실행하지 않는다.
+
+PostgreSQL mutation은 사용자 행의 NOWAIT 잠금으로 직렬화한다. SQLite는 DB 단위 쓰기 잠금을 사용하므로 다른 사용자의 쓰기도 잠시 충돌할 수 있다. 잠금 충돌은 409로 반환하며 트랜잭션이 끝날 때 해제된다.
+
 ## 이번 baseline 범위
 
 - `0001_baseline`은 기존 생성형 SQLAlchemy 스키마의36개 테이블을 그대로 고정한 초기 revision이다. API 도메인이나 새로운 ERD 제약을 추가하지 않는다.
