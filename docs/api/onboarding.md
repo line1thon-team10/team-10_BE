@@ -70,3 +70,10 @@ Event (일정 한 개, S1 · S2 공통)
 | `summary.fixedMinutes` | number  | 아니요    | 이번 주 고정 일정 분 |
 | `summary.freeMinutes`  | number  | 아니요    | 이번 주 빈 시간 분   |
 | `addedId`              | string  | 예        | 방금 추가한 일정 id  |
+
+
+## 신규 과목 온보딩 컨텍스트
+
+기존 초기 온보딩 경로를 유지한다. 승인된 계획에 과목을 추가할 때 `GET /api/onboarding?subjectId=…`, `POST /api/onboarding/message {subjectId,text}`로 draft 과목 컨텍스트를 지정한다. 해당 draft의 messages/chips/subjects/done만 반환하고 기존 활성 과목의 목표·시험·일정은 변경하지 않는다. 다른 사용자 또는 활성 과목을 컨텍스트로 전달하면404 SUBJECT_NOT_FOUND/409 ONBOARDING_COMPLETED. 초기 온보딩에서는 subjectId를 생략한다.
+
+subjects[].confirmedFields에 `{examDate:boolean,goal:boolean,goalTotal:boolean,goalEtc:boolean}`를 필수로 반환한다. 기타 정보에 명시적으로 '없음'이라고 확인한 경우 값은 null, 확인 상태는 true일 수 있다. done은 네 확인값과 유효한 시험일·목표를 기준으로 서버가 계산한다. FE는 null 여부로 done을 재계산하지 않는다. 자연어로 날짜/목표가 불명확하면 추가 질문만 하고 confirmed로 바꾸지 않는다.

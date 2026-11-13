@@ -398,6 +398,14 @@
     "optional": false
   },
   {
+    "method": "POST",
+    "path": "/api/subjects",
+    "contract": "manage.md",
+    "optional": false,
+    "origin": "BE-subject-draft",
+    "source": "PDF pp.13,17; 와이어 S13/S14; BE SubjectInput/SubjectAddChangeInput"
+  },
+  {
     "method": "DELETE",
     "path": "/api/subjects/:id",
     "contract": "manage.md",

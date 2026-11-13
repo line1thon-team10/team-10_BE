@@ -69,6 +69,7 @@ FE mock handler의 모든 method/path를 포함한다. 각 문서의 필드 표�
 | POST | `/api/study/sessions/:id/resume` | [focus.md](focus.md) | 구현 대상 |
 | GET | `/api/study/sessions/active` | [focus.md](focus.md) | 구현 대상 |
 | GET | `/api/subjects` | [manage.md](manage.md) | 구현 대상 |
+| POST | `/api/subjects` | [manage.md](manage.md) | 원문/BE 기반 추가 |
 | DELETE | `/api/subjects/:id` | [manage.md](manage.md) | 구현 대상 |
 | PATCH | `/api/subjects/:id` | [manage.md](manage.md) | 구현 대상 |
 | DELETE | `/api/subjects/:id/preview` | [manage.md](manage.md) | 구현 대상 |
