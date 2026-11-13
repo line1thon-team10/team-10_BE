@@ -14,6 +14,8 @@ RPI4의 실행 중·중지된 컨테이너 포트 매핑을 확인해 3047을 �
 
 RPI5 runner 경로는 `/home/ubuntu/actions-runner-line1`, RPI4 배포 경로는 `/home/ubuntu/apps/2026-line1`이다. RPI5의 `/home/ubuntu/.ssh/line1-deploy`는 배포 전용 키이며, RPI4 authorized_keys에서 RPI5의 Tailscale IP로 접속을 제한한다. runner는 현재 workflow의 배포 작업만 맡으며 PR 이벤트로 실행하지 않는다.
 
+RPI5 Ubuntu 26.04에서 runner 2.338.2의 Worker가 작업 초기화 중 exit 139로 두 번 종료됐다. 같은 서버의 기존 설치와 같은 공식 2.338.0으로 교체한 뒤 checkout 및 배포 명령 실행을 확인했다. 자동 업데이트 설정은 끄지 않았으므로 업그레이드 후 같은 증상이 재발하면 runner 진단 로그와 버전을 먼저 확인한다. 기존 바이너리는 서버의 프로젝트 디렉터리에 백업했다.
+
 ## 최초 설정
 
 1. 비공개 `team-10_AI`에 읽기 전용 deploy key를 등록하고 BE 저장소 Actions secret `AI_SUBMODULE_SSH_KEY`에 개인키를 저장한다. 사용자 승인 후 등록하며 키 내용을 저장소·로그에 남기지 않는다. BE submodule gitlink의 SHA를 그대로 checkout한다.
@@ -24,6 +26,8 @@ RPI5 runner 경로는 `/home/ubuntu/actions-runner-line1`, RPI4 배포 경로는
 4. [Nginx 설정](../deploy/nginx.conf)을 RPI5의 별도 site로 설치하고 `nginx -t` 성공 후 reload한다. 기존 Cloudflare Tunnel을 사용한다. API 실행을 확인한 뒤 site를 활성화한다.
 
 AI 소스가 포함되므로 GHCR `2026-line1-be` 이미지는 **private**으로 유지한다. 신규 패키지의 기본 private 설정에 더해 workflow에서 visibility를 검사한다. 공개 이미지·빌드 artifact·GHA layer cache로 배포하지 않는다. 배포할 때는 job의 일회성 `GITHUB_TOKEN`을 stdin으로 전달하고 임시 Docker 인증 디렉터리를 종료 시 삭제한다.
+
+RPI4 Compose 플러그인은 `/home/ubuntu/.docker/cli-plugins/docker-compose`에 설치되어 있다. 임시 `DOCKER_CONFIG`에도 이 플러그인 디렉터리를 symlink로 연결한다. 기존 Docker 인증 파일은 복사하지 않는다. 플러그인 설치 위치가 바뀌면 workflow의 경로도 함께 갱신한다.
 
 ## 실행 및 확인
 
