@@ -20,6 +20,8 @@ FastAPI 서버 하나에 현민님 AI 코드(team-10_AI)를 함께 불러 쓰는
 
 ## 로컬 실행
 
+RPI 배포 구성·도메인·CI/CD·복구 절차는 [RPI 배포 안내](docs/rpi-deployment.md)를 참고하세요.
+
 BE는 AI 저장소의 특정 커밋을 submodule로 포함해요. 별도 AI 형제 폴더는 필요하지 않아요. [AI 의존성·stacked 개발 안내](docs/ai-dependency.md)를 참고하세요.
 
 ```
