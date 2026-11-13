@@ -4,7 +4,7 @@
 
 - GET draft는 준비된 자료·확정 목표·현재 일정으로 후보를 생성/재사용한다. 승인된 plans/study_tasks를 수정하지 않는다. 후보 저장은 허용하지만 GET 호출만으로 계획을 승인하지 않는다.
 - 태스크는 15~60분, 총 페이지를 빠뜨리거나 중복 배정하지 않는다. 나눌 수 없는 마지막 15분 미만 잔여는 별도 짧은 태스크 허용하고 reasons에 설명한다. 시험 당일 이후에는 해당 과목 배정 금지, 하루 가용 시간 초과 금지. 불가능하면 409 PLAN_INFEASIBLE와 한국어 사유를 반환한다.
-- totalPages는 현재 inExam 범위 합집합, taskCount는 실제 후보 태스크 수. dailyAvgMinutes는 공부가 배정된 날짜의 평균을 반올림, daysToFirstExam은 today와 첫 시험의 날짜 차이. firstWeek는 today부터 7일의 {date:string,minutes:integer,subjects:{[subjectId]:integer}} 배열이다.
+- totalPages는 현재 inExam 범위 합집합, taskCount는 실제 후보 태스크 수. dailyAvgMinutes는 공부가 배정된 날짜의 평균을 반올림, daysToFirstExam은 today와 첫 시험의 날짜 차이. firstWeek는 today부터 7일의 {date:string,minutes:{[subjectId]:integer}} 배열이다. minutes는 과목별 분량 map이며 총분량 scalar가 아니다.
 - approve는 최신 draft의 previewId를 body로 받는다(이번 보완). 성공 {approved:true}. 이미 승인한 같은 후보는 같은 응답, 다른 최신 후보는 revision 검증. 하나의 사용자 승인 계획만 유지한다.
 - resplit POST는 request 필수(빈 문자열은 다른 버전 요청), answer 선택, saved 기본 false. 후속 질문은 최대 한 번. 질문이면 {question:{text,choices},ready:false}, 후보 완성이면 {question:null,ready:true,previewId}.
 - GET resplit의 days[].before/after는 **integer 분량(분)**이며 배열이 아니다. stats before/after는 number, label/unit string. summary 총시간은 실제 태스크 합산값이며 예시 1025/1005에 맞추지 않는다.
