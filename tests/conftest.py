@@ -46,3 +46,31 @@ def domain_connection(migration_connection):
     command.upgrade(migration_config(migration_connection), "head")
     migration_connection.commit()
     return migration_connection
+
+
+@pytest.fixture
+def api_client(domain_connection, monkeypatch):
+    """실제 lifespan/get_conn을 사용해 요청별 commit/rollback도 검증한다."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import text
+    from app import main
+    from app.db import session
+
+    conn = domain_connection
+    if conn.dialect.name == "postgresql":
+        schema = conn.scalar(text("select current_schema()"))
+        connect_args = {"options": f"-csearch_path={schema}"}
+    else:
+        connect_args = {"check_same_thread": False}
+    conn.commit()
+    engine = create_engine(conn.engine.url, connect_args=connect_args)
+    if conn.dialect.name == "sqlite":
+        @event.listens_for(engine, "connect")
+        def enable_foreign_keys(dbapi_connection, _):
+            dbapi_connection.execute("PRAGMA foreign_keys=ON")
+    monkeypatch.setattr(session, "engine", engine)
+    try:
+        with TestClient(main.app, raise_server_exceptions=False) as client:
+            yield client
+    finally:
+        engine.dispose()
