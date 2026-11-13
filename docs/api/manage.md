@@ -8,7 +8,7 @@
 - additions는 기존 과목/자료에 범위 추가만. 신규 과목은 아래 draft 생성→온보딩→계획 승인으로 지원한다. 1<=from<=to<=실제페이지, 시간 목표라면 minutesPerDay는 양의 정수, days는 중복없는1..7, today<=startDate<=endDate<examDate. 실제 가용시간 넘는 후보는 conflicts에 사유와 leftPages를 반환하고 적용 불가.
 - addition summary는 {subjectName:string,materialName:string,from:integer,to:integer,pages:integer,minutesPerDay:integer,totalMinutes:integer,days:integer[],startDate:string,endDate:string}, conflicts는 충돌 수 integer, note는 string|null. placements는 입력 범위를 중복/누락 없이 배치한 조각이며 reason은 string.
 - today action은 more30/rest/postpone. postpone에만 taskId 필수. 기록된 범위는 이동하지 않는다. more30은 가용시간에30분이 없으면409 PLAN_INFEASIBLE. 적용은 action+previewId; postpone taskId는 후보에서 읽는다. 성공 {applied:true}.
-- rebuild는 모든 상태에서501 NOT_READY. 지원하지 않는 기능을 성공처럼 반환하지 않는다.
+- rebuild는 남은 계획의 재생성 후보를 만든다. 기존501 고정 규칙을 철회한다. 최종 적용 전까지 현재 계획을 유지한다.
 
 ## 요청·응답 필드
 
@@ -64,7 +64,7 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 | `action` | string | 예         | `more30` · `rest` · `postpone` |
 | `taskId` | string | postpone만 |                                |
 
-미리보기 응답은 위 미리보기 모양, 적용 응답은 화면이 읽지 않아요. `rebuild`는 막아 둠 (기획 확인).
+미리보기 응답은 위 미리보기 모양, 적용 응답은 화면이 읽지 않아요. `rebuild`의 요청·응답은 아래 재생성 계약을 따른다.
 
 ---
 
@@ -85,4 +85,9 @@ GET subjects의 카드에 `status:"draft"|"active"|"archived"`를 추가한다. 
 additions/preview 요청은 subjectId/materialId/from/to/days/startDate/endDate와 **minutesPerDay 또는 totalPages 중 정확히 하나**다. 총 페이지 목표는1..선택 범위 페이지 수, 선택 범위의 첫 페이지부터 그 수만큼 배정한다. 시간 목표는 선택 범위 전체를 해당 일일 목표 내에서 배정한다. 범위 추가는 해당 과목만 재배분하고 다른 과목 계획은 보존한다.
 
 summary의 minutesPerDay는 총 페이지 모드에서 null, totalPages는 실제 목표 페이지 정수, goalType은 time/pages이다. placements[]에는 materialId/unitId/ranges/pages를 추가하고 from/to는 단일 범위일 때만 값이 있다. conflicts>0 또는 leftPages>0이면 적용을 허용하지 않고409 PLAN_INFEASIBLE. 성공 적용 응답은 `{applied:true}`다.
+
+
+## 재생성 (PDF p.13 / BE RegenerateChangeInput)
+
+`POST /api/plan/rebuild` body `{request?:string,saved?:boolean}`. request 생략은 남은 전체 범위 재생성, saved 기본 false. 현재 계획이 없으면400 NO_PLAN. 응답 `{previewId,ready:true,question:null}` 뒤 `GET /api/plan/resplit?previewId=…`로 기존 S5-2 비교 형식을 조회한다. 승인 `POST /api/plan/resplit/apply {previewId}`, 취소 `DELETE /api/plan/resplit?previewId=…`. 기록된 페이지·점수·책·보충을 삭제하지 않는다.
 
