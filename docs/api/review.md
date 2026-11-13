@@ -9,6 +9,9 @@
 - custom-quiz는 소유 과목의 현재 단원 번호만, 중복 번호 금지. count는 1..50, difficulty는 low/mid/high, weight는 even/weak. even은 단원별 균등 배정, weak는 낮은 숙달도 단원 우선(동점 단원 번호), 단원 내 미풀이 문항 우선. 완료·출제 가능한 범위만 선택. 부족하면 실제 count와 note 반환, 0개면 NO_QUESTIONS. 정답은 미포함.
 - relearn은 과목/단원 전체 현재 범위를 재학습했다는 명시적 완료 기록이다. 같은 날짜·단원 중복은 409 ALREADY. round는 저장된 유효 근거 재판정값, relearnedOn은 서버 today. 문항 점수를 임의 상승시키지 않는다.
 
+- custom-quiz에 1회독 단원이 하나라도 포함되면 difficulty=low로 고정하고 note로 설명한다. 응답 difficulty는 low/mid/high이며 문항 화면의 난이도 표시 문자열은 하/중/상이다. custom은 연습으로 채점/결과만 저장하고 숙달도·오답 노트에 반영하지 않는다. daily/more 및 review retry만 숙달도 근거에 포함한다.
+- relearn에는 Idempotency-Key가 필수(공통 선택 규칙의 예외, 누락422 INVALID_INPUT). ERD의 direct:SHA256(key) 근거를 저장한다. 같은 키/같은 입력은 최초 결과, 다른 입력은409 IDEMPOTENCY_CONFLICT; 다른 키의 당일 동일 단원 요청은409 ALREADY. 해당 날짜 점수 상승 상한을15로 바꾸지만 퀴즈 근거 없이 점수를 올리지 않는다.
+
 ## 요청·응답 필드
 
 FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, 변경 사항은 decisions.md를 적용한다.
