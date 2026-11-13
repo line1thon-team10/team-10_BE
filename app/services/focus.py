@@ -199,6 +199,10 @@ class FocusService:
         return int(today_seconds//60), int(subject_seconds//60)
 
     # ---------- 동작 ----------
+    def get(self, session_id):
+        self._prepare()
+        return self.view(self._session(session_id))
+
     def active(self) -> dict | None:
         self._prepare()
         s = self._active_row()
