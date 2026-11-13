@@ -142,7 +142,7 @@ def _check_session(conn: Connection, task: Task, session_id: str | None) -> str 
     if s["status"] not in ("ended", "auto_stopped"):
         raise ApiError("SESSION_RUNNING", "집중 모드를 먼저 끝내 주세요", 409)
     used = conn.execute(select(t.study_records.c.id).where(t.study_records.c.session_id == session_id)).first()
-    if used:
+    if used and (task.record is None or used[0] != task.record["id"]):
         raise ApiError("SESSION_USED", "이미 기록에 붙은 집중 시간이에요", 409)
     return session_id
 
