@@ -90,3 +90,13 @@ TEST_POSTGRES_URL=postgresql+psycopg://postgres@127.0.0.1:5432/team10_test \
 TEST_POSTGRES_URL이 없으면 SQLite 검증만 실행한다. 지정하면 마이그레이션 테스트를 양쪽 DB에서 실행한다. PostgreSQL 테스트는 매번 임의의 `test_<uuid>` 스키마를 생성하고 종료 시 해당 스키마만 삭제하므로 스키마 생성 권한이 필요하다. 실제 서비스 DB를 테스트 URL로 쓰지 않는다.
 
 커버하는 경계: 신규 DB, 재실행 데이터 보존, 빈 baseline downgrade/re-upgrade, 기존 DB 인계/재인계, 누락 테이블·컬럼·키·인덱스·타입/길이·NULL/default 차이, CHECK/부분 인덱스/뷰 추가, unknown/multiple revision, 인계 rollback, 읽기 전용 startup guard, PostgreSQL SQL 생성 뒤 SQLite 순환 FK 보존.
+
+## 0004_focus_contract 적용 및 복구
+
+부모는 `0003_demo_day_requests`다. `study_sessions.expected_seconds/quote`를 추가하고 기존 세션의 태스크 예상 시간/기존 결정 문구로 채운다. 과거 생성 시점의 예상 시간을 소급 복구할 수는 없으므로 기존 행의 예상 시간은 이행 시 태스크 값이며 이후 고정된다. 앱 또는 시드가 새로 만드는 세션은 생성 시 값을 저장한다. 직접 적재한 nullable 값은 첫 집중 접근에서 보완한다.
+
+부분 유일 인덱스 `uq_focus_active_user`(running/paused의 user_id), `uq_focus_open_segment`(ended_at IS NULL의 session_id)를 SQLite/PostgreSQL에 동일 적용한다. DBML이 부분 인덱스를 직접 표현하지 못하므로 `schema/focus-indexes.json`을 generator가 읽는다. 자동 생성 파일을 직접 편집하지 않는다. baseline 0001은 변경하지 않았다.
+
+online upgrade는 어떤 DDL보다 먼저 중복 활성 세션/열린 구간을 검사한다. 중복이 있으면 데이터를 삭제하지 않고 중단한다. 이 경우 백업 후 기존 세션의 상태/시간/근거를 확인하여 정리하고 재실행해야 한다. 자동으로 최신 세션만 남기거나 임의 종료하지 않는다. offline SQL은 사전 조회와 Python 데이터 보정을 수행하지 않으므로 검토용으로만 사용한다.
+
+`downgrade 0003_demo_day_requests`는 두 인덱스와 스냅샷 컬럼만 제거하고 세션·측정 구간·학습 기록은 보존한다. 제거된 스냅샷은 재업그레이드 시 당시 태스크/기존 문구로 다시 채워지므로 원래 값이 필요한 운영 복구에는 백업이 필요하다. 이전 바이너리로 되돌릴 때도 해당 바이너리가 요구하는 DB revision과 맞춰야 한다. 이번 PR에서는 운영 migration/배포를 실행하지 않았다.
