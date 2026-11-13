@@ -7,7 +7,7 @@
 - subject card의 examDate는 draft라면 null, dday도 null. range는 {from:integer|null,to:integer|null,pages:integer}; materials[].toc는 {no:integer,title:string,from:integer,to:integer}[]이다. 제거는 status=archived, archive_reason=user_removed이며 기존 학습/퀴즈 이력 삭제 금지.
 - additions는 기존 과목/자료에 범위 추가만. 신규 과목은 아래 draft 생성→온보딩→계획 승인으로 지원한다. 1<=from<=to<=실제페이지, 시간 목표라면 minutesPerDay는 양의 정수, days는 중복없는1..7, today<=startDate<=endDate<examDate. 실제 가용시간 넘는 후보는 conflicts에 사유와 leftPages를 반환하고 적용 불가.
 - addition summary는 {subjectName:string,materialName:string,from:integer,to:integer,pages:integer,minutesPerDay:integer,totalMinutes:integer,days:integer[],startDate:string,endDate:string}, conflicts는 충돌 수 integer, note는 string|null. placements는 입력 범위를 중복/누락 없이 배치한 조각이며 reason은 string.
-- today action은 more30/rest/postpone. postpone에만 taskId 필수. 기록된 범위는 이동하지 않는다. more30은 가용시간에30분이 없으면409 PLAN_INFEASIBLE. 적용은 action+previewId; postpone taskId는 후보에서 읽는다. 성공 {applied:true}.
+- today action은 more30/rest/postpone. postpone에만 taskId 필수. 기록된 범위는 이동하지 않는다. more30은 다음 공부일의 미완료 태스크를 오늘로 앞당긴다. 임의로 기존 태스크 시간을30분 늘리지 않는다. 이동 가능한 미래 태스크가 없으면400 NO_TASK, 오늘 가용시간에 배치할 수 없으면409 PLAN_INFEASIBLE. 적용은 action+previewId; postpone taskId는 후보에서 읽는다. 성공 {applied:true}.
 - rebuild는 남은 계획의 재생성 후보를 만든다. 기존501 고정 규칙을 철회한다. 최종 적용 전까지 현재 계획을 유지한다.
 
 ## 요청·응답 필드
@@ -91,3 +91,9 @@ summary의 minutesPerDay는 총 페이지 모드에서 null, totalPages는 실�
 
 `POST /api/plan/rebuild` body `{request?:string,saved?:boolean}`. request 생략은 남은 전체 범위 재생성, saved 기본 false. 현재 계획이 없으면400 NO_PLAN. 응답 `{previewId,ready:true,question:null}` 뒤 `GET /api/plan/resplit?previewId=…`로 기존 S5-2 비교 형식을 조회한다. 승인 `POST /api/plan/resplit/apply {previewId}`, 취소 `DELETE /api/plan/resplit?previewId=…`. 기록된 페이지·점수·책·보충을 삭제하지 않는다.
 
+
+## 오늘 계획·목표 적용 시점 (PDF p.13)
+
+more30은 기존 경로/enum을 유지하되 **다음 예정 태스크를 오늘로 이동**한다. 후보 선택은 미래 날짜→시작 시각→taskId 순서이며 기록된 범위는 제외한다. 원래 태스크 전체를 옮길 자리가 없으면 계획 불가를 반환한다. 화면은 실제 이동 분량/시간을 보여 주며 '정확히30분 증가'라고 단정하지 않는다. rest는 오늘 미완료 범위를 남은 일정에 재배분, postpone은 해당 task를 다음 과목 공부일의 첫 순서로 이동한다. 모두 미리보기 후 승인한다.
+
+과목 goal/target 변경은 다음 날부터 배분 가중치에 반영한다. examDate 변경은 남은 일정 후보를 재계산한다. 과목 삭제는 archive이며 기록을 지우지 않는다. 날짜·목표 동시 변경도 하나의 후보로 검증한다.
