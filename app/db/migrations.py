@@ -6,6 +6,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, inspect
 
 from migrations.baselines.schema_0001 import metadata as baseline
@@ -69,6 +70,19 @@ def adopt_baseline(connection: Connection) -> bool:
         return False
     command.stamp(migration_config(connection), BASELINE)
     return True
+
+
+def require_current_schema(connection: Connection) -> None:
+    """Read-only startup gate: operators run migrations before starting workers."""
+    expected = tuple(ScriptDirectory.from_config(migration_config()).get_heads())
+    if len(expected) != 1:
+        raise RuntimeError("migration head가 하나여야 합니다. 스택의 revision 의존성을 정리하세요.")
+    actual = MigrationContext.configure(connection).get_current_heads()
+    if actual != expected:
+        raise RuntimeError(
+            "DB migration이 필요합니다. 서버 시작 전에 alembic upgrade head를 실행하세요. "
+            "기존 create_all DB는 먼저 python -m app.db.migrations adopt-baseline을 실행하세요."
+        )
 
 
 def main() -> None:

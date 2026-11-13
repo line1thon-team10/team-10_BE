@@ -11,13 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.ai import engine as ai_engine
 from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
 from app.core.responses import install_error_handlers, ok
-from app.db.session import init_db
+from app.db.session import check_db_revision
 from app.routers import books, demo, plan, quiz, session, study, today
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
+    check_db_revision()
     yield
 
 

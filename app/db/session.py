@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from sqlalchemy import Connection, create_engine, event
 
 from app.config import DATABASE_URL
-from app.db.schema import metadata
+from app.db.migrations import require_current_schema
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 engine = create_engine(
@@ -19,9 +19,10 @@ if _is_sqlite:
         dbapi_conn.execute("PRAGMA foreign_keys=ON")
 
 
-def init_db() -> None:
-    """테이블이 없으면 만들어요. 마이그레이션 도구는 아직 없어요 (해커톤 기간)."""
-    metadata.create_all(engine)
+def check_db_revision() -> None:
+    """DDL 없이 적용된 revision을 검사해요. 변경은 별도 Alembic 명령으로 수행해요."""
+    with engine.connect() as connection:
+        require_current_schema(connection)
 
 
 def get_conn() -> Iterator[Connection]:
