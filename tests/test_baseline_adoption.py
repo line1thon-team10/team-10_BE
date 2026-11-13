@@ -31,7 +31,7 @@ def test_legacy_adoption_and_repeat_preserve_rows(migration_connection):
         assert adopt_baseline(conn) is True
     with conn.begin():
         assert adopt_baseline(conn) is False
-    command.upgrade(migration_config(conn), "head")
+    command.upgrade(migration_config(conn), BASELINE)
     assert conn.execute(users.select()).mappings().all() == before
     assert before[0]["id"] == user_id
     assert MigrationContext.configure(conn).get_current_heads() == (BASELINE,)
