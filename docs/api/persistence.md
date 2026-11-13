@@ -23,7 +23,7 @@
 - 현재 units(material_id,sort_order), 현재 concepts(unit_id,code)와(unit_id,sort_order): retired_at IS NULL 부분 유일.
 - study_tasks(plan_id,block_id): status IN ('planned','partial') 부분 유일. 과거 carried_over와 현재 배치는 공존 가능.
 - 사용자당 진행 집중 세션 하나: status IN ('running','paused') 부분 유일. 열린 session_segment도 세션당 하나.
-- 채점 작업은 quiz_session당 현재 대표 작업 하나. 결과 적용은 quiz_session 잠금+attempt/mastery 반영 표식으로 중복 금지.
+- 문항별 채점 작업은 quiz_item+답안 revision당 하나. 오래된 revision 결과는 반영하지 않는다. 최종 집계 작업은 quiz_session당 현재 대표 작업 하나. 결과 적용은 quiz_session 잠금+attempt/mastery 반영 표식으로 중복 금지.
 - calendar_event_exceptions(event_id,occurrence_date) 유일. 범위 시작<=끝, 시각 시작<끝, 점수0..100, 비음수 시간/개수.
 
 원문 erd-constraints.sql이 없어 위 내용은 이번 명세의 제약 요구사항이다. 배포 시 마이그레이션으로 작성하고 SQLite뿐 아니라 PostgreSQL에서 검증해야 한다.
@@ -31,9 +31,9 @@
 ## 기존 ERD에 필요한 보완
 
 - demo seed를 날짜에서 추측하지 않도록 users.demo_seed 또는 동등한 사용자 상태 컬럼 필요.
-- previewId는 plan_proposals.id 사용. 생성/만료/적용 상태·원 응답을 plan_change_requests/changes에 저장할 스키마를 정한다. 만료는 created_at+30분으로 계산 가능.
+- previewId는 plan_proposals.id 사용. 생성/만료/적용 상태·원 응답을 plan_change_requests/changes에 저장할 스키마를 정한다. 시간 기반30분 만료는 사용하지 않는다. 후보 기준 날짜와 계획·자료·일정·기록 버전 변경을 검증한다.
 - 사용자 입력 구조 revision이 없는 최초 계획은 자료/목표/일정 ID와 updated_at의 정규화 해시로 stale 여부를 검증한다.
-- 퀴즈 답안 해시, 채점 소유 작업 lease 및 최종 응답 스냅샷을 저장할 필드가 필요. processed 표식만으로 외부 호출 동시 실행을 방지할 수 없으므로 조건부 작업 선점/만료 lease를 사용한다.
+- quiz_items.id를 API questionId로 사용하고 원본 questions.id와 구분한다. 문항별 답안 revision, 답안 해시, 채점 소유 작업 lease 및 최종 응답 스냅샷을 저장할 필드가 필요. processed 표식만으로 외부 호출 동시 실행을 방지할 수 없으므로 조건부 작업 선점/만료 lease를 사용한다.
 - 선택적 Idempotency-Key 지원에는 요청 key/hash/응답/status/만료를 저장할 전용 테이블 또는 동등한 내구 저장소가 필요. 로그에만 남겨 재시도를 구현하지 않는다.
 
 API enum과 DB enum 변환은 [enums.md](enums.md). 필드가 단순히 이름만 다른 경우 DB를 FE 이름으로 바꾸지 않고 응답 조립에서 변환한다.
