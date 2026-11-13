@@ -25,3 +25,4 @@ def test_day_closure_does_not_carry_into_or_after_exam(api_client, demo_user, do
         study_tasks.c.status.in_(["planned","partial"]))) == 0
     assert conn.scalar(select(func.count()).select_from(study_records)) == before_records
     assert conn.scalar(select(users.c.demo_date).where(users.c.id == demo_user)) == date(2026,11,10)
+    assert conn.scalar(select(users.c.last_assessed_date).where(users.c.id == demo_user)) == date(2026,11,9)

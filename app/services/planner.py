@@ -155,7 +155,7 @@ class Planner:
             t.daily_plan_totals.c.user_id == self.user["id"], t.daily_plan_totals.c.study_date == today)
             .values(finalized_at=_now()))
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
-            demo_date=nxt, last_assessed_date=nxt, updated_at=_now()))
+            demo_date=nxt, last_assessed_date=today, updated_at=_now()))
 
         if carried_items:
             self._notice(nxt, "carry", f"carry:{nxt.isoformat()}", {"items": carried_items})
