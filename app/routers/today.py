@@ -11,12 +11,24 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
+from app.repositories.locking import UserBusyError, lock_user
 from app.services.planner import Planner
 from app.services.study import OPEN_RATE, StudyData, Task, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
 
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
+
+
+def _lock_record_user(conn: Connection, user: dict) -> dict:
+    """demo/focus와 같은 잠금에서 기록과 파생 근거를 원자적으로 바꾼다."""
+    try:
+        fresh = lock_user(conn, uuid.UUID(user["id"]))
+    except UserBusyError as exc:
+        raise ApiError("REQUEST_IN_PROGRESS", "다른 요청이 처리 중이에요. 잠시 후 다시 시도해 주세요", 409) from exc
+    if fresh is None:
+        raise ApiError("UNKNOWN_SESSION", "사용자를 찾지 못했어요", 401)
+    return fresh.to_mapping()
 
 
 @router.get("/today")
@@ -137,6 +149,7 @@ def _check_session(conn: Connection, task: Task, session_id: str | None) -> str 
 
 @router.post("/records")
 def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    user = _lock_record_user(conn, user)
     today = today_for(user)
     data = StudyData(conn, user["id"])
     task = _find_task(data, body.taskId)
@@ -196,6 +209,7 @@ class FixIn(BaseModel):
 @router.patch("/tasks/{task_id}/record")
 def fix_record(task_id: str, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """기록한 뒤 끝낸 페이지 고치기 (HM-03). 이월·진행률은 다시 계산돼요"""
+    user = _lock_record_user(conn, user)
     today = today_for(user)
     data = StudyData(conn, user["id"])
     task = _find_task(data, task_id)
