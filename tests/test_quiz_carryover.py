@@ -72,3 +72,16 @@ def test_weekend_review_includes_weekly_wrong_even_before_next_scheduled_review(
     for _ in range(5):add_question(w,unit)
     response=get(api_client,w);assert response.status_code==200,response.text
     assert len(response.json()['data']['questions'])==6
+
+
+def test_missing_new_bank_does_not_drop_due_reviews_from_existing_open_set(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,10);w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    weak=add_question(w,unit)
+    previous(w,unit,[weak],w.day-timedelta(days=1),answered=True)
+    for _ in range(5):add_question(w,unit)
+    initial=get(api_client,w);assert initial.status_code==200,initial.text
+    second=w.unit(1,10);w.task((second,1,10),done=[(second,1,10)],status='completed')
+    w.conn.execute(t.weak_questions.insert().values(question_id=weak,status='active',review_step=0,next_review_date=w.day,last_weak_at=w.now))
+    response=get(api_client,w);assert response.status_code==200,response.text
+    assert response.json()['data']['quizId']==initial.json()['data']['quizId']
+    assert len(response.json()['data']['questions'])==6

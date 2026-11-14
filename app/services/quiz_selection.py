@@ -241,7 +241,7 @@ class QuizSelection:
             chosen,new_scopes=self.fresh(subject_id,scopes,difficulty,sessions)
         except ApiError as error:
             if error.code!='NO_QUESTIONS' or current is None: raise
-            return current
+            chosen, new_scopes = [], {}
         chosen = self.reviews(subject_id) + chosen
         if current:
             self.append(current['id'],chosen,new_scopes)
