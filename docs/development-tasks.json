@@ -2,7 +2,7 @@
   "metadata": {
     "schema_version": 1,
     "planned_on": "2026-11-14",
-    "state": "plan_only",
+    "state": "executing",
     "code_base_sha": "f47eac601d56d4767b4d82ec13c109550be9d1ff",
     "deployed_be_sha": "ebc7c3d7578c182e90b325279d0971e1c423c03c",
     "fe_base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
@@ -24,15 +24,16 @@
       "GET /api/study/sessions/active"
     ],
     "note": "선행 task가 integrated가 된 뒤에만 구현을 배정한다. 최초 상태는 모두 planned이며 작업 착수를 뜻하지 않는다.",
-    "plan_branch": "docs/development-task-plan"
+    "plan_branch": "docs/development-task-plan",
+    "integration_worktree": "BE-integration"
   },
   "tasks": [
     {
       "id": "SYS-01",
       "title": "작업 기준·통합 브랜치와 소유권 고정",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "integrated",
+      "assignee": "/root",
       "depends_on": [],
       "write_scope": [
         "BE/docs/development-task-plan.md",
@@ -48,11 +49,13 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
+      "branch": "integration/contract-v1",
+      "base_sha": "8db364b",
+      "head_sha": "dfcbc11da8edbf79f53bd23b39ac0cd92a70c99c",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "원격 기준 확인, 깨끗한 원본 작업트리, pinned AI 초기화, task scope와 내부 계약 대조"
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     },
@@ -60,8 +63,8 @@
       "id": "SYS-02",
       "title": "공통 내부 계약과 미해결 명세 차이 확정",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "integrated",
+      "assignee": "/root",
       "depends_on": [
         "SYS-01"
       ],
@@ -81,11 +84,13 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
+      "branch": "integration/contract-v1",
+      "base_sha": "8db364b",
+      "head_sha": "dfcbc11da8edbf79f53bd23b39ac0cd92a70c99c",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "원격 기준 확인, 깨끗한 원본 작업트리, pinned AI 초기화, task scope와 내부 계약 대조"
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     },
