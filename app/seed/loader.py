@@ -4,12 +4,13 @@ from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Connection, delete, select, update
+from sqlalchemy import Connection, delete, inspect, select, update
 
 from app.core.clock import now_utc
 from app.db import schema as t
 from app.domain.focus import quote_for
 from app.seed import demo_data as d
+from app.seed.essay_examples import DEMO_ESSAY, register_saved_evaluation
 from app.seed.package import load_package
 
 KST = ZoneInfo("Asia/Seoul")
@@ -40,7 +41,12 @@ def wipe_user(conn: Connection, user_id: str) -> None:
     msg_ids = select(t.tutor_messages.c.id).where(t.tutor_messages.c.user_id == user_id)
     job_ids = select(t.ai_jobs.c.id).where(t.ai_jobs.c.user_id == user_id)
 
+    obligation_ids = select(t.remedial_obligations.c.id).where(t.remedial_obligations.c.user_id == user_id)
+
     steps = [
+        delete(t.remedial_obligation_blocks).where(t.remedial_obligation_blocks.c.obligation_id.in_(obligation_ids)),
+        delete(t.remedial_obligations).where(t.remedial_obligations.c.user_id == user_id),
+        delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
         delete(t.ai_usage_logs).where(t.ai_usage_logs.c.user_id == user_id),
         delete(t.ai_jobs).where(t.ai_jobs.c.id.in_(job_ids)),
         delete(t.ai_saved_results).where(t.ai_saved_results.c.user_id == user_id),
@@ -48,7 +54,6 @@ def wipe_user(conn: Connection, user_id: str) -> None:
         delete(t.tutor_sources).where(t.tutor_sources.c.message_id.in_(msg_ids)),
         update(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id).values(parent_message_id=None),
         delete(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id),
-        delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
         delete(t.user_notices).where(t.user_notices.c.user_id == user_id),
         delete(t.weak_questions).where(t.weak_questions.c.question_id.in_(q_ids)),
         delete(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id.in_(item_ids)),
@@ -86,7 +91,12 @@ def wipe_user(conn: Connection, user_id: str) -> None:
         delete(t.calendar_events).where(t.calendar_events.c.user_id == user_id),
         delete(t.subjects).where(t.subjects.c.user_id == user_id),
     ]
+    # Historical migration fixtures seed before these additive sidecars exist.
+    optional = {'record_requests', 'remedial_obligations', 'remedial_obligation_blocks'}
+    available = set(inspect(conn).get_table_names())
     for stmt in steps:
+        if stmt.table.name in optional and stmt.table.name not in available:
+            continue
         conn.execute(stmt)
 
 
@@ -258,6 +268,8 @@ def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, m
         conn.execute(t.question_sources.insert().values(
             id=_id(), question_id=qid, material_id=material_of[q["unit"]],
             start_page=q["page"], end_page=q["page"], quote=q.get("quote")))
+        if q["id"] == DEMO_ESSAY["code"]:
+            register_saved_evaluation(conn, user_id, qid)
 
     subj_of_q = {q["id"]: q["unit"][:2] for q in quiz["questions"]}
     # 날짜·과목별 퀴즈 1개로 묶어서 풀이 기록을 넣어요
