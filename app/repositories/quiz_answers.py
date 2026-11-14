@@ -9,6 +9,7 @@ from sqlalchemy import Connection, null, select, update
 
 from app.core.responses import ApiError
 from app.db import schema as t
+from app.domain.quiz_answers import validate_answer_text
 from app.repositories.locking import UserBusyError, lock_user
 
 
@@ -43,7 +44,7 @@ def answer_payload(*, choice: int | None, text: str | None, confidence: str) -> 
     if (choice is not None and (type(choice) is not int or choice < 0)) or (
             text is not None and not isinstance(text, str)) or ((choice is None) == (text is None)):
         raise ApiError("INVALID_INPUT", "문항 유형에 맞는 답안을 보내 주세요", 422)
-    return {"choice": choice, "text": text, "confidence": confidence}
+    return {"choice": choice, "text": validate_answer_text(text), "confidence": confidence}
 
 
 @dataclass(frozen=True)

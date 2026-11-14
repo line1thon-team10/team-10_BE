@@ -1,9 +1,10 @@
 """Public answer input contains no grading controls or result fields."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from app.core.responses import ApiError
+from app.domain.quiz_answers import validate_answer_text
 
 
 class SaveAnswerIn(BaseModel):
@@ -13,6 +14,11 @@ class SaveAnswerIn(BaseModel):
     text: StrictStr | None = None
     confidence: Literal["sure", "unsure"]
     revision: StrictInt = Field(ge=0)
+
+    @field_validator("text")
+    @classmethod
+    def require_storable_text(cls, value: str | None) -> str | None:
+        return validate_answer_text(value)
 
     @model_validator(mode="before")
     @classmethod
