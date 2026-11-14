@@ -57,3 +57,49 @@ class UnitsStructure(BaseModel):
 class UnitsResponse(BaseModel):
     success: Literal[True] = True
     data: UnitsStructure
+
+
+class ConceptEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    id: UUIDString | None = None
+    title: str
+    from_: int = Field(alias='from', ge=1)
+    to: int = Field(ge=1)
+    inExam: bool
+
+
+class UnitEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    id: UUIDString | None = None
+    no: int = Field(ge=1)
+    title: str
+    from_: int = Field(alias='from', ge=1)
+    to: int = Field(ge=1)
+    difficulty: Literal['low', 'mid', 'high'] | None = None
+    inExam: bool
+    concepts: list[ConceptEdit]
+
+
+class UnitsEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    subjectId: UUIDString
+    materialId: UUIDString
+    units: list[UnitEdit]
+
+
+class ConceptSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    conceptId: UUIDString
+    inExam: bool
+
+
+class UnitSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    unitId: UUIDString
+    inExam: bool | None = None
+    concepts: list[ConceptSelection] = Field(default_factory=list)
+
+
+class UnitsApproval(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    previewId: UUIDString
