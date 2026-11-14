@@ -381,8 +381,9 @@ def _execution_child(connection, identity, provider, validator, cached_json, dea
                 context.remaining_seconds
                 completed_before = len(context._completed)
                 raw = invoke(ProviderCall(identity, bool(attempt)), context)
-                if context._started or "succeeded" not in context._completed[completed_before:]:
-                    raise InvalidOutput("Each result attempt requires a completed successful transport request")
+                completed = context._completed[completed_before:]
+                if context._started or not completed or any(status != "succeeded" for status in completed):
+                    raise InvalidOutput("Every transport request for a result attempt must succeed")
                 try:
                     value = parse_json(raw) if type(raw) is str else raw
                     canonical_json(value)

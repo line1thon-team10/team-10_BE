@@ -272,6 +272,14 @@ def nul_request_id_provider(call, context):
     return {"page": 2, "evidence": "source"}
 
 
+def mixed_transport_provider(call, context):
+    retrieval = context.start_request(model="retrieval")
+    context.finish_request(retrieval)
+    generation = context.start_request(model="generation")
+    context.finish_request(generation, status="failed")
+    return '{"page":' if call.input.get("malformed") else {"page": 2, "evidence": "source"}
+
+
 PROVIDER = ProviderSpec(FunctionRef(__name__, "fake_provider"))
 VALIDATOR = FunctionRef(__name__, "fake_validator")
 
@@ -391,6 +399,17 @@ def test_failed_transport_with_malformed_body_does_not_trigger_json_retry():
     output = execute_fake({"behavior": "syntax_always", "measurements": {"status": "failed"}})
     assert output.data is None and output.failure is not None
     assert len(output.usage) == 1 and output.usage[0].status == "failed"
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_successful_nested_request_never_masks_a_failed_generation_or_enables_retry(malformed):
+    request = identity(input={"malformed": malformed}, validation_context={"pages": [1, 2], "evidence": "source"})
+    result = ProcessExecutor().execute(request,
+        provider=ProviderSpec(FunctionRef(__name__, "mixed_transport_provider")), validator=VALIDATOR,
+        deadline=time.monotonic() + 2, cleanup_timeout=0.5)
+    assert result.data is None and result.failure is not None
+    assert [row.status for row in result.usage] == ["succeeded", "failed"]
+    assert not multiprocessing.active_children()
 
 
 @pytest.mark.parametrize("retries", [1, 6, True, None])
