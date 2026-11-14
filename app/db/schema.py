@@ -436,6 +436,26 @@ learning_passes = Table(
     Index("ix_learning_passes_2", "unit_id", "completion_kind", "evidence_key", unique=True),
 )
 
+remedial_obligations = Table(
+    "remedial_obligations", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("unit_id", UUID, ForeignKey("units.id"), nullable=False),
+    Column("quiz_session_id", UUID, ForeignKey("quiz_sessions.id"), nullable=False),
+    Column("scope_revision", String, nullable=False),
+    Column("required_ranges", JSONB, nullable=False),
+    Column("not_before", Date, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_remedial_obligations_1", "unit_id", "quiz_session_id", unique=True),
+)
+
+remedial_obligation_blocks = Table(
+    "remedial_obligation_blocks", metadata,
+    Column("obligation_id", UUID, ForeignKey("remedial_obligations.id"), nullable=False),
+    Column("block_id", UUID, ForeignKey("study_blocks.id"), nullable=False, unique=True),
+    PrimaryKeyConstraint("obligation_id", "block_id"),
+)
+
 questions = Table(
     "questions", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
