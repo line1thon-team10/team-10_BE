@@ -94,6 +94,11 @@ def goal_changes(row: Mapping, update: GoalUpdate, at: datetime) -> dict:
             elif column == "target_score":
                 if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
                     raise ValueError("Target must be a number")
+                # Check exact Decimal bounds before float rounding/underflow.
+                if isinstance(value, Decimal) and not value.is_finite():
+                    raise ValueError("Target must be finite and in 0..100")
+                if not 0 <= value <= 100:
+                    raise ValueError("Target must be finite and in 0..100")
                 try:
                     value = float(value)
                 except (OverflowError, ValueError) as exc:

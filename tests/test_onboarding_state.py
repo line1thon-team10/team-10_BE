@@ -153,6 +153,9 @@ def test_explicit_unconfirm_and_same_value_retry_preserve_other_facts(domain_con
     ({"target_score": True}, {}), ({"target_score": "90"}, {}), ({"target_score": -1}, {}),
     ({"target_score": 101}, {}), ({"target_score": float("nan")}, {}), ({"target_score": float("inf")}, {}),
     ({"target_score": 10 ** 1000}, {}), ({"target_score": Decimal("sNaN")}, {}),
+    ({"target_score": Decimal("NaN")}, {}), ({"target_score": Decimal("Infinity")}, {}),
+    ({"target_score": Decimal("100.00000000000000001")}, {}),
+    ({"target_score": Decimal("-1e-1000")}, {}),
 ])
 def test_invalid_goal_updates_never_confirm(values, confirmations):
     with pytest.raises(ValueError):
@@ -163,6 +166,19 @@ def test_invalid_goal_updates_never_confirm(values, confirmations):
 def test_target_accepts_finite_numeric_boundaries(score):
     changes = goal_changes({"id": "subject", "name": "과목"}, GoalUpdate("subject", {"target_score": score}), NOW)
     assert changes["target_score"] == score
+
+
+@pytest.mark.parametrize("score", [Decimal("100.00000000000000001"), Decimal("-1e-1000")])
+def test_decimal_rounding_cannot_save_an_out_of_range_target(domain_connection, onboarding_user, score):
+    conn = domain_connection
+    subject_id = add_subject(conn, onboarding_user, target_grade="A+", target_score=90)
+    conn.commit()
+    before = row_for(conn, subject_id)
+    assert_error("INVALID_INPUT", lambda: OnboardingService(conn, onboarding_user).save_turn(
+        goals=[GoalUpdate(subject_id, {"target_score": score}, {"goal": True})],
+        messages=[ConversationMessage("user", "목표 확인")]), status=422)
+    assert row_for(conn, subject_id) == before
+    assert conn.execute(select(t.onboarding_messages.c.id)).first() is None
 
 
 def test_read_requires_valid_required_values_even_if_confirmation_metadata_is_corrupt():
