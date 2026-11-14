@@ -163,8 +163,12 @@ class ProposalService:
                  for key in ("created_at", "approved_at")]
         return PlanState(row["id"], row["revision"], *times)
 
-    def _snapshot(self, context: PreviewContext, domain: PreviewDomain, target_json: str) -> tuple[PreviewContext, PreviewSnapshot]:
+    def _snapshot(self, context: PreviewContext, domain: PreviewDomain, target_json: str, *,
+                  expected_common: tuple[date, str | None, int | None] | None = None) -> tuple[PreviewContext, PreviewSnapshot]:
         context = replace(context, plan=self._plan(context.user.id))
+        common = (context.today, context.plan.id if context.plan else None, context.plan.revision if context.plan else None)
+        if expected_common is not None and common != expected_common:
+            raise _stale()
         if (domain.plan_effect is PlanEffect.UPDATE) != (context.plan is not None):
             raise _stale()
         basis = domain.inspect_basis(self.connection, context, canonical_object(target_json))
@@ -205,7 +209,8 @@ class ProposalService:
             if (snapshot.user_id != context.user.id or snapshot.kind != domain.kind
                     or snapshot._target_json != target_json):
                 raise ApiError("NO_PREVIEW", "이 요청의 미리보기가 아니에요", 404)
-            _, current = self._snapshot(context, domain, target_json)
+            _, current = self._snapshot(context, domain, target_json,
+                expected_common=(snapshot.base_date, snapshot.base_plan_id, snapshot.base_plan_revision))
             if current != snapshot:
                 raise _stale()
             stored = self.repository.create(context.user.id, kind=domain.kind, target=snapshot.target,
@@ -264,7 +269,8 @@ class ProposalService:
             if (state["status"] != "ready" or state["request_status"] != "ready"
                     or state["accepted_proposal_id"] is not None):
                 raise _stale()
-            context, current = self._snapshot(context, domain, target_json)
+            context, current = self._snapshot(context, domain, target_json,
+                expected_common=(state["base_date"], state["base_plan_id"], state["base_plan_revision"]))
             self._require_fresh(state, current)
 
             if domain.plan_effect is PlanEffect.CREATE:

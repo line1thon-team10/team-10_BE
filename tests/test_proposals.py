@@ -210,3 +210,30 @@ def test_create_invalid_prepared_json_never_reaches_sql(domain_connection, owner
             create(service, owner, snapshot=snapshot, changes=invalid)
     finally:
         event.remove(conn, "before_cursor_execute", unexpected_sql)
+
+
+@pytest.mark.parametrize("operation_name", ["create", "apply"])
+@pytest.mark.parametrize("changed", ["date", "revision"])
+def test_stale_common_basis_is_rejected_before_domain_inspection(domain_connection, owner, operation_name, changed):
+    conn = domain_connection
+    operation = domain(effect=PlanEffect.UPDATE if changed == "revision" else PlanEffect.DRAFT)
+    if changed == "revision":
+        plan(conn, owner)
+    service = ProposalService(conn, clock=lambda: NOW)
+    snapshot = service.capture(owner, domain=operation, target=TARGET)
+    identifier = create(service, owner, operation, snapshot=snapshot)["previewId"] if operation_name == "apply" else None
+    if changed == "date":
+        conn.execute(update(t.users).where(t.users.c.id == owner).values(demo_date=DAY + timedelta(days=1)))
+    else:
+        conn.execute(update(t.plans).where(t.plans.c.user_id == owner).values(revision=8))
+
+    def forbidden(*_):
+        pytest.fail("an already stale common basis must not execute domain inspection")
+
+    operation = replace(operation, inspect_basis=forbidden)
+    with pytest.raises(ApiError) as error:
+        if operation_name == "create":
+            create(service, owner, operation, snapshot=snapshot)
+        else:
+            service.apply(owner, identifier, domain=operation, target=TARGET)
+    assert_api(error, "PREVIEW_STALE", 409)
