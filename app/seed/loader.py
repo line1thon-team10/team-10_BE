@@ -41,8 +41,12 @@ def wipe_user(conn: Connection, user_id: str) -> None:
     msg_ids = select(t.tutor_messages.c.id).where(t.tutor_messages.c.user_id == user_id)
     job_ids = select(t.ai_jobs.c.id).where(t.ai_jobs.c.user_id == user_id)
 
+    obligation_ids = select(t.remedial_obligations.c.id).where(t.remedial_obligations.c.user_id == user_id)
+
     steps = [
         delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
+        delete(t.remedial_obligation_blocks).where(t.remedial_obligation_blocks.c.obligation_id.in_(obligation_ids)),
+        delete(t.remedial_obligations).where(t.remedial_obligations.c.user_id == user_id),
         delete(t.ai_usage_logs).where(t.ai_usage_logs.c.user_id == user_id),
         delete(t.ai_jobs).where(t.ai_jobs.c.id.in_(job_ids)),
         delete(t.ai_saved_results).where(t.ai_saved_results.c.user_id == user_id),
