@@ -102,10 +102,20 @@ class QuizService:
 
     @staticmethod
     def _submission_ids(items: list[dict], answers: list[dict]) -> list[dict]:
-        ids = [answer["questionId"] for answer in answers]
+        aliases = defaultdict(set)
+        for item in items:
+            aliases[item["item_id"]].add(item["item_id"])
+            aliases[item["question_id"]].add(item["item_id"])
+        mapped = []
+        for answer in answers:
+            matches = aliases.get(answer["questionId"], set())
+            if len(matches) != 1:
+                raise ApiError("INVALID_INPUT", "이 퀴즈의 문항 ID를 확인하지 못했어요", 422)
+            mapped.append({**answer, "questionId": next(iter(matches))})
+        ids = [answer["questionId"] for answer in mapped]
         if not items or len(set(ids)) != len(ids) or set(ids) != {item["item_id"] for item in items}:
             raise ApiError("INVALID_INPUT", "현재 퀴즈의 모든 문항을 정확히 한 번씩 제출해 주세요", 422)
-        return answers
+        return mapped
 
     def items(self, session_id: str) -> list[dict]:
         rows = self.conn.execute(
