@@ -146,3 +146,15 @@ def test_overlapping_wrong_concepts_are_unioned_and_unallocated_obligation_survi
     assert response.status_code == 200, response.text
     assert dict(conn.execute(select(t.remedial_obligations)).mappings().one()) == original
     assert list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id))) == []
+
+
+def test_finalized_carried_over_source_remains_valid_when_remedial_is_completed(api_client, domain_connection, remedial_case):
+    conn, case = domain_connection, remedial_case
+    source, _ = low_quiz(api_client, conn, case)
+    task = remedial_task(conn)
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(status='carried_over'))
+    go(conn, case, case['nextday'])
+    write(api_client, case, task['id'])
+    passes = pass_rows(conn)
+    assert len(passes) == 1 and eligible(conn, case)
+    assert passes[0]['evidence_snapshot']['sourceQuizId'] == source
