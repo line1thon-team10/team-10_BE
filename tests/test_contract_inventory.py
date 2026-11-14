@@ -39,13 +39,13 @@ def test_mount_prefix_is_kept_and_uncontracted_hidden_api_is_not_ignored():
     assert not runtime_gate_passes(report)
 
 
-def test_actual_routes_have_no_untracked_or_ambiguous_contract_path():
+def test_actual_routes_cover_every_required_contract_without_duplicates():
     from app.main import app
     report = runtime_inventory(app)
     assert runtime_gate_passes(report), report
     assert report["required_total"] == len(report["required_registered"]) + len(report["required_pending"])
-    # This is a registration audit, not an assertion that pending work is done.
-    assert runtime_gate_passes(report, require_complete=True) == (not report["required_pending"])
+    # Public registration is complete; behavior is covered by the HTTP suites.
+    assert runtime_gate_passes(report, require_complete=True), report
 
 
 def test_path_parameter_names_do_not_hide_literal_route_differences():
