@@ -4,8 +4,8 @@
     "planned_on": "2026-11-14",
     "state": "executing",
     "code_base_sha": "f47eac601d56d4767b4d82ec13c109550be9d1ff",
-    "deployed_be_sha": "ebc7c3d7578c182e90b325279d0971e1c423c03c",
-    "fe_base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
+    "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+    "fe_base_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
     "proposed_integration_branch": "integration/contract-v1",
     "max_workers": 3,
@@ -32,9 +32,44 @@
       "workflow_sha": "76ed7188c511f475fde344a5b97f56de2a174efc",
       "branch": "infra/deploy-checkpoint-01",
       "run_id": 43550194880,
-      "state": "building",
-      "manifest": "docs/releases/2026-11-14-checkpoint-01.md"
-    }
+      "state": "verified",
+      "manifest": "docs/releases/2026-11-14-checkpoint-01.md",
+      "db_revision": "0006_quiz_answer_storage",
+      "image_digest": "sha256:f5250def3a82f5934cb832a6ad08c6b9a3710075415208c86de69275f2a52f53",
+      "report_commit": "55e108e68c735389a2a4785cae3faefdf68e81e6"
+    },
+    "completion_unit": "verified_user_flow",
+    "current_flow": "FLOW-DAY9",
+    "current_work_order": [
+      "Q-03/Q-04 review closure",
+      "Q-05 final submission with FE-02A in parallel",
+      "Q-06 saved grading and FE-03A/FE-03B",
+      "QA-DAY9 and deployment",
+      "materials/initial plan",
+      "replanning/management"
+    ],
+    "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only.",
+    "status_source": "docs/development-tasks.json",
+    "flows": [
+      {
+        "id": "FLOW-DAY9",
+        "title": "day9 집중 종료 → 기록 → 퀴즈 저장/제출 → 결과 재조회",
+        "state": "in_progress",
+        "implemented_checkpoint": "FE focus/record and answer save/recovery merged to dev1edf606. BE answer API and worker integrated; Q05/Q06 reviewed and day9 API connection passed, PR32 mandatory CI running. FE final submission/result wiring in progress. Current deployment remains4c20454.",
+        "required_tasks": [
+          "FE-02A",
+          "Q-03",
+          "Q-04",
+          "Q-05",
+          "Q-06",
+          "FE-03A",
+          "FE-03B",
+          "QA-DAY9"
+        ],
+        "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+        "deployed_flow_complete": false
+      }
+    ]
   },
   "tasks": [
     {
@@ -196,7 +231,7 @@
       "id": "SYS-05",
       "title": "미리보기 승인·stale·재시도 공통 서비스",
       "lane": "platform",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-04"
@@ -204,7 +239,8 @@
       "write_scope": [
         "BE/app/services/proposals.py",
         "BE/tests/test_proposals*.py",
-        "BE/docs/preview-application-handoff.md"
+        "BE/docs/preview-application-handoff.md",
+        "BE/app/repositories/proposals.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -221,14 +257,18 @@
       "optional": false,
       "branch": "feat/preview-application",
       "base_sha": "f22db928309cf55b3e3128811b271c37db84000f",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "a56e5af58beaa8956ee4d5762c28cefe56bebe9c",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/30",
       "validation_evidence": [
-        "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease."
+        "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease.",
+        "Final397 passed/5 SQLite-only skips; same5 concurrency cases execute on PostgreSQL. Approved minimal repository lease distinguishes known old-writer selected accepted proposals without sidecars and known kind mismatches. Astra independent review pending at a56e5af.",
+        "Astra a56e5af review closed without findings: existing397/5skip plus independent15/3skip, PG concurrency cases executed. Required CI pending. Further platform expansion deprioritized for day9 flow.",
+        "Required Actions43554969227 succeeded: candidate172e1869f95d5fe8a260f353bcb20f1510aaa766,2335 passed/6 skipped1047.11s. Integratedfd2a3d1 app/tests/schema/migrations/scripts/workflow/deploy diff is identical to tested candidate; no duplicate whole regression."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-preview-application"
+      "worktree": "BE-task-preview-application",
+      "integration_sha": "fd2a3d1c8f6c441407438466221a779f10bd2cbc"
     },
     {
       "id": "POL-01",
@@ -574,7 +614,7 @@
       "id": "D-01",
       "title": "진도·달성률·출제가능 진행률 분리",
       "lane": "study",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-03"
@@ -614,7 +654,8 @@
         "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives.",
         "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement.",
         "Worker finalb9c76a5:745SQLite+PG tests passed across21files, no existing assertion changes. Astra independent review running.",
-        "Astra b9c76a5:751SQLite+PG passed, independent set oracle3000cases/9000subject projections, no findings. Raw69.99->70->relocked HTTP verified. Actions43550278524 pending."
+        "Astra b9c76a5:751SQLite+PG passed, independent set oracle3000cases/9000subject projections, no findings. Raw69.99->70->relocked HTTP verified. Actions43550278524 pending.",
+        "Actions43550278524 candidate2518106:1743passed/1skipped. Merged9d1ddd7; exact combined full SQLite+PG2123passed/4skipped,595.38s."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -957,8 +998,8 @@
       "id": "Q-03",
       "title": "문항별 답안 저장·복구 API",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "integrated",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "Q-02"
       ],
@@ -966,7 +1007,14 @@
         "BE/app/routers/quiz_answers.py",
         "BE/app/services/quiz_answers.py",
         "BE/app/services/quiz.py",
-        "BE/tests/test_quiz_answer_api.py"
+        "BE/tests/test_quiz_answer_api.py",
+        "BE/app/schemas/quiz_answers.py",
+        "BE/docs/quiz-answer-api-handoff.md",
+        "BE/app/domain/quiz_answers.py",
+        "BE/app/repositories/quiz_answers.py",
+        "BE/tests/test_quiz_answer_text.py",
+        "BE/tests/test_quiz_answer_concepts.py",
+        "BE/tests/test_quiz_answer_receipt_metadata.py"
       ],
       "shared_resources": [
         "quiz-legacy"
@@ -985,21 +1033,33 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "branch": "feat/quiz-answer-api",
+      "base_sha": "9d1ddd7a40e37f74823950038581b18e1134fc58",
+      "head_sha": "17c16c1af5bc6e9f620b3852a14cb7703f14261b",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/29",
+      "validation_evidence": [
+        "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed.",
+        "Independent review found 3 P2 categories: Unicode/NUL storage divergence, invalid concept-unit linkage, and receipt replay after metadata changes. Root fixed each atomically (7d1f49d/83acd27/4022fa7). Original independent22 and additional70 SQLite+PG passed at immutable4022fa7; no remaining findings in changed code. Documentation-only0f746ed. Legacy submit deployment gate remains Q-05.",
+        "Required CI43554966252:1 failed/2348 passed/4 skipped1239.53s. Only existing normal-result ProcessExecutor test exceeded its arbitrary4s cold-spawn budget. Separate test-only17c16c1 uses contract20s for result/telemetry checks; explicit deadline/termination tests unchanged. Focused original+deadline5 passed4.24s; CI rerun pending.",
+        "Required CI43557318303 passed2349/4 skipped, candidateebc3244; merged PR29 asac1d912. Deployment still requires finalization flow PR32."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-quiz-answers",
+      "deployment_requires": [
+        "Q-05"
+      ],
+      "integration_sha": "ac1d912e613d875fcde3905ef91e45c9ac84d9ad",
+      "ci_run_id": 43557318303,
+      "review_status": "approved"
     },
     {
       "id": "Q-04",
       "title": "재시작 가능한 채점 실행기",
       "lane": "quiz",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "Q-02",
@@ -1047,15 +1107,21 @@
       "optional": false,
       "branch": "feat/durable-grading-worker",
       "base_sha": "bea6d7d19229f56741715f3cb74654360ad60519",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "650ac843edf9c9752c3c37d88b923cb723a302ae",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/31",
       "validation_evidence": [
         "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally.",
-        "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05."
+        "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05.",
+        "Immutable92cd382 independent706 passed plus2 failed: corrupt whole-quiz ownership could starve later healthy jobs behind LIMIT100. Fixed by keyset scan/shared items validation/cache/cursor/deadline in3ba6cae, handoffb6f3a3d. Author361 regression and original2 passed; independent delta review pending.",
+        "Second P2: continuous tail arrivals hid earlier expired/repaired jobs. High-water mark fix650ac84; Astra reran both unchanged repro files,6 passed SQLite/PG4.33s. Review closed; required CI pending. No whole review restart.",
+        "Required CI43557324498 passed2385/4 skipped, candidate3200d65; merged PR31 as69ce3d6. Preview-service integration is included in next full flow PR32 CI."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-grading-worker"
+      "worktree": "BE-task-grading-worker",
+      "integration_sha": "69ce3d6804a77fb78a8cac7f8ce42e0ac69d39ff",
+      "ci_run_id": 43557324498,
+      "review_status": "approved"
     },
     {
       "id": "S-01",
@@ -1108,8 +1174,8 @@
       "id": "Q-05",
       "title": "최종 제출·점수 반영·결과 스냅샷",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "review",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-03",
         "Q-04",
@@ -1119,7 +1185,10 @@
         "BE/app/services/quiz_finalization.py",
         "BE/app/services/quiz.py",
         "BE/app/routers/quiz.py",
-        "BE/tests/test_quiz_finalize.py"
+        "BE/tests/test_quiz_finalize.py",
+        "BE/app/schemas/quiz.py",
+        "BE/app/repositories/grading_jobs.py",
+        "BE/app/core/auth.py"
       ],
       "shared_resources": [
         "quiz-legacy",
@@ -1134,7 +1203,9 @@
         "동시 제출/동일 답 재전송/다른 답409·AI 실패503·프로세스 재시작",
         "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증",
         "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction",
-        "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt."
+        "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt.",
+        "Replace legacy POST submit transaction boundary; verify real HTTP answer-save/submit competition without holding a user lock or DB transaction during AI. This releases Q-03 deployment gate.",
+        "If a pre-finalization succeeded job fails validated_completed_result provenance checks, define an explicit retry/regrade path for the same current answer under lock; never silently reuse stale results or automatically regrade finalized historical snapshots."
       ],
       "operations": [
         "POST /api/quiz/:subjectId/submit",
@@ -1142,22 +1213,31 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "branch": "feat/quiz-finalization",
+      "base_sha": "08df82ea0d9a971831cf75f862f377bd454a3a4d",
+      "head_sha": "bcac9f4298c106150274175001b9ef64e3918328",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
+      "validation_evidence": [
+        "User reprioritized end-to-end flow. Start from reviewed fixed Q03+Q04 normal merge08df82 while mandatory parent CI runs. Minimal grading retry CAS/auth-header parsing leases; no schema change. Data loss, duplicate scores, ownership, save/submit races receive focused validation.",
+        "Immutablebcac9f4 independent review approved: original more snapshot repro SQLite/PG2 passed, core24 passed earlier. Scoped validation cache fixed quadratic1001-answer path. POST exact original replay; GET frozen parent plus completed owned child snapshots. Existing day9 demo2 failures remain until Q06 owned cache seed; Q05/Q06 ship together, never hide failures."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-quiz-finalization",
+      "stacked_parents": {
+        "Q-03": "17c16c1af5bc6e9f620b3852a14cb7703f14261b",
+        "Q-04": "650ac843edf9c9752c3c37d88b923cb723a302ae"
+      },
+      "review_status": "approved"
     },
     {
       "id": "Q-06",
       "title": "저장 채점 전용 경로",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "review",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-05"
       ],
@@ -1165,7 +1245,9 @@
         "BE/app/services/grading.py",
         "BE/app/services/quiz_finalization.py",
         "BE/app/seed/essay_examples.py",
-        "BE/tests/test_saved_grading.py"
+        "BE/tests/test_saved_grading.py",
+        "BE/app/seed/loader.py",
+        "BE/app/repositories/ai_results.py"
       ],
       "shared_resources": [
         "grading-service"
@@ -1184,13 +1266,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "branch": "feat/saved-quiz-grading",
+      "base_sha": "bcac9f4298c106150274175001b9ef64e3918328",
+      "head_sha": "34a790a700d86f96f2e08232e5c7a4814746e810",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
+      "validation_evidence": [
+        "Reuse strict owned gateway cache; seed exact demo fixture by question/answer/evidence/material hash and versions inside caller transaction. Lease save_in_transaction helper only, preserving owner checks and rollback. Zero provider calls for saved match/mismatch; restore existing demo200 tests unchanged.",
+        "Independent immutable34a790a approved:12 focused boundaries and2 SQLite/PG connected day9 API cases passed. Original day9 success2 restored; owned fixture exactly matches and external provider0. Root preserved independent connected flow test inefbb524; ready PR32 starts mandatory CI once, no draft-ready duplicate."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-saved-grading",
+      "review_status": "approved"
     },
     {
       "id": "Q-07",
@@ -1606,7 +1693,7 @@
       "id": "O-02",
       "title": "온보딩 일정 CRUD·가용시간",
       "lane": "onboarding",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "O-01"
@@ -1645,7 +1732,8 @@
       "validation_evidence": [
         "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression.",
         "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04.",
-        "Independent P2: HH:mm PATCH lost stored seconds or rejected valid subminute metadata. Fixed7b13e11; root195passed, Astra original10+boundary10 and regression215SQLite/PG passed; no findings. FinalCI43549792768 pending."
+        "Independent P2: HH:mm PATCH lost stored seconds or rejected valid subminute metadata. Fixed7b13e11; root195passed, Astra original10+boundary10 and regression215SQLite/PG passed; no findings. FinalCI43549792768 pending.",
+        "Actions43549792768 candidateee905a3:1872passed/1skipped. Merged6319d3b; integration affected206passed. Combined9d1ddd7 full SQLite+PG2123passed/4skipped,595.38s."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1702,8 +1790,8 @@
       "id": "M-01",
       "title": "PDF 업로드·저장·목록·다운로드",
       "lane": "materials",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02",
         "POL-02"
@@ -1712,7 +1800,8 @@
         "BE/app/repositories/materials.py",
         "BE/app/services/material_storage.py",
         "BE/app/routers/materials.py",
-        "BE/tests/test_material_storage.py"
+        "BE/tests/test_material_storage.py",
+        "BE/app/schemas/materials.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -1730,15 +1819,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/material-storage",
+      "base_sha": "b0dd061",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-material-storage"
     },
     {
       "id": "M-02",
@@ -2775,7 +2867,7 @@
       "id": "FE-01",
       "title": "FE 변경표·명세 기준·fixture 준비",
       "lane": "frontend",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -2800,18 +2892,23 @@
       "optional": false,
       "branch": "docs/api-contract-handoff",
       "base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "77dd922b438911788e84a3499d0dd30a4a486c38",
+      "pr_url": "https://github.com/line1thon-team10/team-10_FE/pull/4",
       "validation_evidence": [
-        "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim."
+        "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim.",
+        "FE commitsfc706af baseline/C01-C22 mapping and4c715bf local HTTP fixtures/capture tool.14actual requests in5fixture files, source BE9d1ddd7, temporary SQLite cleaned. npm check baseline passed; final doc/fixture check and independent review pending. BE handoff76573d5, demo calculation source3bf62bb, root Document/API_change.md refreshed.",
+        "Independent984423d review cleared record null-input handoff omission: actual HTTP null422/omission200; all5 fixture files/14 HTTP recaptured, no credentials. Remote FE then advanced to49c95c9; preserved via normal mergea19164a, updated docs564224a. npm check on merged baseline passed; refreshed doc delta review pending. Existing hybrid/proxy/seed/firstExam fixes must be reused, not reimplemented.",
+        "Independent content/diff review approved564224a; remaining whitespace fixed77dd922 and single-file Prettier passed. PR4 actually merged to dev6cd8753. No rerun of whole reviews for formatting."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "FE-task-handoff"
+      "worktree": "FE-task-handoff",
+      "upstream_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
+      "integration_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca"
     },
     {
       "id": "FE-02",
-      "title": "FE 학습·집중·책 연동",
+      "title": "FE 책장·마감 및 학습 후속 연동",
       "lane": "frontend",
       "status": "planned",
       "assignee": null,
@@ -2821,7 +2918,8 @@
         "R-03",
         "D-01",
         "D-03",
-        "B-03"
+        "B-03",
+        "FE-02A"
       ],
       "write_scope": [
         "FE/src/api/today.js",
@@ -2842,7 +2940,7 @@
       "contract_files": [],
       "deliverable": "서버 pages/ranges와 completedRanges, 복합 자료 선택, 0회독, 집중·기록 재시도를 화면에 연결한다.",
       "acceptance": [
-        "npm run check·실API브라우저확인·G-1흑백상태구분",
+        "npm run check·API계약검사·G-1흑백상태구분",
         "PDF두개같은쪽·정정/재시도·null/빈상태·서버값을임의재계산하지않음"
       ],
       "operations": [],
@@ -2861,7 +2959,7 @@
     },
     {
       "id": "FE-03",
-      "title": "FE 퀴즈·오답·복습 연동",
+      "title": "FE 퀴즈 난이도·더 풀기·오답·복습 후속 연동",
       "lane": "frontend",
       "status": "planned",
       "assignee": null,
@@ -2873,7 +2971,9 @@
         "Q-09",
         "V-02",
         "V-03",
-        "V-04"
+        "V-04",
+        "FE-03A",
+        "FE-03B"
       ],
       "write_scope": [
         "FE/src/api/quiz.js",
@@ -2890,7 +2990,7 @@
       "deliverable": "quizId·항목 ID·답안 revision 저장·복구, 난이도, 결과 근거, 복습 예정일, 재학습 멱등 키를 연결한다.",
       "acceptance": [
         "다음버튼뒤새로고침복구·제출실패후답보존·중복제출",
-        "풀이중근거미노출·더풀기부족안내·npm run check/브라우저"
+        "풀이중근거미노출·더풀기부족안내·npm run check/API계약검사"
       ],
       "operations": [],
       "external_gates": [],
@@ -2935,7 +3035,7 @@
       "deliverable": "목표 확인, 자료별 단원, 분석 폴링, 수동 목차, previewId 기반 계획 승인 흐름을 연결한다.",
       "acceptance": [
         "빈계정·손상/스캔PDF·복수자료·준비부족·취소/재접속",
-        "before/after분표시·후보stale안내·npm run check/브라우저"
+        "before/after분표시·후보stale안내·npm run check/API계약검사"
       ],
       "operations": [],
       "external_gates": [],
@@ -3028,7 +3128,7 @@
       "deliverable": "원래 회차 ID와 once/future 미리보기, 빈 시간 선택지, 서버 월간 집계를 연결한다.",
       "acceptance": [
         "28/35/42칸·월경계·미래/빈월·반복예외",
-        "서버오늘/시간사용·삭제취소불변·npm run check/브라우저"
+        "서버오늘/시간사용·삭제취소불변·npm run check/API계약검사"
       ],
       "operations": [],
       "external_gates": [],
@@ -3065,7 +3165,7 @@
       "deliverable": "자료별 페이지 이동, 쉬운 설명 원문, 저장 결과 복구와 실패 상태를 연결한다.",
       "acceptance": [
         "history1쌍·페이지없는답성공표시금지·다중PDF",
-        "오래된실패질문혼동없음·npm run check/브라우저"
+        "오래된실패질문혼동없음·npm run check/API계약검사"
       ],
       "operations": [],
       "external_gates": [],
@@ -3114,7 +3214,9 @@
       "base_sha": null,
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Upstream FE49c95c9 already supplies mock/hybrid/server mode, Vite proxy and Vercel /api+SPA rewrites. Verify/reuse these and real deployment; hybrid22 routes and mock approval->day9 seed are not real full contract implementation."
+      ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
@@ -3149,7 +3251,9 @@
       "base_sha": null,
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Upstream FE49c95c9 already replaces seed and sample PDFs with AI/DB/OS. Reconcile current values and remaining fixture/script gaps instead of rebuilding old c8e seed."
+      ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
@@ -3331,7 +3435,8 @@
         "FE-05",
         "FE-08",
         "FE-09",
-        "QA-01"
+        "QA-01",
+        "QA-DAY9"
       ],
       "write_scope": [
         "BE/tests/e2e/",
@@ -3506,6 +3611,186 @@
       ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
+    },
+    {
+      "id": "FE-02A",
+      "title": "day9 집중 종료·기록·홈 갱신 흐름",
+      "lane": "frontend",
+      "status": "integrated",
+      "assignee": "/root/study_implementation",
+      "depends_on": [
+        "FE-01",
+        "R-02",
+        "R-03",
+        "D-01"
+      ],
+      "write_scope": [
+        "FE/src/api/today.js",
+        "FE/src/api/study.js",
+        "FE/src/api/adapters/today.js",
+        "FE/src/api/adapters/study.js",
+        "FE/src/hooks/useToday.js",
+        "FE/src/hooks/useStudy.js",
+        "FE/src/pages/home/modals/S7Record.jsx",
+        "FE/src/pages/study/",
+        "FE/src/components/home/TaskCard.jsx",
+        "FE/src/api/adapters/today.test.js",
+        "FE/tests/record-flow.test.mjs",
+        "FE/src/mocks/logic.js"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "42분 집중 종료의 sessionId로 p13 부분 기록 후 홈20/27쪽·74%를 실제 API로 표시한다.",
+      "acceptance": [
+        "종료세션없으면sessionId 생략, 미사용 범위 필드 null금지",
+        "서버 pages/donePages/ranges 보존·복합범위·정정·실패입력 보존",
+        "server(false) 실제 흐름, npm check, 의미있는 영향검사; 전체BE반복없음"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "feat/day9-record-flow",
+      "base_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
+      "head_sha": "52f4a23d3bff4c5e7680c176695162d2eff094f0",
+      "pr_url": "https://github.com/line1thon-team10/team-10_FE/pull/5",
+      "validation_evidence": [
+        "Latest FE49c95c9 preserved; minimal mock response fields allowed to retain default mode, no seed/policy rewrite. Root prepares local BE8017 and FE5187, no production reset.",
+        "Immutable52f4a23: node11 passed and npm check; actual server(false) browser flow under Astra review. Temporary SQLite writer lock injects one409 without production mutation.",
+        "Independent review closed at52f4a23; merged PR5 as21481d4. Focus end, record retry,20/27 pages74%, and manual record without session passed before user stopped further screen verification."
+      ],
+      "integration_only_paths": [
+        "FE/src/api/endpoints.js",
+        "FE/src/hooks/queryKeys.js"
+      ],
+      "validation_mode": "risk-focused-impact-and-required-ci",
+      "worktree": "FE-task-day9-record",
+      "integration_sha": "21481d494ae1bad3a0d4cbfbf196d2a5786c1220"
+    },
+    {
+      "id": "FE-03A",
+      "title": "퀴즈 문항 저장·새로고침 복구 흐름",
+      "lane": "frontend",
+      "status": "integrated",
+      "assignee": "/root/study_implementation",
+      "depends_on": [
+        "FE-01",
+        "Q-03"
+      ],
+      "write_scope": [
+        "FE/src/api/quiz.js",
+        "FE/src/api/adapters/quiz.js",
+        "FE/src/hooks/useQuiz.js",
+        "FE/src/pages/quiz/S8Quiz.jsx",
+        "FE/src/pages/quiz/answerDraft.js",
+        "FE/src/mocks/handlers/quiz.js",
+        "FE/src/mocks/logic.js",
+        "FE/tests/quiz-answer-flow.test.mjs"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "다음 이동 전 문항 PUT, quizId/itemId/revision 보존, GET savedAnswers로 입력 복원.",
+      "acceptance": [
+        "저장 실패시 입력·현재 문항 유지",
+        "과거응답이 최신revision을 덮지 않음·409 복구",
+        "문항 풀이 중 정답/근거/채점상태 비공개"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "feat/quiz-answer-flow",
+      "base_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
+      "head_sha": "ca8a9a3de9a7774d43913512b93331d4bb048bb4",
+      "pr_url": "https://github.com/line1thon-team10/team-10_FE/pull/6",
+      "validation_evidence": [
+        "Starts against reviewed immutable Q03 contract while its unrelated test-budget CI repair runs. Distinct worktree/file ownership from FE02A review. Minimal mock PUT/recovery compatibility permitted; no seed/scoring rewrite.",
+        "Node26 and npm check passed. API-only independent P2: canceled unpinned GET writes older revision into pinned cache after successful PUT. Preserved actual-hook reproduction /private/tmp/team10-fe03a-edge-review.yr35qs65/tests/test-independent-quiz-stale-get.mjs; author fixing before FE03B.",
+        "Original stale GET repro byte-identical final recheck1 passed324ms atca8a9a3, no remaining findings. Author17 changed-risk cases/npm check passed. PR6 merged to dev1edf606."
+      ],
+      "integration_only_paths": [
+        "FE/src/api/endpoints.js",
+        "FE/src/hooks/queryKeys.js"
+      ],
+      "validation_mode": "risk-focused-impact-and-required-ci",
+      "worktree": "FE-task-quiz-answers",
+      "integration_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
+      "review_status": "approved"
+    },
+    {
+      "id": "FE-03B",
+      "title": "퀴즈 최종 제출·결과 재조회 흐름",
+      "lane": "frontend",
+      "status": "running",
+      "assignee": "/root/study_implementation",
+      "depends_on": [
+        "FE-03A",
+        "Q-05",
+        "Q-06"
+      ],
+      "write_scope": [
+        "FE/src/api/quiz.js",
+        "FE/src/api/adapters/quiz.js",
+        "FE/src/hooks/useQuiz.js",
+        "FE/src/pages/quiz/"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "저장한 실제 quizId/전체답안을 제출하고 결과 스냅샷을 표시·재조회한다.",
+      "acceptance": [
+        "실패503 답안 보존 및 동일 요청재시도",
+        "중복제출 점수중복없음·새로고침결과불변",
+        "savedGrading 명시 선택, 잘못된답은503·외부0회"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "feat/quiz-submit-result-flow",
+      "base_sha": "6f61b7aa1d632374ccf18db9f489d57917354599",
+      "head_sha": null,
+      "pr_url": null,
+      "validation_evidence": [
+        "Worktree created at6f61b7a; author first fixes FE03A stale GET and normally merges it, then final submit/result flow. API/Node impact tests and npm check only; no browser verification."
+      ],
+      "integration_only_paths": [],
+      "validation_mode": "risk-focused-impact-and-required-ci",
+      "worktree": "FE-task-quiz-submit"
+    },
+    {
+      "id": "QA-DAY9",
+      "title": "day9 학습·퀴즈 사용자 흐름 통합 검증",
+      "lane": "quality",
+      "status": "running",
+      "assignee": "/root/astra_edge_review",
+      "depends_on": [
+        "FE-02A",
+        "FE-03B",
+        "Q-03",
+        "Q-04",
+        "Q-05",
+        "Q-06"
+      ],
+      "write_scope": [
+        "BE/tests/e2e/test_day9_flow.py"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "집중 종료→p13 기록→답안 저장/복구→최종 제출→결과 재조회를 API 계약 검사로 연결하고 출고 SHA를 고정한다.",
+      "acceptance": [
+        "실제 서비스 API 계약 흐름과 FE adapter/hook 영향검사; 브라우저·화면·스크린샷 검증 생략(사용자 지시)",
+        "데이터유실/중복점수/소유권/동시제출 집중검증",
+        "큰통합시필수CI, 배포는백업/복구절차확인후; 기존운영사용자reset금지"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "feat/saved-quiz-grading",
+      "base_sha": "34a790a700d86f96f2e08232e5c7a4814746e810",
+      "head_sha": "efbb524483125f0fb7ccd6019b41d2dfae8916f3",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
+      "validation_evidence": [
+        "API-only connected flow2 SQLite/PG passed at34a790a, preserved verbatim inefbb524:focus end,p13,PUT answers,GET recovery,saved submit,result GET,identical replay; no answer/head loss or duplicate attempts/mastery,owned cache,provider0. FE03B impact review and mandatory CI still pending; no screen verification."
+      ],
+      "integration_only_paths": [],
+      "validation_mode": "risk-focused-impact-and-required-ci"
     }
   ]
 }

@@ -70,3 +70,19 @@
 - Q-04는 서버 재시작 후 saved/backup 작업이 live로 바뀌지 않도록0008 실행 모드를 영속화한다. schema와 generator를 독점하며 공통 생성기 지원·schema·기존 테스트 보정·운영 worker 연결을 별도 커밋한다. 실제 AI 키 없는 가짜 transport 검증과 실제 provider 품질 검증은 구분한다.
 - FE-01은 원격 main/dev가c8e250d인 것을 다시 확인하고 문서 전용 작업트리에서 시작했다. 기존 사용자 기준과 C01~C22 변경 위치, 실제 로컬 응답 fixture를 준비한다. FE 화면 연결은 후속 task다.
 - 중간 배포는 앱4c20454/AI6d74ffb/DB0006, workflow76ed718을 고정했다. Sol 담당자의 Actions43550194880이 GitHub-hosted ARM64 테스트·빌드를 진행 중이며, 이 기록 시점에 RPI 적용은 시작하지 않았다. 새 통합HEAD를 해당 실행에 섞지 않는다.
+
+## 일정·진도 통합 검증과 운영 체크포인트 완료
+
+- O-02 최종 CI43549792768 후보ee905a3에서1872 passed/1 skipped, D-01 CI43550278524 후보2518106에서1743 passed/1 skipped. 각각6319d3b/9d1ddd7로 통합했다. **정확히9d1ddd7 전체 SQLite+PG는2123 passed/4 skipped,595.38초**다. 로그 `/private/tmp/team10-integration-progress-events-full.log`.
+- Sol 배포 run43550194880은 build/deploy 모두 성공했다. 앱4c20454·AI6d74ffb·DB0006, digest `sha256:f5250def3a82f5934cb832a6ad08c6b9a3710075415208c86de69275f2a52f53`. root도 RPI4 API 컨테이너의 실제 image reference/ID를 읽어 같은 digest를 확인했다. ARM64는1677 passed/1 skipped이며 운영 성공은 최신 통합9d1ddd7 배포를 뜻하지 않는다.
+- 쓰기 중지 후 백업은 `/home/ubuntu/apps/2026-line1/backups/20261114T032713Z.sql`(3,030,248 bytes,600,SHA256은release manifest). 공개 day9 42분 집중 종료→p.13 기록→67%에서74%, 퀴즈 항목 UUID·준비도·no-store를 확인했다. 루트복구 문서 갱신과 보고 커밋55e108e를b3c3ff1로 병합했다. 외부 AI/OCR 실키 확인은 없다.
+- Q-03 독립 답 저장/GET 복구는9d1ddd7에서 시작했다. 기존 legacy submit에는 잠금/채점 분리 경계가 없으므로 AI 대기 전체를 잠그는 보정은 거절했다. Q-03 단독 운영 배포를 금지하고, Q-05의 실제 HTTP save/submit 경쟁 검사 및 트랜잭션 밖 채점 완료를 배포 조건으로 기록했다.
+- FE-01은 FE의전용docs브랜치에 기준·C01~C22매핑(fc706af)과14개HTTP응답/5fixture/재캡처도구(4c715bf)를 원자 커밋했다. 임시SQLite에서 캡처했으며 운영 데이터·키·FE runtime을 바꾸지 않았다. BE 및 루트 전달 문서의 ‘명세만 작성’이라는 오래된 상태도 갱신했다.
+
+## 답안·worker 독립 보완 및 최신 FE 반영
+
+- Q-03(PR #29)의 독립 검토가 문자열 저장, concept 소속, 문항 변경 후 영수증 재생의 세 P2를 검출했다. 각각7d1f49d/83acd27/4022fa7에서 보정했으며, 원본 재현22개와 추가 독립·변경 회귀70개가 SQLite·PG에서 모두 통과했다. 문서 포함0f746ed이며 Q-05 선행 배포 조건은 유지한다.
+- Q-04는92cd382의706개 검사 외에 손상 퀴즈 선두100개가 정상 작업을 영구 지연하는 독립 재현2개가 실패했다. 전체 퀴즈 검증을 재사용하고 keyset·cursor·공유 deadline으로 보완했다. b6f3a3d에서 작성자361개 및 원래2개가 통과했으며 별도 검증자가 보완을 다시 검사 중이다.
+- SYS-05(PR #30) 최종a56e5af는397 passed/5 SQLite 전용 skip(PG에서 해당 경쟁 검사 실행). 오래된 writer의 알려진 적용 사실과 후보 kind 오류도 최소 repository 보완으로 구분했다. Astra가 고정 SHA를 독립 검토 중이다.
+- FE-01은984423d에서 독립 검증 완료(5fixture/14HTTP 재캡처, null 세션 입력422/생략200 안내 보정). 이후 담당자의 main/dev가49c95c9로 전진한 것을 발견해 정상 mergea19164a로 보존하고564224a에서 인계 문서만 갱신했다. 합친 코드의 npm check 통과, 문서 delta 재검토 중이다. 기존 hybrid·프록시·새 시드·firstExam 보정을 후속 FE 작업에서 재사용한다.
+- 11/14 04:08 UTC 공개 GET demo/state에 잘못된 익명 ID를 보내401 UNKNOWN_SESSION 및 no-store를 확인했다. FE가 과거 보고한500은 현 배포에서 재현되지 않았다. 새 운영 배포는 수행하지 않았다.
