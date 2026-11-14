@@ -366,6 +366,9 @@ class QuizService:
                 score=r.score, level=r.grade, recovery_mode=r.recovery_mode, recorded_date=self.today,
                 daily_increase_limit=r.daily_increase_limit, created_at=now))
 
+        from app.services.remedial import generate_remedial
+        generate_remedial(self.conn, self.user, quiz_session_id, pending, self.today, now)
+
     # ---------- 결과 ----------
     def _result_evidence(self, source):
         if source is None:
