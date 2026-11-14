@@ -143,7 +143,12 @@ def _apply(conn, context, changes):
             ends_at=_instant(task['date'], task['end'], changes['timezone']), estimated_minutes=task['minutes'],
             placement_reason=POLICY_VERSION, status='planned', created_at=context.now))
         if obligation_id is not None:
-            conn.execute(t.remedial_obligation_blocks.insert().values(obligation_id=obligation_id, block_id=block_id))
+            allocation_snapshot = {'schemaVersion': 'remedial-allocation-v1', 'generatedAt': context.now.isoformat(),
+                'taskId': task['id'], 'date': task['date'], 'start': task['start'], 'end': task['end'],
+                'parts': [{key: part[key] for key in ('unitId', 'materialId', 'from', 'to', 'baseline', 'multiplier')}
+                          for part in parts]}
+            conn.execute(t.remedial_obligation_blocks.insert().values(obligation_id=obligation_id, block_id=block_id,
+                allocation_snapshot=allocation_snapshot))
         for order, part in enumerate(parts, 1):
             conn.execute(t.study_task_ranges.insert().values(id=str(uuid4()), task_id=task['id'],
                 unit_id=part['unitId'], start_page=part['from'], end_page=part['to'], sort_order=order,

@@ -7,17 +7,18 @@ from collections import defaultdict
 from dataclasses import replace
 from fractions import Fraction
 from zoneinfo import ZoneInfo
-from datetime import timezone
+from datetime import datetime, timezone
 from datetime import date, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 
+from app.core.clock import now_utc
 from app.db import schema as t
 from app.domain.onboarding import CONFIRMATION_COLUMNS, subject_view
 from app.domain.ranges import PageSpan, subtract
 from app.domain.scheduling import (AllocationInput, Subject, UnitScope, FixedTask, FixedRange,
-    free_slots, WorkRequirement, ScopePart, StudyWindow)
+    free_slots, WorkRequirement, ScopePart, StudyWindow, BusyInterval)
 from app.repositories.events import EventRepository
 from app.services.onboarding_events import event_intervals
 
@@ -27,7 +28,7 @@ class PlanInputError(ValueError):
 
 
 class PendingObligations(PlanInputError):
-    """Overdue remedial/review obligations need the carryover flow first."""
+    """Owed remedial/review work needs its current carryover resolved first."""
 
 
 
@@ -57,6 +58,26 @@ def _pending_targets(connection, user_id, today):
     return result
 
 
+def _without_elapsed_slots(connection, user_id, request, timezone_name, at):
+    """New real-day candidates avoid elapsed gaps without changing fixed facts.
+
+    The wall clock is not a proposal dependency/TTL: already stored candidates
+    keep the existing explicit-approval semantics even as seconds pass.
+    """
+    if connection.scalar(select(t.users.c.demo_date).where(t.users.c.id == user_id)) is not None:
+        return request
+    at = now_utc() if at is None else at
+    if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
+        raise PlanInputError('서버의 시간대가 있는 현재 시각이 필요해요')
+    local = at.astimezone(ZoneInfo(timezone_name))
+    if local.date() != request.start_date:
+        return request
+    minute = Fraction(local.hour * 3600 + local.minute * 60 + local.second, 60) + Fraction(local.microsecond, 60_000_000)
+    elapsed = tuple(BusyInterval(local.date(), slot.start, min(slot.end, minute))
+        for slot in free_slots(local.date(), request.busy, request.fixed) if slot.start < minute)
+    return replace(request, busy=(*request.busy, *elapsed))
+
+
 def _page_bounds(start, end, maximum):
     if (type(start) is not int or type(end) is not int or type(maximum) is not int
             or not 1 <= start <= end <= maximum):
@@ -64,14 +85,14 @@ def _page_bounds(start, end, maximum):
 
 
 def initial_allocation_input(connection, user_id: str, *, today: date,
-                             timezone_name: str, subject_ids: tuple[str, ...] | None = None) -> AllocationInput:
+                             timezone_name: str, subject_ids: tuple[str, ...] | None = None, at=None) -> AllocationInput:
     return _allocation_input(connection, user_id, today=today, timezone_name=timezone_name,
-                             subject_ids=subject_ids, existing=False)
+                             subject_ids=subject_ids, existing=False, at=at)
 
 
 def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None,
                       subject_overrides=None, calendar_event_overrides=None, calendar_exception_overrides=None,
-                      goal_effective_day=None):
+                      goal_effective_day=None, at=None):
     """Resolve owned draft subjects, concept unions and actual calendar intervals.
 
     quiz_enabled is deliberately not an admission condition: a manual outline
@@ -283,7 +304,8 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                 week += timedelta(days=7)
     except (ValueError, KeyError, OverflowError, TypeError, AttributeError) as exc:
         raise PlanInputError("저장된 일정의 반복 규칙과 날짜를 확인해 주세요") from exc
-    return AllocationInput(today, tuple(subjects), tuple(scopes), tuple(busy))
+    result = AllocationInput(today, tuple(subjects), tuple(scopes), tuple(busy))
+    return result if existing else _without_elapsed_slots(connection, user_id, result, timezone_name, at)
 
 
 
@@ -326,10 +348,60 @@ def _unallocated_obligations(connection, user_id, included, catalog):
     return result
 
 
+
+def _restore_carryover_residuals(tasks, catalog, affected, requirements, supersede, earliest_day):
+    """A correction may reopen pages outside the latest carryover reservation."""
+    blocks = defaultdict(list)
+    for task in tasks:
+        if task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review'):
+            blocks[task.row['block_id']].append(task)
+    for chain in blocks.values():
+        carried = [task for task in chain if task.row['status'] == 'carried_over']
+        if not carried:
+            continue
+        required, actual, reserved = defaultdict(list), defaultdict(list), defaultdict(list)
+        live = [task for task in chain if task.row['status'] not in ('carried_over', 'excluded', 'completed')]
+        if len(live) > 1:
+            raise PlanInputError('같은 보충·복습에 진행 중인 배치가 중복돼요')
+        for task in chain:
+            if task.row['status'] == 'excluded':
+                continue
+            for row in task.paged:
+                unit = catalog.get(row['unit_id'])
+                if unit is None:
+                    raise PlanInputError('이월된 보충·복습의 원래 단원을 확인해 주세요')
+                span = PageSpan(unit.material_id, row['start_page'], row['end_page'])
+                required[unit.id].append(span)
+                if task in live:
+                    reserved[unit.id].append(span)
+            if task.record and task.record['result'] in ('completed', 'partial'):
+                for row in task.done_ranges:
+                    if row['unit_id'] in catalog and row['start_page'] is not None and row['end_page'] is not None:
+                        unit = catalog[row['unit_id']]
+                        actual[unit.id].append(PageSpan(unit.material_id, row['start_page'], row['end_page']))
+        remaining = tuple(ScopePart(uid, span) for uid, spans in required.items()
+                          for span in subtract(spans, actual[uid]))
+        residual = any(subtract((part.span,), reserved[part.unit_id]) for part in remaining)
+        if live and live[0].id not in supersede:
+            if residual:
+                raise PendingObligations('기록 정정으로 남은 보충·복습은 현재 이월 태스크를 완료한 뒤 다시 배분해 주세요')
+            continue
+        source = live[0] if live else min(carried, key=lambda task: (
+            task.row['origin_task_id'] is not None, task.row['created_at'], task.id))
+        # All placements of one durable book share completion facts. Moving its
+        # live child must include reopened ancestor pages, without duplicating it.
+        requirements[:] = [item for item in requirements if item.id != source.id]
+        if remaining:
+            requirements.append(WorkRequirement(source.id, source.row['subject_id'], source.row['task_type'],
+                remaining, earliest_day, indivisible=True))
+            if source.id not in supersede:
+                supersede.append(source.id)
+
+
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
                               subject_overrides=None, earliest_day=None, movable_task_ids=(),
-                              calendar_event_overrides=None, calendar_exception_overrides=None, study_windows=()):
+                              calendar_event_overrides=None, calendar_exception_overrides=None, study_windows=(), at=None):
     """Keep learning facts and active started placements while reallocating rest.
 
     Only selected draft subjects are added. Every active study range is reduced
@@ -420,6 +492,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                 if remaining:
                     requirements.append(WorkRequirement(task.id, task.row['subject_id'], task.row['task_type'],
                         tuple(remaining), earliest_day, indivisible=True))
+    _restore_carryover_residuals(data.tasks, catalog, affected, requirements, supersede, earliest_day)
     zone = ZoneInfo(timezone_name)
     for task, parts in sorted(pending_fixed, key=lambda item: (item[0].row['scheduled_date'], item[0].row['starts_at'] is None, item[0].id)):
         row, day = task.row, task.row['scheduled_date']
@@ -453,5 +526,6 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
         raise PlanInputError('추가 학습 조건은 본인의 선택 범위와 오늘 이후 날짜여야 해요')
     units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.material_id]) if unit.subject_id in affected else ())
                   for unit in catalog.values())
-    return replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed),
-                   requirements=tuple(requirements), study_windows=tuple(study_windows)), supersede, request
+    candidate = replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed),
+                        requirements=tuple(requirements), study_windows=tuple(study_windows))
+    return _without_elapsed_slots(connection, user_id, candidate, timezone_name, at), supersede, request
