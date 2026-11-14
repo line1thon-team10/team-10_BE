@@ -29,7 +29,7 @@ def main(argv=None, *, service_factory=None):
         while not stop.is_set():
             if args.loop:
                 _heartbeat(args.health_file, lifespan)
-            service.run_next()
+            service.run_next(stop_requested=stop.is_set)
             if not args.loop:
                 break
             stop.wait(1)

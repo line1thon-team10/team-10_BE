@@ -28,7 +28,7 @@ session.check_db_revision = lambda: None
 from app.workers.materials import main
 class Worker:
     def __init__(self,engine): pass
-    def run_next(self):
+    def run_next(self, **kwargs):
         with Path(__import__('sys').argv[1]).open('a') as out: out.write('start\\n')
         time.sleep(1)
         with Path(__import__('sys').argv[1]).open('a') as out: out.write('finish\\n')
@@ -61,7 +61,7 @@ from app.ai.gateway import CleanupFailed
 from app.workers.materials import main
 class Worker:
     def __init__(self,engine): pass
-    def run_next(self): raise CleanupFailed('secret-api-key')
+    def run_next(self, **kwargs): raise CleanupFailed('secret-api-key')
 raise SystemExit(main([],service_factory=Worker))
 '''
     result = subprocess.run([sys.executable,'-c',source],cwd=ROOT,capture_output=True,text=True,timeout=10)

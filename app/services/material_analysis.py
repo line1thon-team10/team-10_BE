@@ -221,12 +221,14 @@ class MaterialAnalysisService:
         except Exception as error:
             return self._fail(claim, error)
 
-    def run_next(self):
+    def run_next(self, *, stop_requested=lambda: False):
         with self.engine.connect() as conn:
             candidates = conn.execute(select(t.ai_jobs).where(t.ai_jobs.c.kind == 'pdf_analysis',
                 t.ai_jobs.c.target_type == 'material', t.ai_jobs.c.status.in_(('queued', 'running')))
                 .order_by(t.ai_jobs.c.created_at, t.ai_jobs.c.id)).mappings().all()
         for job in candidates:
+            if stop_requested():
+                return False
             if job['status'] == 'running' and not self._expired(job, self.clock()):
                 continue
             if self.run_job(job['user_id'], job['id']):
