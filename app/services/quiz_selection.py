@@ -85,6 +85,7 @@ class QuizSelection:
 
     def questions(self, subject_id, scopes, difficulty=None):
         units = {uid:u for uid,u in self.data.units.items() if uid in scopes and u['subject_id']==subject_id and u['quiz_enabled'] and u['evidence']}
+        materials = {r['id']:dict(r) for r in self.conn.execute(select(t.materials).where(t.materials.c.id.in_([u['material_id'] for u in units.values()]))).mappings()}
         concepts = {r['id']:dict(r) for r in self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(units))).mappings()}
         questions = [dict(r) for r in self.conn.execute(select(t.questions).where(t.questions.c.unit_id.in_(units))
             .order_by(t.questions.c.code, t.questions.c.id)).mappings()]
@@ -110,6 +111,8 @@ class QuizSelection:
                     continue
                 if any(not isinstance(c,dict) or not isinstance(c.get('text'),str) or not c['text'].strip() for c in choices):
                     continue
+                if sum(c['text']==question['correct_answer'] for c in choices)!=1:
+                    continue
             elif choices:
                 continue
             evidence = sources[question['id']]
@@ -121,7 +124,8 @@ class QuizSelection:
                     span = PageSpan(source['material_id'], source['start_page'], source['end_page'])
                 except ValueError:
                     acceptable=False; break
-                if (source['material_id']!=unit['material_id'] or subtract([span], scopes[uid])
+                pages=materials[unit['material_id']]['page_count']
+                if (source['material_id']!=unit['material_id'] or pages is None or span.end>pages or subtract([span], scopes[uid])
                     or not isinstance(source['quote'],str) or not source['quote'].strip()):
                     acceptable=False; break
             if acceptable:

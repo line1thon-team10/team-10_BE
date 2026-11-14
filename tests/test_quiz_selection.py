@@ -147,3 +147,16 @@ def test_manual_unit_without_analysis_evidence_remains_quizless(api_client,progr
     cards=api_client.get('/api/quiz/today',headers={'X-Anonymous-Id':w.user}).json()['data']
     row=next(row for row in cards['subjects'] if row['subjectId']==w.subject['id'])
     assert row['count']==0 and row['hasQuestions'] is False and row['open'] is False
+
+
+@pytest.mark.parametrize('invalid', ['ambiguous_choice', 'outside_pdf'])
+def test_prepared_bank_requires_gradable_answers_and_physical_pdf_bounds(api_client,progress_world,invalid):
+    w=progress_world;unit=w.unit(1,10);w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    for _ in range(4):add_question(w,unit)
+    if invalid=='ambiguous_choice':
+        add_question(w,unit,type='choice',choices=[{'text':'정답'},{'text':'정답'}])
+    else:
+        add_question(w,unit,page=10)
+        w.conn.execute(update(t.materials).where(t.materials.c.id==unit['material_id']).values(page_count=9))
+    response=get(api_client,w)
+    assert response.status_code==404 and response.json()['error']['code']=='NO_QUESTIONS'
