@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, event, func, select, text
 
 from app.ai.gateway import (
     DemoApproval, FunctionRef, GatewayRequest, InvalidOutput, MaterialRevision, ProcessExecutor, ProviderSpec,
-    ResultIdentity, TelemetryError, _Telemetry, canonical_json, parse_json,
+    ResultIdentity, TelemetryError, UsageRecord, _Telemetry, canonical_json, parse_json,
 )
 from app.ai.settings import AiSettings
 from app.core.responses import ApiError
@@ -412,3 +412,68 @@ def test_telemetry_rejects_duplicate_start_or_finish_and_forged_request_ids():
     for invalid in (end, {**end, "id": str(uuid4())}):
         with pytest.raises(TelemetryError):
             collector.accept(invalid)
+
+
+def add_job(conn, owner_id, *, kind="nl_parse"):
+    job_id = str(uuid4())
+    conn.execute(t.ai_jobs.insert().values(id=job_id, user_id=owner_id, kind=kind, status="running",
+        idempotency_key=job_id, input_hash="a" * 64, input_payload={}, schema_version="schema-v1", created_at=NOW))
+    conn.commit()
+    return job_id
+
+
+def usage_rows(conn):
+    conn.commit()
+    return list(conn.execute(select(t.ai_usage_logs).order_by(t.ai_usage_logs.c.created_at, t.ai_usage_logs.c.id)).mappings())
+
+
+def test_usage_persists_actual_attempts_with_unknown_measurements_null(result_repository, domain_connection, gateway_user):
+    job_id = add_job(domain_connection, gateway_user)
+    request = GatewayRequest(gateway_user, identity(), job_id=job_id)
+    unknown = UsageRecord(str(uuid4()), "provider", "model", NOW)
+    known = UsageRecord(str(uuid4()), "provider", "nested-model", NOW, status="succeeded",
+                        input_tokens=10, output_tokens=3, estimated_cost=0.0001, provider_request_id="actual-id", latency_ms=20)
+    result_repository.record_usage(request, [unknown, known])
+    rows = {row["id"]: row for row in usage_rows(domain_connection)}
+    assert len(rows) == 2 and {row["user_id"] for row in rows.values()} == {gateway_user}
+    assert {row["job_id"] for row in rows.values()} == {job_id}
+    assert rows[unknown.id]["input_tokens"] is None and rows[unknown.id]["estimated_cost"] is None
+    assert rows[unknown.id]["latency_ms"] is None and rows[unknown.id]["status"] == "failed"
+    assert rows[known.id]["estimated_cost"] == pytest.approx(0.0001)
+    assert rows[known.id]["input_tokens"] == 10 and rows[known.id]["provider_request_id"] == "actual-id"
+
+
+def test_usage_survives_material_or_job_deletion_during_external_work(result_repository, domain_connection, gateway_user):
+    material_id, job_id = add_material(domain_connection, gateway_user), add_job(domain_connection, gateway_user)
+    request = GatewayRequest(gateway_user, identity(materials=[MaterialRevision(material_id, "v1")]), job_id=job_id)
+    assert result_repository.lookup(request) is None
+    domain_connection.execute(t.materials.delete().where(t.materials.c.id == material_id))
+    domain_connection.execute(t.ai_jobs.delete().where(t.ai_jobs.c.id == job_id))
+    domain_connection.commit()
+    result_repository.record_usage(request, [UsageRecord(str(uuid4()), "provider", "model", NOW)])
+    rows = usage_rows(domain_connection)
+    assert len(rows) == 1 and rows[0]["user_id"] == gateway_user and rows[0]["job_id"] is None
+    with pytest.raises(ApiError):
+        result_repository.save(request, {"result": "material disappeared"})
+
+
+def test_job_ownership_and_kind_are_required_before_using_saved_results(result_repository, domain_connection, gateway_user):
+    other = User.anonymous(now=NOW)
+    UserRepository(domain_connection).add(other)
+    domain_connection.commit()
+    foreign_job = add_job(domain_connection, other.id)
+    wrong_kind = add_job(domain_connection, gateway_user, kind="tutor")
+    for job_id in (foreign_job, wrong_kind, str(uuid4())):
+        with pytest.raises(ValueError):
+            result_repository.lookup(GatewayRequest(gateway_user, identity(), job_id=job_id))
+
+
+def test_usage_validation_prevents_partial_or_fabricated_measurements(result_repository, domain_connection, gateway_user):
+    valid = UsageRecord(str(uuid4()), "provider", "model", NOW)
+    invalid = replace(valid, id=str(uuid4()), input_tokens=-2)
+    request = GatewayRequest(gateway_user, identity())
+    with pytest.raises(TelemetryError):
+        result_repository.record_usage(request, [valid, invalid])
+    assert usage_rows(domain_connection) == []
+    result_repository.record_usage(request, [])
+    assert usage_rows(domain_connection) == []

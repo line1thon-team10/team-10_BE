@@ -22,19 +22,19 @@ class AiResultRepository:
             raise TypeError("Pass an Engine; the gateway does not own caller Connections")
         self.engine = engine
 
-    def _assert_owner(self, conn, request):
+    def _assert_owner(self, conn, request, *, check_materials=True, check_job=True):
         from app.ai.gateway import GatewayRequest
         if not isinstance(request, GatewayRequest):
             raise TypeError("GatewayRequest is required")
         if conn.scalar(select(t.users.c.id).where(t.users.c.id == request.owner_id)) is None:
             raise ApiError("UNKNOWN_SESSION", "사용자를 찾지 못했어요", 401)
         wanted = {item.material_id for item in request.identity.materials}
-        if wanted:
+        if wanted and check_materials:
             owned = set(conn.scalars(select(t.materials.c.id).join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
                                     .where(t.materials.c.id.in_(wanted), t.subjects.c.user_id == request.owner_id)))
             if owned != wanted:
                 raise ApiError("NO_MATERIAL", "자료를 찾지 못했어요", 404)
-        if request.job_id is not None and conn.scalar(select(t.ai_jobs.c.id).where(
+        if check_job and request.job_id is not None and conn.scalar(select(t.ai_jobs.c.id).where(
             t.ai_jobs.c.id == request.job_id, t.ai_jobs.c.user_id == request.owner_id,
             t.ai_jobs.c.kind == request.identity.kind,
         )) is None:
@@ -77,3 +77,35 @@ class AiResultRepository:
                 input_hash=identity.input_hash, schema_version=identity.schema_version, result=snapshot,
                 validated_at=now, created_at=now))
         return result_id
+
+    def record_usage(self, request, usage) -> None:
+        """Persist observed attempts even when subsequent result validation/save fails."""
+        from app.ai.gateway import UsageRecord, _Telemetry
+        records = tuple(usage)
+        if not records:
+            return
+        checked = _Telemetry()
+        for row in records:
+            if not isinstance(row, UsageRecord) or not isinstance(row.created_at, datetime) or row.created_at.utcoffset() is None:
+                raise ValueError("An observed transport record with an aware timestamp is required")
+            checked.accept({"type": "request_started", "id": row.id, "provider": row.provider, "model": row.model})
+            checked.accept({"type": "request_finished", "id": row.id, "status": row.status,
+                "provider_request_id": row.provider_request_id, "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens, "estimated_cost": row.estimated_cost,
+                "currency": row.currency, "latency_ms": row.latency_ms})
+        with self.engine.begin() as conn:
+            # Materials/jobs can be deleted during an external request. Accounting
+            # still belongs to the already-authorized user, independently of apply.
+            self._assert_owner(conn, request, check_materials=False, check_job=False)
+            job_id = None
+            if request.job_id is not None:
+                job_id = conn.scalar(select(t.ai_jobs.c.id).where(
+                    t.ai_jobs.c.id == request.job_id, t.ai_jobs.c.user_id == request.owner_id,
+                    t.ai_jobs.c.kind == request.identity.kind))
+            conn.execute(t.ai_usage_logs.insert(), [{
+                "id": row.id, "job_id": job_id, "user_id": request.owner_id, "kind": request.identity.kind,
+                "provider": row.provider, "model": row.model, "provider_request_id": row.provider_request_id,
+                "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
+                "estimated_cost": row.estimated_cost, "currency": row.currency, "latency_ms": row.latency_ms,
+                "status": row.status, "created_at": row.created_at,
+            } for row in records])
