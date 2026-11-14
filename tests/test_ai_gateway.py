@@ -239,6 +239,15 @@ def fake_provider(call, context):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         time.sleep(payload["delay"])
         Path(payload["late_file"]).write_text("unwanted late side effect")
+    if behavior == "remaining_budget_retry":
+        # Measure after process bootstrap: a cold ARM spawn must not consume
+        # an assumed fixed first-request allowance before the retry can start.
+        remaining = context.remaining_seconds
+        trace = Path(payload['budget_trace'])
+        observations = parse_json(trace.read_text()) if call.format_retry else []
+        observations.append({'deadline': context.deadline, 'remaining': remaining})
+        trace.write_text(canonical_json(observations))
+        time.sleep(remaining + 1 if call.format_retry else remaining / 4)
     time.sleep(payload.get("request_delay", 0))
     if behavior == "malformed_telemetry":
         context.finish_request(request_id, input_tokens=True)
@@ -249,7 +258,7 @@ def fake_provider(call, context):
     if behavior == "multiple":
         second = context.start_request(model="nested-model")
         context.finish_request(second, input_tokens=10, output_tokens=2, provider_request_id="observed-2")
-    if behavior == "syntax_always" or behavior == "syntax_once" and not call.format_retry:
+    if behavior == "syntax_always" or behavior in ("syntax_once", "remaining_budget_retry") and not call.format_retry:
         return '{"page":'
     if behavior == "semantic":
         return payload["raw"]
@@ -350,12 +359,16 @@ def test_timeout_kills_sigterm_ignoring_provider_and_does_not_leave_late_work(tm
     assert not late_file.exists()
 
 
-def test_json_retry_uses_remaining_budget_instead_of_starting_a_new_timeout():
+def test_json_retry_uses_remaining_budget_instead_of_starting_a_new_timeout(tmp_path):
+    trace = tmp_path / 'retry-budget.json'
     started = time.monotonic()
-    output = execute_fake({"behavior": "syntax_once", "request_delay": 0.65}, budget=1.5)
+    output = execute_fake({"behavior": "remaining_budget_retry", "budget_trace": str(trace)}, budget=1.5)
     assert output.data is None and output.failure == "timeout"
     assert len(output.usage) == 2 and output.usage[0].status == "succeeded" and output.usage[1].status == "failed"
     assert time.monotonic() - started < 1.7
+    first, retry = parse_json(trace.read_text())
+    assert first['deadline'] == retry['deadline']
+    assert 0 < retry['remaining'] <= first['remaining'] * 0.8
 
 
 def test_domain_validation_is_inside_the_same_killable_budget():
