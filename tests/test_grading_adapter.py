@@ -65,7 +65,8 @@ def test_semantic_structure_and_storage_errors_are_not_valid_results(changes):
 
 
 @pytest.mark.parametrize("field,value", [("start_page", 0), ("end_page", 11), ("start_page", True),
-    ("end_page", 1), ("quote", None), ("quote", " "), ("material_id", str(uuid4()))])
+    ("end_page", 1), ("quote", None), ("quote", " "),
+    pytest.param("material_id", str(uuid4()), id="foreign-material-id")])
 def test_evidence_bounds_and_actual_quote_are_required(field, value):
     context = evidence()
     context["sources"][0][field] = value

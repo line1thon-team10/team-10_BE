@@ -50,7 +50,8 @@ def test_legacy_result_has_explicitly_unknown_provenance(domain_connection, grad
 @pytest.mark.parametrize("field,value", [("question_hash", "x" * 64), ("source_hash", "A" * 64),
     ("material_hash", "a" * 63), ("answer_hash", "a" * 64), ("model_version", " "),
     ("prompt_version", "x\x00y"), ("schema_version", "x\ud800"), ("schema_version", float("nan")),
-    ("model_version", True), ("saved_result_id", "bad"), ("saved_result_id", str(uuid4())), ("extra", 1)])
+    ("model_version", True), ("saved_result_id", "bad"),
+    pytest.param("saved_result_id", str(uuid4()), id="foreign-saved-result-id"), ("extra", 1)])
 def test_invalid_provenance_cannot_mark_job_succeeded(domain_connection, grading_lease, field, value):
     case, lease, provenance = grading_lease
     with pytest.raises(ApiError) as error:
