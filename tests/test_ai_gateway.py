@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import signal
 import struct
+import subprocess
+import sys
 import time
 from uuid import uuid4
 
@@ -372,6 +374,42 @@ def test_large_output_does_not_deadlock_pipe_or_defeat_deadline():
     assert valid.failure is None and len(valid.data["text"]) == 2 * 1024 * 1024
     oversized = execute_fake({"behavior": "large", "size": 9 * 1024 * 1024})
     assert oversized.data is None and oversized.failure is not None and len(oversized.usage) == 1
+
+
+def test_large_parent_input_is_transferred_after_process_start():
+    output = execute_fake({"text": "x" * (2 * 1024 * 1024)})
+    assert output.failure is None and output.data == {"page": 2, "evidence": "source"}
+    assert len(output.usage) == 1
+
+
+def test_slow_spawn_bootstrap_cannot_block_large_input_past_the_deadline(tmp_path):
+    script = tmp_path / "slow_bootstrap.py"
+    script.write_text('''import json, multiprocessing, time
+if __name__ == "__mp_main__":
+    time.sleep(2)
+from app.ai.gateway import ProcessExecutor, ResultIdentity, FunctionRef, ProviderSpec
+def provider(call, context):
+    token = context.start_request()
+    context.finish_request(token)
+    return {"ok": True}
+def validate(value, context):
+    return value
+if __name__ == "__main__":
+    identity = ResultIdentity.create(kind="nl_parse", provider="test", model_version="1",
+        prompt_version="1", schema_version="1", input={"text": "x" * (256 * 1024)})
+    start = time.monotonic()
+    result = ProcessExecutor().execute(identity,
+        provider=ProviderSpec(FunctionRef("__main__", "provider")),
+        validator=FunctionRef("__main__", "validate"), deadline=start + 0.5, cleanup_timeout=0.1)
+    print(json.dumps({"elapsed": time.monotonic() - start, "failure": result.failure,
+        "usage": len(result.usage), "children": len(multiprocessing.active_children())}))
+''')
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    completed = subprocess.run([sys.executable, str(script)], env=env, text=True, capture_output=True, timeout=5)
+    assert completed.returncode == 0, completed.stderr
+    observed = parse_json(completed.stdout)
+    assert observed["failure"] == "timeout" and observed["usage"] == 0 and observed["children"] == 0
+    assert observed["elapsed"] < 0.8
 
 
 def partial_frame_child(connection, *args):

@@ -7,6 +7,7 @@ import json
 import math
 import multiprocessing
 import os
+import pickle
 import select
 import signal
 import struct
@@ -368,11 +369,38 @@ def _emit_frame(connection, event):
         frame = frame[written:]
 
 
-def _execution_child(connection, identity, provider, validator, cached_json, deadline):
+class _DeadlinePipeWriter:
+    """Stream trusted parent input after spawn, without a blocking bootstrap send."""
+    def __init__(self, connection, deadline):
+        self.fd, self.deadline = connection.fileno(), deadline
+
+    def write(self, data):
+        view = memoryview(data)
+        while view:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0 or not select.select([], [self.fd], [], remaining)[1]:
+                raise TimeoutError("The shared AI request budget is exhausted")
+            try:
+                written = os.write(self.fd, view[:65536])
+            except BlockingIOError:
+                continue
+            view = view[written:]
+        return len(data)
+
+
+def _execution_child(connection, request_connection, deadline):
     # POSIX session isolation lets timeout cleanup also stop adapter descendants.
     os.setsid()
     emit = lambda event: _emit_frame(connection, event)
     try:
+        # This pipe is written only by the trusted parent, never by a provider or
+        # an external client. It carries the same typed arguments spawn used to
+        # pickle synchronously in process.start(), now under the parent's timer.
+        with os.fdopen(request_connection.fileno(), "rb", closefd=False) as source:
+            identity, provider, validator, cached_json = pickle.load(source)
+        request_connection.close()
+        if time.monotonic() >= deadline:
+            raise TimeoutError("The shared AI request budget is exhausted")
         domain_validator = validator.resolve()
         if cached_json is None:
             invoke = provider.function.resolve()
@@ -409,6 +437,7 @@ def _execution_child(connection, identity, provider, validator, cached_json, dea
         except (OSError, ValueError):
             pass
     finally:
+        request_connection.close()
         connection.close()
 
 
@@ -439,14 +468,20 @@ class ProcessExecutor:
         # Reserve termination/join time inside the same budget (at most 10%).
         execution_deadline = deadline - min(cleanup_timeout, remaining / 10)
         receive, send = multiprocessing.get_context("spawn").Pipe(duplex=False)
+        request_receive, request_send = multiprocessing.get_context("spawn").Pipe(duplex=False)
         process = multiprocessing.get_context("spawn").Process(target=_execution_child,
-            args=(send, identity, provider, validator, cached_json, execution_deadline), daemon=False)
+            args=(send, request_receive, execution_deadline), daemon=False)
         telemetry, buffer, result, failure, events = _Telemetry(), bytearray(), None, None, 0
         started = False
         try:
             process.start()
             started = True
             send.close()
+            request_receive.close()
+            os.set_blocking(request_send.fileno(), False)
+            pickle.Pickler(_DeadlinePipeWriter(request_send, execution_deadline), protocol=5).dump(
+                (identity, provider, validator, cached_json))
+            request_send.close()
             os.set_blocking(receive.fileno(), False)
             done = False
             while not done:
@@ -494,11 +529,15 @@ class ProcessExecutor:
                         break
             if time.monotonic() >= execution_deadline:
                 result, failure = None, "timeout"
+        except TimeoutError:
+            result, failure = None, "timeout"
         except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
             result, failure = None, "invalid_or_failed"
         finally:
             send.close()
             receive.close()
+            request_send.close()
+            request_receive.close()
             if started:
                 # SIGKILL is deliberate: adapter code may ignore SIGTERM or block
                 # in a native SDK. Never return while its process is still alive.
