@@ -135,6 +135,43 @@ def test_structure_and_tasks_rollback_together_on_apply_failure(api_client,domai
     assert apply(api_client,case,key).status_code==200
 
 
+def test_partial_excluded_concept_addition_does_not_include_its_neighbors(api_client,domain_connection,range_case):
+    case,conn=range_case,domain_connection
+    identifiers=[]
+    for index,(start,end,included) in enumerate([(1,10,True),(11,20,False)],1):
+        identifier=str(uuid4());identifiers.append(identifier)
+        conn.execute(t.concepts.insert().values(id=identifier,unit_id=case['unit'],code=str(index),title='원래 개념',
+            sort_order=index,start_page=start,end_page=end,in_scope=included,created_at=NOW,updated_at=NOW))
+    conn.execute(update(t.units).where(t.units.c.id==case['unit']).values(mastery_score=72,mastery_level='shaky'))
+    conn.commit()
+    response=preview(api_client,case,**{'from':15,'to':17})
+    assert response.status_code==200,response.text
+    assert apply(api_client,case,response.json()['data']['previewId']).status_code==200
+    old=conn.execute(select(t.units).where(t.units.c.id==case['unit'])).mappings().one()
+    assert old['retired_at'] is not None and old['mastery_score']==72
+    rows=conn.execute(select(t.study_task_ranges).join(t.study_tasks,t.study_tasks.c.id==t.study_task_ranges.c.task_id)
+        .where(t.study_tasks.c.subject_id==case['subject'],t.study_tasks.c.status=='planned')).mappings().all()
+    assert sorted(p for row in rows for p in range(row['start_page'],row['end_page']+1))==[*range(1,11),15,16,17]
+    assert all(conn.scalar(select(t.concepts.c.retired_at).where(t.concepts.c.id==identifier)) is not None for identifier in identifiers)
+
+
+def test_other_active_subject_tasks_are_byte_for_byte_unchanged(api_client,domain_connection,range_case):
+    from tests.test_plan_draft_e2e import draft, approve as initial_approve
+    case,conn=range_case,domain_connection
+    response=draft(api_client,case,draftSubjectIds=case['added'])
+    assert response.status_code==200,response.text
+    assert initial_approve(api_client,case,response.json()['data']['previewId']).status_code==200
+    tasks=conn.execute(select(t.study_tasks).where(t.study_tasks.c.subject_id==case['added'])).all()
+    ids=[row.id for row in tasks]
+    ranges=conn.execute(select(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(ids))).all()
+    conn.commit()
+    response=preview(api_client,case)
+    assert response.status_code==200,response.text
+    assert apply(api_client,case,response.json()['data']['previewId']).status_code==200
+    assert conn.execute(select(t.study_tasks).where(t.study_tasks.c.subject_id==case['added'])).all()==tasks
+    assert conn.execute(select(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(ids))).all()==ranges
+
+
 @pytest.mark.parametrize('existing',['learned','running','ended_unconsumed'])
 def test_selected_learning_or_started_facts_are_not_duplicated(api_client,domain_connection,range_case,existing):
     case,conn=range_case,domain_connection
@@ -165,3 +202,7 @@ def test_selected_learning_or_started_facts_are_not_duplicated(api_client,domain
     assert conn.execute(select(t.study_records).order_by(*t.study_records.primary_key.columns)).all()==before['study_records']
     assert conn.execute(select(t.study_record_ranges).order_by(*t.study_record_ranges.primary_key.columns)).all()==before['study_record_ranges']
 
+
+def test_no_plan_has_explicit_no_plan_error(api_client,plan_case):
+    response=preview(api_client,plan_case)
+    assert response.status_code==400 and response.json()['error']['code']=='NO_PLAN'
