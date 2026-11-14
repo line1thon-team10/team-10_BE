@@ -56,3 +56,9 @@ FE 초안의 필드 표를 기준으로 하며 타입·기본값은 common.md, �
 ## 다중 자료 식별
 
 `subjects[].units[]`에 `id`(unitId), `materialId` string을 필수로 추가한다. no는 자료 내 표시 순번이다. blocks[]에는 `id`(영속 책 ID)를 포함하고, blocks[].task가 있으면 `id`(taskId), `pages`, `ranges`([학습 범위 형식](study.md))를 함께 반환한다. 복합 범위의 from/to/doneTo는 null이다. FE는 unitId/blockId로 렌더링·선택하고 서버 pages를 사용한다. 다른 PDF의 같은 단원 번호·페이지를 합산 중복 제거하지 않는다.
+
+### S-03 회복 자격 검증
+
+- `masteryScopeRevision`은 자료 SHA·분석 버전·단원/개념 ID와 현재 포함 페이지의 고정 해시다. 회독의 `materialId`, `requiredRanges`, 소유 기록의 현재 범위를 다시 검사하며 다른 자료·단원·과거 범위나 무효화된 회독은 자격이 아니다.
+- `full_relearn` 완료일의 실제 기록 범위가 현재 전체 범위를 덮고, 같은 날짜에 동일 전체 `quiz_scopes`의 custom/practice 결과가 확정된 경우에만 그 날짜 상승 상한15를 허용한다. 재학습이나 풀이 한쪽만으로는5이며 기존 결과는 재계산하거나 덮어쓰지 않는다.
+- 보충 완료 자격에는 유효 initial 회독과 생성 당시 scope가 현재와 일치하는 보충 의무 전체 완료가 필요하다. 같은 의무를 나눈 여러 책은 하나의 회독이다. 과거 결과와 회독 이력은 보존하고 기록 정정은 이후 결과 자격에만 영향을 준다.

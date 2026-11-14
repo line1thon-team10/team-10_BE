@@ -346,7 +346,9 @@ class QuizService:
         pending = unit_ids - recorded
         if not pending:
             return
-        result = calculate_learning_metrics(self._metrics_input())
+        from app.services.recovery_evidence import recovery_eligibility
+        metrics = self._metrics_input()
+        result = calculate_learning_metrics(metrics, eligibility=recovery_eligibility(self.conn, self.user["id"], metrics))
         by_unit = {row.unit_id: row for row in result.units}
         now = _now()
         for uid in sorted(pending):
