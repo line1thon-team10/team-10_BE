@@ -13,3 +13,11 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 확신도/점수/소유권이 잘못된 기존 데이터는 DDL 전에 검출하여 삭제 없이 중단한다. 데이터 이관은 온라인 Alembic 실행이 필요하며 `--sql` 출력은 DDL만 포함한다. Downgrade는 새 테이블의 답안·lease·스냅샷을 제거하므로 신규 데이터가 쌓인 환경에서는 백업과 코드 호환성을 먼저 확인해야 한다. 기존 풀이 행은 유지한다.
 
 새 테이블의 cascade는 quiz item/quiz session 삭제에만 종속된다. 원본 question 및 근거를 삭제하는 역방향 cascade는 없다. 기존 demo reset 삭제 순서를 그대로 사용할 수 있다.
+
+## 답안 저장 연산
+
+`QuizAnswerRepository(connection).save(user_id, quiz_id, item_id, revision=0, choice=None, text=None, confidence=..., now=..., answered_date=...)`는 `AnswerSave(answer, created, is_current)`를 반환한다. 최초 저장 revision은 1이며 다음 변경은 반환된 revision으로 요청한다. `current`/`list_current`는 소유권을 검증한 현재 답안만 반환한다.
+
+같은 입력은 revision/답변 시각을 늘리지 않는다. 예전 요청 revision과 같은 입력을 다시 보내면 그 요청이 처음 만든 답안 revision을 반환하며 현재 head를 되돌리지 않는다. 이 경우 `is_current=false`일 수 있으므로 Q-03은 예전 답안으로 새 채점 작업을 접수하면 안 된다. 다른 입력의 오래된 revision은 `ANSWER_CONFLICT`, 봉인 뒤 변경은 `QUIZ_FINALIZED`다. 봉인 뒤에도 이미 저장된 동일 요청의 응답 재생은 가능하다.
+
+현재 답안 교체는 user lock 아래에서 head의 기존 answer_id를 조건으로 갱신한다. 이전 revision의 미완료 작업은 같은 트랜잭션에서 취소한다. 과거 답안과 성공한 채점 결과는 이력으로 남긴다. 호출자가 바깥 transaction을 commit/rollback하며 저장소는 commit하지 않는다. Q-03은 답안 저장과 작업 접수를 한 transaction에서 수행한 뒤 외부 호출 전에 commit해야 한다.
