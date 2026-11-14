@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.responses import ApiError
 from app.db import schema as t
@@ -93,19 +94,33 @@ class AiResultRepository:
                 "provider_request_id": row.provider_request_id, "input_tokens": row.input_tokens,
                 "output_tokens": row.output_tokens, "estimated_cost": row.estimated_cost,
                 "currency": row.currency, "latency_ms": row.latency_ms})
-        with self.engine.begin() as conn:
-            # Materials/jobs can be deleted during an external request. Accounting
-            # still belongs to the already-authorized user, independently of apply.
-            self._assert_owner(conn, request, check_materials=False, check_job=False)
-            job_id = None
-            if request.job_id is not None:
-                job_id = conn.scalar(select(t.ai_jobs.c.id).where(
-                    t.ai_jobs.c.id == request.job_id, t.ai_jobs.c.user_id == request.owner_id,
-                    t.ai_jobs.c.kind == request.identity.kind))
-            conn.execute(t.ai_usage_logs.insert(), [{
+        def rows(job_id):
+            return [{
                 "id": row.id, "job_id": job_id, "user_id": request.owner_id, "kind": request.identity.kind,
                 "provider": row.provider, "model": row.model, "provider_request_id": row.provider_request_id,
                 "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
                 "estimated_cost": row.estimated_cost, "currency": row.currency, "latency_ms": row.latency_ms,
                 "status": row.status, "created_at": row.created_at,
-            } for row in records])
+            } for row in records]
+
+        job_id = None
+        try:
+            with self.engine.begin() as conn:
+                # Materials/jobs can be deleted during an external request.
+                self._assert_owner(conn, request, check_materials=False, check_job=False)
+                if request.job_id is not None:
+                    job_id = conn.scalar(select(t.ai_jobs.c.id).where(
+                        t.ai_jobs.c.id == request.job_id, t.ai_jobs.c.user_id == request.owner_id,
+                        t.ai_jobs.c.kind == request.identity.kind))
+                conn.execute(t.ai_usage_logs.insert(), rows(job_id))
+        except IntegrityError:
+            if job_id is None:
+                raise
+            # A concurrent reset may delete the observed job after its SELECT.
+            # The first transaction has rolled back the whole batch. Retry once
+            # without that optional FK only if a fresh transaction proves deletion.
+            with self.engine.begin() as conn:
+                if conn.scalar(select(t.ai_jobs.c.id).where(t.ai_jobs.c.id == job_id)) is not None:
+                    raise
+                self._assert_owner(conn, request, check_materials=False, check_job=False)
+                conn.execute(t.ai_usage_logs.insert(), rows(None))

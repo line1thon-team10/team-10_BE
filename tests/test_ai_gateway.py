@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, event, func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.ai.gateway import (
     AiGateway, DemoApproval, ExecutionResult, FunctionRef, GatewayRequest, InvalidOutput, MaterialRevision, ProcessExecutor, ProviderSpec,
@@ -468,6 +469,43 @@ def test_usage_survives_material_or_job_deletion_during_external_work(result_rep
     assert len(rows) == 1 and rows[0]["user_id"] == gateway_user and rows[0]["job_id"] is None
     with pytest.raises(ApiError):
         result_repository.save(request, {"result": "material disappeared"})
+
+
+def test_usage_survives_job_deletion_after_lookup_before_insert(result_repository, domain_connection, gateway_user):
+    job_id = add_job(domain_connection, gateway_user)
+    request = GatewayRequest(gateway_user, identity(), job_id=job_id)
+    records = [UsageRecord(str(uuid4()), "provider", "model", NOW, status="succeeded", input_tokens=10),
+               UsageRecord(str(uuid4()), "provider", "model", NOW)]
+    deleted = []
+
+    def delete_job(_conn, _cursor, _statement, _parameters, context, _many):
+        if context.isinsert and context.compiled.statement.table.name == "ai_usage_logs" and not deleted:
+            deleted.append(job_id)
+            with result_repository.engine.begin() as concurrent:
+                concurrent.execute(t.ai_jobs.delete().where(t.ai_jobs.c.id == job_id))
+
+    event.listen(result_repository.engine, "before_cursor_execute", delete_job)
+    try:
+        result_repository.record_usage(request, records)
+    finally:
+        event.remove(result_repository.engine, "before_cursor_execute", delete_job)
+    rows = {row["id"]: row for row in usage_rows(domain_connection)}
+    assert deleted == [job_id] and set(rows) == {record.id for record in records}
+    assert all(row["job_id"] is None for row in rows.values())
+    assert rows[records[0].id]["status"] == "succeeded" and rows[records[0].id]["input_tokens"] == 10
+    assert rows[records[1].id]["status"] == "failed" and rows[records[1].id]["input_tokens"] is None
+
+
+def test_unrelated_integrity_failure_rolls_back_the_whole_usage_batch(result_repository, domain_connection, gateway_user):
+    job_id = add_job(domain_connection, gateway_user)
+    request = GatewayRequest(gateway_user, identity(), job_id=job_id)
+    existing = UsageRecord(str(uuid4()), "provider", "model", NOW)
+    result_repository.record_usage(request, [existing])
+    fresh = UsageRecord(str(uuid4()), "provider", "model", NOW)
+    with pytest.raises(IntegrityError):
+        result_repository.record_usage(request, [fresh, existing])
+    rows = usage_rows(domain_connection)
+    assert len(rows) == 1 and rows[0]["id"] == existing.id and rows[0]["job_id"] == job_id
 
 
 def test_job_ownership_and_kind_are_required_before_using_saved_results(result_repository, domain_connection, gateway_user):
