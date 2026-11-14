@@ -64,3 +64,9 @@ Note: `id` · `subjectId` · `subjectName` · `unitNo` · `unitTitle` · `concep
 기존 units:number[] 입력은 폐기한다. scopes는 비어 있지 않아야 한다. unitId/from/to 필수, conceptId 생략 시 범위 내 시험 포함 개념 전체를 선택한다. 지정하면 해당 개념과 페이지의 교집합만 출제한다. 여러 개념/비연속 범위는 여러 scope로 전달한다. 실제 문항은 원본 문항 ID로 중복 제거한다. 단원에 속하지 않는 개념, 시험 제외·미학습·quizless 범위, 다른 사용자 단원은 거절한다. materialId는 unitId로 서버가 결정하므로 요청에 중복 전달하지 않는다.
 
 Note와 weakConcepts에는 `materialId`, `unitId`, `conceptId`(개념 없으면 null)를 추가한다. retry.unitChange에도 materialId/unitId를 포함한다. 분류 key는 표시 번호가 아닌 서버가 내려준 불투명 ID를 사용한다. 화면의 unitNo/단원명은 유지할 수 있다. relearn은 선택 단원 전체의 현재 시험 범위 재학습이며 일부 concept만 재학습한 것을 전체 회독으로 기록하지 않는다.
+
+### 복습 재풀이 저장 경계
+
+- `retry`는 소유 문항·복습 예정일별로 고정된 review 퀴즈 한 건을 사용한다. 답안과 채점 작업은 일반 퀴즈와 동일하게 먼저 저장하며, 실패한 채점은 같은 봉인 답으로 재시도한다.
+- 완료 응답은 점수·취약 상태 변경과 같은 트랜잭션에서 저장한다. 다음 예정일 전 동일 답 재전송은 최초 응답을 그대로 반환하고, 다른 답 제출은 `409 REVIEW_NOT_DUE`다. 새 예정일이 되면 새 복습 건을 시작한다.
+- 원래 API에 예정일/요청 키 입력이 없으므로 서버의 현재 예정일이 복습 건의 경계다. 예정일 이후의 명시적 제출은 새로운 복습으로 처리한다.
