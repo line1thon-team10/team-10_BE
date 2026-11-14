@@ -74,6 +74,8 @@ subjects = Table(
     Column("onboarding_goal_etc_confirmed_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(minutes_per_page IS NULL OR minutes_per_page >= 0)", name="ck_subjects_nonnegative"),
+    CheckConstraint("(target_score IS NULL OR target_score BETWEEN 0 AND 100) AND (exam_weight_percent IS NULL OR exam_weight_percent BETWEEN 0 AND 100)", name="ck_subjects_scores"),
     Index("ix_subjects_1", "user_id", "code", unique=True),
 )
 
@@ -88,6 +90,7 @@ onboarding_messages = Table(
     Column("chips", JSONB, nullable=True),
     Column("sort_order", Integer, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_onboarding_messages_nonnegative"),
     Index("ix_onboarding_messages_1", "user_id", "created_at"),
     Index("ix_onboarding_messages_2", "user_id", "subject_id", "sort_order"),
 )
@@ -108,6 +111,7 @@ calendar_events = Table(
     Column("deleted_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("ends_at > starts_at AND revision > 0", name="ck_calendar_events_interval"),
     Index("ix_calendar_events_1", "user_id", "starts_at"),
 )
 
@@ -121,6 +125,7 @@ calendar_event_exceptions = Table(
     Column("new_ends_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(kind = 'cancelled' AND new_starts_at IS NULL AND new_ends_at IS NULL) OR (kind = 'moved' AND new_starts_at IS NOT NULL AND new_ends_at IS NOT NULL AND new_ends_at > new_starts_at)", name="ck_calendar_exception_interval"),
     Index("ix_calendar_event_exceptions_1", "event_id", "occurrence_date", unique=True),
 )
 
@@ -147,6 +152,8 @@ materials = Table(
     Column("original_deleted_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(page_count IS NULL OR page_count >= 0)", name="ck_materials_nonnegative"),
+    CheckConstraint("ocr_confidence IS NULL OR ocr_confidence BETWEEN 0 AND 1", name="ck_materials_ocr_confidence"),
     Index("ix_materials_1", "subject_id", "sha256", "analysis_version", unique=True),
 )
 
@@ -174,6 +181,9 @@ units = Table(
     Column("retired_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_units_pages"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0) AND (emphasis_weight IS NULL OR emphasis_weight >= 0)", name="ck_units_nonnegative"),
+    CheckConstraint("mastery_score IS NULL OR mastery_score BETWEEN 0 AND 100", name="ck_units_mastery_score"),
     Index("ix_units_1", "material_id"),
 )
 
@@ -192,6 +202,8 @@ concepts = Table(
     Column("retired_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_concepts_pages"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0)", name="ck_concepts_nonnegative"),
     Index("ix_concepts_1", "unit_id"),
 )
 
@@ -202,6 +214,7 @@ plans = Table(
     Column("revision", Integer, nullable=False, default=1),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("approved_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("revision > 0", name="ck_plans_revision"),
 )
 
 plan_change_requests = Table(
@@ -295,6 +308,8 @@ study_tasks = Table(
     Column("placement_reason", Text, nullable=True),
     Column("status", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(estimated_minutes IS NULL OR estimated_minutes >= 0)", name="ck_study_tasks_nonnegative"),
+    CheckConstraint("(starts_at IS NULL AND ends_at IS NULL) OR (starts_at IS NOT NULL AND ends_at IS NOT NULL AND ends_at > starts_at)", name="ck_study_tasks_interval"),
     Index("ix_study_tasks_1", "plan_id", "scheduled_date"),
     Index("ix_study_tasks_2", "plan_id", "block_id"),
     Index("ix_study_tasks_3", "origin_task_id"),
@@ -310,6 +325,8 @@ study_task_ranges = Table(
     Column("end_page", Integer, nullable=True),
     Column("planned_minutes", Integer, nullable=True),
     Column("sort_order", Integer, nullable=False),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_study_task_ranges_pages"),
+    CheckConstraint("(planned_minutes IS NULL OR planned_minutes >= 0) AND (sort_order IS NULL OR sort_order >= 0)", name="ck_study_task_ranges_nonnegative"),
     Index("ix_study_task_ranges_1", "task_id", "sort_order", unique=True),
 )
 
@@ -325,6 +342,7 @@ daily_plan_totals = Table(
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     PrimaryKeyConstraint("user_id", "subject_id", "study_date"),
+    CheckConstraint("(planned_new_pages IS NULL OR planned_new_pages >= 0) AND (planned_total_pages IS NULL OR planned_total_pages >= 0) AND (planned_unpaged_minutes IS NULL OR planned_unpaged_minutes >= 0)", name="ck_daily_plan_totals_nonnegative"),
 )
 
 study_sessions = Table(
@@ -344,6 +362,8 @@ study_sessions = Table(
     Column("expected_seconds", Integer, nullable=True),
     Column("quote", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(last_confirmed_elapsed_seconds IS NULL OR last_confirmed_elapsed_seconds >= 0) AND (measured_seconds IS NULL OR measured_seconds >= 0) AND (expected_seconds IS NULL OR expected_seconds >= 0)", name="ck_study_sessions_nonnegative"),
+    CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="ck_study_sessions_interval"),
     Index("ix_study_sessions_1", "user_id", "study_date"),
 )
 
@@ -354,6 +374,8 @@ study_session_segments = Table(
     Column("sort_order", Integer, nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("ended_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="ck_study_segments_interval"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_study_session_segments_nonnegative"),
     Index("ix_study_session_segments_1", "session_id", "sort_order", unique=True),
 )
 
@@ -380,6 +402,8 @@ study_record_ranges = Table(
     Column("start_page", Integer, nullable=True),
     Column("end_page", Integer, nullable=True),
     Column("completed_planned_minutes", Integer, nullable=True),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_study_record_ranges_pages"),
+    CheckConstraint("(completed_planned_minutes IS NULL OR completed_planned_minutes >= 0)", name="ck_study_record_ranges_nonnegative"),
     Index("ix_study_record_ranges_1", "record_id"),
 )
 
@@ -398,6 +422,8 @@ speed_calibrations = Table(
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True, unique=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("decided_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(measured_seconds IS NULL OR measured_seconds >= 0) AND (completed_pages IS NULL OR completed_pages >= 0) AND (previous_minutes_per_page IS NULL OR previous_minutes_per_page >= 0) AND (proposed_minutes_per_page IS NULL OR proposed_minutes_per_page >= 0)", name="ck_speed_calibrations_nonnegative"),
+    CheckConstraint("window_end >= window_start", name="ck_speed_calibration_window"),
     Index("ix_speed_calibrations_1", "subject_id", "notice_date", unique=True),
 )
 
@@ -415,6 +441,8 @@ mastery_history = Table(
     Column("daily_increase_limit", Integer, nullable=True),
     Column("recorded_date", Date, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(previous_score IS NULL OR previous_score BETWEEN 0 AND 100) AND raw_score BETWEEN 0 AND 100 AND score BETWEEN 0 AND 100", name="ck_mastery_history_scores"),
+    CheckConstraint("(daily_increase_limit IS NULL OR daily_increase_limit >= 0)", name="ck_mastery_history_nonnegative"),
     Index("ix_mastery_history_1", "unit_id", "quiz_session_id", unique=True),
     Index("ix_mastery_history_2", "unit_id", "recorded_date"),
 )
@@ -432,6 +460,7 @@ learning_passes = Table(
     Column("completed_date", Date, nullable=False),
     Column("invalidated_at", DateTime(timezone=True), nullable=True),
     Column("note", Text, nullable=True),
+    CheckConstraint("pass_number > 0", name="ck_learning_pass_number"),
     Index("ix_learning_passes_1", "unit_id", "pass_number", unique=True),
     Index("ix_learning_passes_2", "unit_id", "completion_kind", "evidence_key", unique=True),
 )
@@ -485,6 +514,7 @@ question_sources = Table(
     Column("end_page", Integer, nullable=False),
     Column("quote", Text, nullable=True),
     Column("highlight", JSONB, nullable=True),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_question_sources_pages"),
     Index("ix_question_sources_1", "question_id"),
 )
 
@@ -507,6 +537,7 @@ quiz_sessions = Table(
     Column("submitted_at", DateTime(timezone=True), nullable=True),
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("graded_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(requested_question_count IS NULL OR requested_question_count >= 0) AND (current_position IS NULL OR current_position >= 0)", name="ck_quiz_sessions_nonnegative"),
     Index("ix_quiz_sessions_1", "user_id", "quiz_date", "type"),
 )
 
@@ -518,6 +549,7 @@ quiz_scopes = Table(
     Column("concept_id", UUID, ForeignKey("concepts.id"), nullable=True),
     Column("start_page", Integer, nullable=False),
     Column("end_page", Integer, nullable=False),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_quiz_scopes_pages"),
     Index("ix_quiz_scopes_1", "quiz_session_id"),
 )
 
@@ -530,6 +562,7 @@ quiz_items = Table(
     Column("sort_order", Integer, nullable=False),
     Column("inclusion_reason", String, nullable=False),
     Column("original_quiz_date", Date, nullable=True),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_quiz_items_nonnegative"),
     Index("ix_quiz_items_1", "quiz_session_id", "sort_order", unique=True),
     Index("ix_quiz_items_2", "quiz_session_id", "question_id", unique=True),
 )
@@ -551,6 +584,7 @@ quiz_attempts = Table(
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("graded_at", DateTime(timezone=True), nullable=True),
     Column("mastery_applied_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("essay_score IS NULL OR essay_score BETWEEN 0 AND 100", name="ck_quiz_attempt_essay_score"),
 )
 
 weak_questions = Table(
@@ -561,6 +595,7 @@ weak_questions = Table(
     Column("next_review_date", Date, nullable=True),
     Column("last_weak_at", DateTime(timezone=True), nullable=False),
     Column("resolved_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(review_step IS NULL OR review_step >= 0)", name="ck_weak_questions_nonnegative"),
 )
 
 quiz_answers = Table(
@@ -684,6 +719,7 @@ tutor_sources = Table(
     Column("start_page", Integer, nullable=False),
     Column("end_page", Integer, nullable=False),
     Column("quote", Text, nullable=True),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_tutor_sources_pages"),
     Index("ix_tutor_sources_1", "message_id"),
 )
 
@@ -701,6 +737,7 @@ reflection_reports = Table(
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True),
     Column("is_fallback", Boolean, nullable=False, default=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("period_end >= period_start", name="ck_reflection_report_period"),
 )
 
 ai_saved_results = Table(
@@ -738,6 +775,7 @@ ai_jobs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("finished_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(retry_count IS NULL OR retry_count >= 0)", name="ck_ai_jobs_nonnegative"),
     Index("ix_ai_jobs_1", "user_id", "idempotency_key", unique=True),
     Index("ix_ai_jobs_2", "user_id", "kind", "status"),
     Index("ix_ai_jobs_3", "input_hash"),
@@ -759,6 +797,7 @@ ai_usage_logs = Table(
     Column("latency_ms", Integer, nullable=True),
     Column("status", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0) AND (estimated_cost IS NULL OR estimated_cost >= 0) AND (latency_ms IS NULL OR latency_ms >= 0)", name="ck_ai_usage_logs_nonnegative"),
     Index("ix_ai_usage_logs_1", "created_at"),
 )
 
@@ -766,3 +805,11 @@ Index("uq_focus_active_user", study_sessions.c.user_id, unique=True,
       postgresql_where=text("status IN ('running', 'paused')"), sqlite_where=text("status IN ('running', 'paused')"))
 Index("uq_focus_open_segment", study_session_segments.c.session_id, unique=True,
       postgresql_where=text("ended_at IS NULL"), sqlite_where=text("ended_at IS NULL"))
+Index("uq_units_current_order", units.c.material_id, units.c.sort_order, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_concepts_current_code", concepts.c.unit_id, concepts.c.code, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_concepts_current_order", concepts.c.unit_id, concepts.c.sort_order, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_study_tasks_active_block", study_tasks.c.plan_id, study_tasks.c.block_id, unique=True,
+      postgresql_where=text("status IN ('planned', 'partial')"), sqlite_where=text("status IN ('planned', 'partial')"))
