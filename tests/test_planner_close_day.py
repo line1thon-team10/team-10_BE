@@ -33,3 +33,14 @@ def test_explicit_close_does_not_move_demo_clock(api_client,settled_demo_user,do
     Planner(conn,fresh).close_day(date(2026,11,9))
     assert conn.scalar(select(t.users.c.demo_date).where(t.users.c.id==user))==date(2026,11,9)
     assert conn.scalar(select(t.users.c.last_assessed_date).where(t.users.c.id==user))==date(2026,11,9)
+
+
+def test_exam_boundary_never_cancels_supplement_obligation(api_client,settled_demo_user,domain_connection):
+    conn,user=domain_connection,settled_demo_user
+    source=conn.execute(select(t.study_tasks).join(t.subjects).where(t.subjects.c.user_id==user)).mappings().first()
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==source['id']).values(
+        task_type='remedial',scheduled_date=date(2026,11,10),status='planned'))
+    conn.execute(update(t.subjects).where(t.subjects.c.id==source['subject_id']).values(exam_date=date(2026,11,10)))
+    fresh=UserRepository(conn).get(UUID(user)).to_mapping()
+    Planner(conn,fresh).close_day(date(2026,11,9))
+    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==source['id']))=='planned'

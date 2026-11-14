@@ -125,6 +125,7 @@ class Planner:
                 self.conn.execute(update(t.study_tasks).where(
                     t.study_tasks.c.subject_id == subject["id"],
                     t.study_tasks.c.scheduled_date >= exam,
+                    t.study_tasks.c.task_type == "study",
                     t.study_tasks.c.status.in_(["planned", "partial"]),
                     t.study_tasks.c.id.not_in(active)).values(status="excluded"))
 
