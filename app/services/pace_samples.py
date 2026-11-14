@@ -1,7 +1,7 @@
 """Exact pace evidence from completed sessions and immutable placement factors."""
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from fractions import Fraction
 
 from sqlalchemy import select
@@ -53,6 +53,32 @@ def placement_snapshots(conn, user_id):
         for placement in placements(row['changes']):
             if isinstance(placement, dict) and isinstance(placement.get('id'), str):
                 result[placement['id']].append((aware(row['decided_at']), placement))
+    # Supplement placements are accepted directly by the quiz finalizer, so their
+    # immutable allocation evidence lives on the obligation/block link.
+    rows = conn.execute(select(t.remedial_obligation_blocks.c.allocation_snapshot,
+            t.study_tasks.c.id.label('task_id'), t.units.c.id.label('unit_id'), t.units.c.material_id)
+        .join(t.remedial_obligations,t.remedial_obligations.c.id==t.remedial_obligation_blocks.c.obligation_id)
+        .join(t.study_tasks,t.study_tasks.c.block_id==t.remedial_obligation_blocks.c.block_id)
+        .join(t.units,t.units.c.id==t.remedial_obligations.c.unit_id)
+        .join(t.materials,t.materials.c.id==t.units.c.material_id)
+        .join(t.subjects,t.subjects.c.id==t.materials.c.subject_id)
+        .join(t.quiz_sessions,t.quiz_sessions.c.id==t.remedial_obligations.c.quiz_session_id)
+        .where(t.remedial_obligations.c.user_id==user_id,t.subjects.c.user_id==user_id,
+            t.quiz_sessions.c.user_id==user_id,t.study_tasks.c.subject_id==t.subjects.c.id,
+            t.study_tasks.c.task_type=='remedial',
+            t.remedial_obligation_blocks.c.allocation_snapshot.is_not(None))).mappings()
+    for row in rows:
+        value=row['allocation_snapshot']
+        if not isinstance(value,dict) or value.get('schemaVersion')!='remedial-allocation-v1' or value.get('taskId')!=row['task_id']:
+            continue
+        try:
+            generated=datetime.fromisoformat(value['generatedAt'])
+            if generated.tzinfo is None or not value['parts'] or any(
+                    part['unitId']!=row['unit_id'] or part['materialId']!=row['material_id'] for part in value['parts']):
+                continue
+        except (KeyError,TypeError,ValueError):
+            continue
+        result[row['task_id']].append((aware(generated),{'id':row['task_id'],'parts':value['parts']}))
     for values in result.values():
         values.sort(key=lambda value: value[0])
     return result
