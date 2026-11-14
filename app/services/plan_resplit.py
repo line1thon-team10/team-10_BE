@@ -144,6 +144,7 @@ class PlanResplitService:
             return ProposalService(conn).cancel(user_id,preview_id,domain=DOMAINS[row['kind']],target=row['target'])
 
     def prepare(self,user_id,text,*,answer=None,request_id=None,saved=False,deterministic=False):
+        supplied_request_id=request_id
         initial=self._initial(user_id)
         target={'scope':'remaining'} if initial is None else {'scope':'initial','sourcePreviewId':initial['previewId']}
         domain=ACTIVE_DOMAIN if initial is None else DRAFT_DOMAIN
@@ -242,6 +243,17 @@ class PlanResplitService:
                 service=ProposalService(conn)
                 if service.capture(user_id,domain=domain,target=target)!=snapshot:
                     raise ApiError('PREVIEW_STALE','계산하는 동안 계획 기준이 바뀌었어요',409)
+                if supplied_request_id is None:
+                    for existing in service.repository.ready(user_id,kind=domain.kind):
+                        normalized=existing['normalized_input']
+                        if normalized.get('text')==text and normalized.get('answer')==answer and normalized.get('intent')==intent:
+                            try:
+                                service._require_fresh(existing,snapshot)
+                            except ApiError:
+                                continue
+                            conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id==request_id).values(
+                                status='cancelled',updated_at=now_utc(),decided_at=now_utc()))
+                            return {'ready':True,'question':None,'previewId':existing['proposal_id'],'requestId':existing['request_id']}
                 row=conn.execute(select(t.plan_change_requests).where(t.plan_change_requests.c.id==request_id)).mappings().one()
                 if row['status']!='processing':
                     raise ApiError('PREVIEW_STALE','요청 상태가 바뀌었어요',409)

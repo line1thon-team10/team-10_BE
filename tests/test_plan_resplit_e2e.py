@@ -119,3 +119,26 @@ def test_ambiguous_get_requires_preview_id_and_blank_text_is_empty(api_client,ad
     response=call(api_client,case,'get','/api/plan/resplit')
     assert response.status_code==409 and response.json()['error']['code']=='PREVIEW_REQUIRED'
     assert call(api_client,case,'delete','/api/plan/resplit').status_code==422
+
+
+def test_concurrent_identical_requests_publish_only_one_ready_candidate(api_client,domain_connection,addition_case,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+    gate=Barrier(2)
+    entered=Event()
+    def interpret(*args):
+        entered.set()
+        gate.wait(timeout=10)
+        return {'ready':True,'question':None,'windows':[]}
+    monkeypatch.setattr(PlanResplitService,'_interpret',interpret)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures=[executor.submit(prepare,api_client,addition_case)]
+        assert entered.wait(timeout=10)
+        futures.append(executor.submit(prepare,api_client,addition_case))
+        responses=[future.result(timeout=20) for future in futures]
+    assert all(response.status_code in (200,409) for response in responses),[response.text for response in responses]
+    successes=[response.json()['data'] for response in responses if response.status_code==200]
+    assert successes and len({value['previewId'] for value in successes})==1
+    ready=domain_connection.scalars(select(t.plan_proposal_states.c.proposal_id).where(
+        t.plan_proposal_states.c.kind=='remaining_plan_resplit',t.plan_proposal_states.c.status=='ready')).all()
+    assert ready==[successes[0]['previewId']]
