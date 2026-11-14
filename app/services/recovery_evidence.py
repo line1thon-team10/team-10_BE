@@ -24,10 +24,10 @@ def unit_ranges(unit, concepts):
         return ()
 
 
-def verified_passes(conn, user_id, unit, concepts):
+def verified_passes(conn, user_id, unit, concepts, *, require_current_scope=True):
     """A row flag alone cannot establish a pass: recheck its frozen evidence."""
     scope = unit_ranges(unit, concepts)
-    if not scope:
+    if not scope and require_current_scope:
         return []
     revision = current_scope(unit, concepts).revision
     rows = [dict(row) for row in conn.execute(select(t.learning_passes).where(
@@ -35,7 +35,9 @@ def verified_passes(conn, user_id, unit, concepts):
     valid = []
     for row in rows:
         snapshot = row['evidence_snapshot']
-        if row['invalidated_at'] is not None or not isinstance(snapshot, dict) or snapshot.get('materialId') != unit['material_id']:
+        if row['invalidated_at'] is not None or not isinstance(snapshot, dict):
+            continue
+        if snapshot.get('materialId') != unit['material_id'] and not (row['completion_kind']=='initial' and 'materialId' not in snapshot):
             continue
         try:
             required = normalize(PageSpan(unit['material_id'], a, b) for a, b in _required_pages(snapshot))
@@ -45,18 +47,17 @@ def verified_passes(conn, user_id, unit, concepts):
             ids = [str(UUID(value)) for value in ids]
         except (ValueError, TypeError, AttributeError):
             continue
-        if row['completion_kind'] != 'initial' and snapshot.get('masteryScopeRevision') != revision:
+        current = row['completion_kind'] != 'initial' and (require_current_scope or row['completion_kind'] != 'full_relearn')
+        if current and snapshot.get('masteryScopeRevision') != revision:
             continue
-        if not required or (row['completion_kind'] != 'initial' and subtract(required, scope)):
+        if not required or (current and subtract(required, scope)):
             continue
-        if row['completion_kind'] == 'full_relearn' and required != scope:
+        if current and row['completion_kind'] == 'full_relearn' and required != scope:
             continue
-        if row['completion_kind'] == 'full_relearn' and not ids:
+        if row['completion_kind'] == 'full_relearn' and row['evidence_key'].startswith('direct:'):
             key, digest = row['evidence_key'], snapshot.get('directRequestHash')
-            if not key.startswith('direct:') or not re.fullmatch('[a-f0-9]{64}', key[7:]) or not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+            if not re.fullmatch('[a-f0-9]{64}', key[7:]) or not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
                 continue
-            valid.append({**row, 'sameDayFull': True})
-            continue
         if not ids:
             continue
         if any(other['id'] != row['id'] and isinstance(other['evidence_snapshot'], dict)
@@ -120,7 +121,7 @@ def recovery_eligibility(conn, user_id, data):
         scope = unit_ranges(unit, data['concepts'])
         if not passes or not scope:
             continue
-        initial = [row for row in passes if row['completion_kind'] == 'initial']
+        initial = first_passes(conn, user_id, unit, data['concepts'])
         days = defaultdict(lambda: {'full_relearned': False, 'custom_confirmed': False, 'supplement_completed': False})
         for row in passes:
             if row['completion_kind'] == 'remedial' and any(p['completed_date'] <= row['completed_date'] for p in initial):
@@ -148,3 +149,9 @@ def recovery_eligibility(conn, user_id, data):
         for day, values in sorted(days.items()):
             result.append(DayEligibility(current_scope(unit, data['concepts']), day, **values))
     return tuple(result)
+
+
+def first_passes(conn, user_id, unit, concepts):
+    """Initial/full re-study first-pass facts keep their original complete scope."""
+    return [row for row in verified_passes(conn, user_id, unit, concepts, require_current_scope=False)
+            if row['completion_kind'] in ('initial', 'full_relearn')]

@@ -16,7 +16,7 @@ from app.repositories.events import EventRepository
 from app.services.allocator import allocate
 from app.services.onboarding_events import _local, _minute, event_intervals
 from app.services.plan_draft import _instant
-from app.services.recovery_evidence import unit_ranges, verified_passes
+from app.services.recovery_evidence import unit_ranges, first_passes
 from app.services.study import StudyData
 
 
@@ -44,8 +44,7 @@ def generate_remedial(conn, user, quiz_id, unit_ids, today, now):
             continue
         concepts = list(conn.execute(select(t.concepts).where(t.concepts.c.unit_id == uid)).mappings())
         scope = unit_ranges(unit, concepts)
-        initial = [row for row in verified_passes(conn, user['id'], unit, concepts)
-            if row['completion_kind'] == 'initial' and row['completed_date'] <= today]
+        initial = [row for row in first_passes(conn, user['id'], unit, concepts) if row['completed_date'] <= today]
         if not scope or not initial:
             continue
         identifier = str(uuid5(NAMESPACE_URL, f'team10:remedial:{quiz_id}:{uid}'))

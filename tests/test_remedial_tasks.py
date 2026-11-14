@@ -123,3 +123,14 @@ def test_large_obligation_splits_blocks_without_splitting_obligation_identity(ap
     assert len(blocks)>=5 and all(15<=row['estimated_minutes']<=60 for row in rows)
     assert sum(row['estimated_minutes'] for row in rows)==250
     assert all(row['scheduled_date']==c['nextday'] for row in rows)
+
+
+@pytest.mark.parametrize('has_record',[True,False])
+def test_full_relearn_can_be_first_pass_only_with_actual_record_proof(api_client,domain_connection,remedial_case,has_record):
+    c,conn=remedial_case,domain_connection
+    snapshot=dict(conn.scalar(select(t.learning_passes.c.evidence_snapshot).where(t.learning_passes.c.id==c['initial'])))
+    snapshot['directRequestHash']='a'*64
+    if not has_record:snapshot['recordIds']=[]
+    conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==c['initial']).values(completion_kind='full_relearn',evidence_key='direct:'+'b'*64,evidence_snapshot=snapshot));conn.commit()
+    submit(api_client,conn,c)
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==int(has_record)
