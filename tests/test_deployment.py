@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -21,6 +22,9 @@ def deployment(tmp_path):
 printf '%s\\n' "$*" >> "$DEPLOY_LOG"
 if [[ -n "${FAIL_MATCH:-}" && "$*" == *"$FAIL_MATCH"* ]]; then exit 1; fi
 if [[ "$*" == *"pg_dump"* ]]; then echo '-- backup'; fi
+if [[ "$*" == *"config --services"* ]]; then printf '%s\\n' "$MOCK_SERVICES"; fi
+if [[ "$*" == "run --rm --entrypoint python "* ]]; then exit "${WORKER_PROBE_STATUS:-0}"; fi
+if [[ "$*" == "ps --filter "* ]]; then printf '%s\\n' "${MOCK_CONTAINER_ROWS:-}"; fi
 if [[ "$*" == "image inspect "* ]]; then
   if [[ "$*" == *"org.opencontainers.image.revision"* ]]; then
     printf '%s\\n' "$MOCK_BE_REVISION"
@@ -35,7 +39,8 @@ fi
     flock.chmod(0o755)
     env = {**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
            'DEPLOY_LOG': str(tmp_path / 'docker.log'),
-           'MOCK_BE_REVISION': BE_REVISION, 'MOCK_AI_REVISION': AI_REVISION}
+           'MOCK_BE_REVISION': BE_REVISION, 'MOCK_AI_REVISION': AI_REVISION,
+           'MOCK_SERVICES': 'db\nmigrate\napi\ngrading-worker'}
     return tmp_path, env
 
 
@@ -120,3 +125,91 @@ def test_matching_image_is_verified_before_any_service_change(deployment):
     assert result.returncode == 0, result.stderr
     assert log.index(' pull') < log.index('image inspect') < log.index('up -d --wait db')
     assert 'org.opencontainers.image.revision' in log and 'dev.line1.ai-revision' in log
+
+
+def test_worker_uses_same_image_and_storage_without_publishing_a_port():
+    import yaml
+    compose = yaml.safe_load((ROOT / 'deploy/compose.yml').read_text())
+    api, worker = compose['services']['api'], compose['services']['grading-worker']
+    assert worker['image'] == api['image'] and worker['volumes'] == api['volumes']
+    assert 'ports' not in worker
+    assert worker['command'] == ['python', '-m', 'app.workers.grading', '--loop']
+    assert worker['restart'] == 'unless-stopped' and worker['stop_grace_period'] == '35s'
+    assert worker['labels']['dev.line1.database-writer'] == 'true'
+    assert worker['healthcheck']['test'] == ['CMD', 'python', '-m', 'app.workers.grading', '--healthcheck']
+
+
+def test_exact_project_writers_including_orphans_stop_before_backup(deployment):
+    rows = '\n'.join([
+        '111111111111|line1-2026|grading-worker|true',
+        '222222222222|line1-2026|future-worker|true',
+        '333333333333|line1-2026|db|true',
+        '444444444444|unrelated-project|grading-worker|true',
+        '555555555555|line1-2026|frontend|',
+        '666666666666|line1-2026|grading-worker|',
+    ])
+    result, log = run(deployment, MOCK_CONTAINER_ROWS=rows)
+    assert result.returncode == 0, result.stderr
+    stopped = next(line for line in log.splitlines() if line.startswith('stop --time'))
+    assert stopped == 'stop --time 35 111111111111 222222222222 666666666666'
+    assert 'ps --filter label=com.docker.compose.project=line1-2026 ' in log
+    assert log.index('stop api') < log.index(stopped) < log.index('pg_dump') < log.index('run --rm --no-deps migrate')
+    assert 'up -d --no-deps --wait --wait-timeout 180 api grading-worker' in log
+
+
+def test_latest_apply_with_old_compose_and_image_stops_orphan_worker_then_starts_api_only(deployment):
+    result, log = run(deployment, WORKER_PROBE_STATUS='42', MOCK_SERVICES='db\nmigrate\napi',
+        MOCK_CONTAINER_ROWS='111111111111|line1-2026|grading-worker|true')
+    assert result.returncode == 0, result.stderr
+    assert log.index('stop --time 35 111111111111') < log.index('pg_dump')
+    assert 'up -d --no-deps --wait --wait-timeout 180 api\n' in log
+    assert 'up -d --no-deps --wait --wait-timeout 180 api grading-worker' not in log
+
+
+@pytest.mark.parametrize('probe_status', ['1', '2', '137'])
+def test_unexpected_module_probe_error_is_not_treated_as_old_image(deployment, probe_status):
+    result, log = run(deployment, WORKER_PROBE_STATUS=probe_status, revisions=(BE_REVISION, AI_REVISION))
+    assert result.returncode != 0
+    assert 'module probe failed' in result.stderr
+    assert log.index('image inspect') < log.index('run --rm --entrypoint python')
+    assert 'stop api' not in log and 'pg_dump' not in log
+
+
+def test_worker_image_requires_matching_compose_service_before_stopping_current_api(deployment):
+    result, log = run(deployment, MOCK_SERVICES='db\nmigrate\napi')
+    assert result.returncode != 0 and 'Compose contract' in result.stderr
+    assert 'stop api' not in log and 'pg_dump' not in log
+
+
+@pytest.mark.parametrize('failure', ['ps --filter', 'stop --time 35'])
+def test_writer_discovery_or_stop_failure_prevents_backup_and_migration(deployment, failure):
+    result, log = run(deployment, FAIL_MATCH=failure,
+        MOCK_CONTAINER_ROWS='111111111111|line1-2026|grading-worker|true')
+    assert result.returncode != 0
+    assert 'pg_dump' not in log and 'run --rm --no-deps migrate' not in log
+
+
+def test_apply_shell_syntax_is_valid():
+    result = subprocess.run(['bash', '-n', str(ROOT / 'deploy/apply.sh')], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('kind,expected', [('missing_parent', 42), ('missing_module', 42),
+    ('missing_dependency', 1), ('broken_module', 1), ('valid', 0)])
+def test_actual_probe_distinguishes_old_module_absence_from_import_failure(tmp_path, kind, expected):
+    app = tmp_path / 'app'
+    app.mkdir()
+    (app / '__init__.py').write_text('')
+    if kind != 'missing_parent':
+        workers = app / 'workers'
+        workers.mkdir()
+        (workers / '__init__.py').write_text('')
+        if kind != 'missing_module':
+            content = {'missing_dependency': 'import absent_grading_dependency\n',
+                       'broken_module': 'raise RuntimeError("broken worker")\n', 'valid': ''}[kind]
+            (workers / 'grading.py').write_text(content)
+    source = (ROOT / 'deploy/apply.sh').read_text()
+    probe = source.split("probe='", 1)[1].split("'\nif docker run", 1)[0]
+    bootstrap = 'import sys; sys.path.insert(0, sys.argv[1])\n' + probe
+    result = subprocess.run([sys.executable, '-I', '-c', bootstrap, str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == expected, result.stderr

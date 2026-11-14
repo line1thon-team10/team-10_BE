@@ -543,6 +543,7 @@ Table quiz_grading_jobs [note: '답안 revision당 하나. lease token은 매 �
   answer_id uuid [not null, unique, ref: > quiz_answers.id]
   answer_revision int [not null]
   status varchar [not null, default: 'queued']
+  execution_mode varchar [not null, default: 'live', note: 'live / saved / backup. 자동 재선점도 저장된 모드를 따른다. 기존 작업 enqueue는 바꾸지 않고 명시적 retry만 전환한다.']
   lease_owner varchar
   lease_token uuid
   lease_expires_at timestamptz

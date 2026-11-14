@@ -7,7 +7,7 @@ const { Parser } = require('@dbml/core');
 const root = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'schema', 'erd.dbml'), 'utf8');
 const schema = new Parser().parse(src, 'dbmlv2').schemas[0];
-const storageConstraints = { checks: [], foreignKeys: {} };
+const storageConstraints = { checks: [], foreignKeys: {}, serverDefaults: {} };
 const checkNames = new Set();
 for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-constraints.json']) {
   const configPath = path.join(root, 'schema', filename);
@@ -22,6 +22,11 @@ for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-const
   for (const [field, options] of Object.entries(config.foreignKeys)) {
     if (Object.hasOwn(storageConstraints.foreignKeys, field)) throw new Error(`Duplicate foreign key: ${field}`);
     storageConstraints.foreignKeys[field] = options;
+  }
+  for (const [field, value] of Object.entries(config.serverDefaults || {})) {
+    if (Object.hasOwn(storageConstraints.serverDefaults, field)) throw new Error(`Duplicate server default: ${field}`);
+    if (typeof value !== 'string' || value.includes('\u0000')) throw new Error(`Unsupported server default: ${field}`);
+    storageConstraints.serverDefaults[field] = value;
   }
 }
 
@@ -105,6 +110,10 @@ for (const t of schema.tables) {
     if (f.unique && !f.pk) args.push('unique=True');
     const d = defaultOf(f);
     if (d !== null) args.push(`default=${d}`);
+    if (Object.hasOwn(storageConstraints.serverDefaults, `${t.name}.${f.name}`)) {
+      // SQLAlchemy quotes this literal string; this is not a raw SQL expression.
+      args.push(`server_default=${py(storageConstraints.serverDefaults[`${t.name}.${f.name}`])}`);
+    }
     out.push(`    Column(${args.join(', ')}),`);
   }
   if (compositePk) {
@@ -128,6 +137,11 @@ for (const check of storageConstraints.checks) {
 }
 for (const field of Object.keys(storageConstraints.foreignKeys)) {
   if (!fks[field]) throw new Error(`Unknown foreign key: ${field}`);
+}
+for (const field of Object.keys(storageConstraints.serverDefaults)) {
+  if (!schema.tables.some(table => table.fields.some(column => `${table.name}.${column.name}` === field))) {
+    throw new Error(`Unknown server default column: ${field}`);
+  }
 }
 
 // DBML에서 표현할 수 없는 집중 부분 인덱스도 재생성 시 보존한다.
