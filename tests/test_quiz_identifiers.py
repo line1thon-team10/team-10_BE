@@ -137,7 +137,7 @@ def test_submit_requires_valid_quiz_id(api_client, quiz_case, quiz_id):
     assert_error(response, 422, "INVALID_INPUT")
 
 
-def test_missing_quiz_id_does_not_create_or_select_a_quiz(api_client, quiz_case, domain_connection):
+def test_missing_quiz_id_never_creates_or_selects_an_unrelated_set(api_client, quiz_case, domain_connection):
     case = quiz_case
     before = domain_connection.scalar(select(func.count()).select_from(t.quiz_sessions))
     domain_connection.commit()
@@ -241,7 +241,7 @@ def quiz_effects(conn, case):
     "original_question", "other_set_same_question", "other_subject", "other_user", "unknown",
     "duplicate", "duplicate_normalized", "missing", "empty", "extra",
 ])
-def test_answers_must_match_exact_item_set(api_client, quiz_case, domain_connection, kind):
+def test_answer_ids_accept_owned_original_alias_but_still_require_exact_item_set(api_client, quiz_case, domain_connection, kind):
     case = quiz_case
     answers = deepcopy(case["answers"])
     if kind == "original_question":
@@ -272,6 +272,13 @@ def test_answers_must_match_exact_item_set(api_client, quiz_case, domain_connect
     domain_connection.commit()
     response = api_client.post(f"/api/quiz/{case['quiz_id']}/submit", headers=case["headers"],
                                json={"quizId": case["quiz_id"], "answers": answers})
+    if kind == "original_question":
+        # BE3475 exposed original question UUIDs. Resolve only in this selected
+        # owned set while retaining current item UUIDs in the result.
+        assert response.status_code == 200, response.text
+        assert [item["questionId"] for item in response.json()["data"]["items"]] == [item["id"] for item in case["items"]]
+        assert len(quiz_effects(domain_connection, case)["attempts"]) == len(case["items"])
+        return
     assert_error(response, 422, "INVALID_INPUT")
     assert quiz_effects(domain_connection, case) == before
 
@@ -361,11 +368,13 @@ def test_saved_grading_requires_boolean(api_client, quiz_case, value):
     assert_error(response, 422, "INVALID_INPUT")
 
 
-def test_openapi_marks_quiz_id_and_confidence_required(api_client):
+def test_openapi_allows_legacy_quiz_id_omission_but_keeps_answer_fields_required(api_client):
     response = api_client.get("/openapi.json")
     assert response.status_code == 200
     schemas = response.json()["components"]["schemas"]
-    assert set(schemas["SubmitIn"]["required"]) == {"quizId", "answers"}
+    # FE main49c serializes only answers/savedGrading; explicit IDs remain UUIDs.
+    assert set(schemas["SubmitIn"]["required"]) == {"answers"}
+    assert schemas["SubmitIn"]["properties"]["quizId"]["format"] == "uuid"
     assert set(schemas["Answer"]["required"]) == {"questionId", "confidence"}
     assert schemas["Answer"]["properties"]["confidence"]["enum"] == ["sure", "unsure"]
 
