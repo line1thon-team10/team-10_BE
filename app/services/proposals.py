@@ -83,6 +83,7 @@ class PreviewDomain:
     inspect_basis: Callable[[Connection, PreviewContext, dict], DomainBasis]
     apply_changes: Callable[[Connection, PreviewContext, dict], dict | str]
     result_schema_version: int = 1
+    after_apply: Callable[[Connection, PreviewContext, dict], dict | str] | None = None
 
     def __post_init__(self):
         if not isinstance(self.kind, str) or not self.kind.strip():
@@ -92,6 +93,8 @@ class PreviewDomain:
             raise ValueError("Plan effect must be a server-owned PlanEffect")
         if not callable(self.inspect_basis) or not callable(self.apply_changes):
             raise ValueError("Explicit domain callbacks are required")
+        if self.after_apply is not None and not callable(self.after_apply):
+            raise ValueError("after_apply must be a trusted callback")
         if type(self.result_schema_version) is not int or self.result_schema_version < 1:
             raise ValueError("result_schema_version must be a positive integer")
 
@@ -294,6 +297,11 @@ class ProposalService:
                 expected_plan = replace(context.plan, revision=context.plan.revision + 1)
                 if changed.rowcount != 1 or self._plan(context.user.id) != expected_plan:
                     raise ProposalConflict("The plan revision compare-and-set failed")
+                context = replace(context, plan=expected_plan)
+            if domain.after_apply is not None:
+                response = canonical_object(domain.after_apply(self.connection, context, response))
+                if self._plan(context.user.id) != context.plan:
+                    raise ProposalConflict("The after-apply callback changed a service-owned plan header")
             applied = self.repository.mark_applied(context.user.id, identifier,
                 expected_revision=state["state_revision"], response=response, now=context.now,
                 schema_version=domain.result_schema_version)

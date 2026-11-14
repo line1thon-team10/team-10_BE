@@ -7,6 +7,7 @@ from app.core.clock import today_for
 from app.domain.ranges import PageSpan, intersect, page_count
 from app.services.daily_totals import DailyTotalsService
 from app.services.study import StudyData
+from app.services.archive_visibility import ArchiveVisibility
 
 
 def month_bounds(month):
@@ -34,6 +35,7 @@ class MonthlyService:
         self.today = today_for(user)
         self.data = StudyData(conn, user['id'], subject_statuses=('draft','active','archived'))
         self.totals = DailyTotalsService(conn, user)
+        self.visibility = ArchiveVisibility(conn, user, self.data.subjects)
 
     def view(self, month):
         first, last = month_bounds(month)
@@ -42,12 +44,12 @@ class MonthlyService:
         days = []
         for offset in range((end-start).days+1):
             day = start + timedelta(days=offset)
-            totals = self.totals.view(day)
-            tasks = self.data.tasks_on(day)
+            totals = self.totals.view(day,data=self.data,visibility=self.visibility)
+            tasks = [task for task in self.data.tasks_on(day) if self.visibility.task(task)]
             pages = new_pages(self.data.tasks, day, day) if day <= self.today else {}
             labels = []
             if any(task.row['task_type']=='review' for task in tasks): labels.append('총복습')
-            if any(s['exam_date']==day for s in self.data.subjects): labels.append('시험')
+            if any(s['exam_date']==day and self.visibility.date(s['id'],day) for s in self.data.subjects): labels.append('시험')
             planned = totals['plan'] > 0 or any(s['unpagedMinutes'] for s in totals['subjects'])
             measured = any(task.session_minutes is not None or task.pending_session is not None for task in tasks)
             days.append({'date':day.isoformat(), 'inMonth':first<=day<=last, 'today':day==self.today,

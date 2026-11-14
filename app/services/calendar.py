@@ -8,6 +8,7 @@ from app.domain.onboarding import event_view
 from app.repositories.events import EventRepository
 from app.services.onboarding_events import _local
 from app.services.study import StudyData
+from app.services.archive_visibility import ArchiveVisibility
 
 
 def occurrences(row, exceptions, first, last, timezone_name):
@@ -54,6 +55,7 @@ class CalendarService:
 
     def view(self, first, last):
         data = StudyData(self.conn, self.user['id'], subject_statuses=('draft','active','archived'))
+        visibility = ArchiveVisibility(self.conn, self.user, data.subjects)
         events = EventRepository(self.conn, self.user['id'])
         rows = events.events()
         changes = defaultdict(list)
@@ -67,7 +69,7 @@ class CalendarService:
             if not first <= row['scheduled_date'] <= last or row['status'] in ('carried_over', 'excluded'):
                 continue
             subject = data.subject_by_id.get(row['subject_id'])
-            if subject is None:
+            if subject is None or not visibility.task(task):
                 continue
             item = data.task_view(task)
             item.update(subjectName=subject['name'], color=subject['color'], date=row['scheduled_date'].isoformat(),
@@ -78,7 +80,8 @@ class CalendarService:
             summary[row['subject_id']]['minutes'] += row['estimated_minutes']
             summary[row['subject_id']]['count'] += 1
         exams = [{'subjectId': s['id'], 'name': s['name'], 'examDate': s['exam_date'].isoformat(), 'color': s['color']}
-            for s in data.subjects if s['exam_date'] and first <= s['exam_date'] <= last]
+            for s in data.subjects if s['exam_date'] and first <= s['exam_date'] <= last
+                and visibility.date(s['id'], s['exam_date'])]
         return {'from': first.isoformat(), 'to': last.isoformat(), 'today': today_for(self.user).isoformat(),
             'exams': exams, 'fixed': sorted(fixed, key=lambda x: (x['date'],x['start'],x['id'])),
             'study': sorted(study, key=lambda x: (x['date'],x['start'],x['id'])), 'summary': dict(summary)}
