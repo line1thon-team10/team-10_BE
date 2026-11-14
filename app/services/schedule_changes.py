@@ -12,7 +12,7 @@ from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.onboarding import event_view
 from app.domain.ranges import PageSpan, intersect, page_count, subtract
-from app.domain.scheduling import POLICY_VERSION, SearchLimit, half_up
+from app.domain.scheduling import POLICY_VERSION, SearchLimit, Slot, free_slots, half_up
 from app.repositories.events import EventRepository
 from app.repositories.proposals import ProposalRepository, ProposalNotFound, LegacyProposalUnavailable, LegacyResponseUnavailable
 from app.services.calendar import occurrences
@@ -22,7 +22,7 @@ from app.services.plan_draft import _basis, _json_value
 from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
 from app.services.allocator import allocate
 from app.services.study import StudyData
-from app.services.schedule_placements import clock_minute, clock_text
+from app.services.schedule_placements import apply_saved_placements, clock_minute, clock_text, move_task
 from app.services.proposals import PlanEffect, PreviewDomain, ProposalService
 
 
@@ -68,6 +68,8 @@ def _persist(conn,context,changes):
     if changes.get('allocation'):
         from app.services.plan_draft import _apply
         _apply(conn,context,changes['allocation'])
+    if changes.get('extraAllocation'):
+        apply_saved_placements(conn,context,changes['extraAllocation'])
     return {'applied':True,'releasedSlots':changes.get('releasedSlots',[])}
 
 
@@ -278,7 +280,7 @@ def _task_collisions(data,added,zone):
 def _allocation(conn,user_id,today,zone,overrides,exception_overrides,added):
     data=StudyData(conn,user_id)
     collisions=_task_collisions(data,added,zone)
-    if not collisions: return None,[],data
+    if not collisions: return None,[],data,{}
     try:
         request,supersede,_=existing_allocation_input(conn,user_id,today=today,timezone_name=zone,subject_ids=(),
             calendar_event_overrides=overrides,calendar_exception_overrides=exception_overrides,movable_task_ids=collisions)
@@ -294,7 +296,34 @@ def _allocation(conn,user_id,today,zone,overrides,exception_overrides,added):
         for part in task.paged:
             planned[part['unit_id']].append(PageSpan(part['material_id'],part['start_page'],part['end_page']))
     request=replace(request,units=tuple(replace(unit,ranges=intersect(unit.ranges,planned[unit.id])) for unit in request.units))
-    return request,supersede,data
+    # Time-only reviews have no page requirement. Move the original duration as
+    # a whole obligation, without manufacturing page ranges or completion.
+    consumed=set(conn.scalars(select(t.study_records.c.session_id).where(t.study_records.c.session_id.is_not(None))))
+    protected=set(conn.scalars(select(t.study_sessions.c.task_id).where(t.study_sessions.c.user_id==user_id,
+        (t.study_sessions.c.status.in_(('running','paused'))) | (~t.study_sessions.c.id.in_(consumed)))))
+    movable={task.id:task for task in data.tasks if task.id in collisions and not task.paged
+        and task.row['status'] in ('planned','partial','missed') and task.id not in protected
+        and (task.record is None or task.record['result']=='none')}
+    extra={'placements':[],'supersedeIds':[]}
+    fixed=[task for task in request.fixed if task.id not in movable]
+    fixed_by_id={task.id:task for task in request.fixed}
+    for identifier,task in sorted(movable.items()):
+        duration=Fraction(task.row['estimated_minutes'])
+        if not 15<=duration<=60:
+            raise ApiError('PLAN_INFEASIBLE','복습을 보존할 15~60분의 연속 시간이 필요해요',409)
+        exam=data.subject_by_id[task.row['subject_id']]['exam_date']
+        candidate=None
+        day=max(today,task.row['scheduled_date'])
+        while exam and day<exam:
+            candidate=next((slot for slot in free_slots(day,request.busy,fixed) if slot.minutes>=duration),None)
+            if candidate is not None: break
+            day+=timedelta(days=1)
+        if candidate is None:
+            raise ApiError('PLAN_INFEASIBLE','시험 전 복습 시간을 보존할 수 없어요',409)
+        extra['placements'].append(move_task(task,candidate))
+        extra['supersedeIds'].append(identifier)
+        fixed.append(replace(fixed_by_id[identifier],day=candidate.day,start=candidate.start,end=candidate.start+duration))
+    return replace(request,fixed=tuple(fixed)),supersede,data,extra
 
 
 def _saved_allocation(request,result,supersede,data,zone):
@@ -377,7 +406,8 @@ def _edit_preview(self,user_id,key,command):
             raise ApiError('INVALID_INPUT','지난 날짜로 일정을 이동할 수 없어요',422)
         changes,overrides,exception_overrides,added_ids,shown=_edit_candidate(event,exceptions,original,command,zone)
         added=_after_occurrences(conn,user_id,snapshot.base_date,overrides,exception_overrides,added_ids,zone)
-        request,supersede,data=_allocation(conn,user_id,snapshot.base_date,zone,overrides,exception_overrides,added)
+        request,supersede,data,extra=_allocation(conn,user_id,snapshot.base_date,zone,overrides,exception_overrides,added)
+    if extra.get('placements'): changes['extraAllocation']=extra
     if request is not None:
         try: result=allocate(request)
         except SearchLimit:
@@ -387,8 +417,23 @@ def _edit_preview(self,user_id,key,command):
         changes['allocation']=_saved_allocation(request,result,supersede,data,zone)
     with self.engine.begin() as conn:
         service=ProposalService(conn)
-        response={'event':shown,'moves':_move_view(data,changes['allocation']) if changes.get('allocation') else [],
+        response={'event':shown,'moves':(_move_view(data,changes['allocation']) if changes.get('allocation') else []) + _extra_move_view(data,extra),
             'exceptionChanges':changes['exceptionChanges'],'note':None}
         return service.create(user_id,domain=EDIT_DOMAIN,target=target,snapshot=snapshot,
             normalized_input=command.model_dump(mode='json'),changes=changes,preview_response=response,
             proposal_type='schedule',description='일정 시간 변경과 남은 공부 재배치')
+
+
+
+def _extra_move_view(data,extra):
+    result=[]
+    by_id={task.id:task for task in data.tasks}
+    for placement in extra.get('placements',[]):
+        task=by_id[placement['originTaskId']]
+        subject=data.subject_by_id[task.row['subject_id']]
+        piece={'date':placement['date'],'start':clock_text(Fraction(*placement['start'])),
+            'end':clock_text(Fraction(*placement['end'])),'minutes':placement['minutes'],
+            'from':None,'to':None,'pages':0,'ranges':[]}
+        result.append({'taskId':task.id,'block':{**data.task_view(task),'subjectName':subject['name'],'color':subject['color'],
+            'date':task.row['scheduled_date'].isoformat(),'start':'','end':'','moved':False},'pieces':[piece]})
+    return result

@@ -117,3 +117,25 @@ def test_apply_failure_rolls_back_event_and_keeps_preview_retryable(api_client,c
     assert w.conn.execute(select(t.calendar_event_exceptions)).all()==[];w.conn.commit()
     monkeypatch.setattr(schedule_changes,'EDIT_DOMAIN',original)
     assert apply(api_client,w.user,key,candidate).status_code==200
+
+
+def test_unpaged_review_moves_as_original_time_and_block_without_fake_pages(api_client,domain_connection,addition_case):
+    conn,case=domain_connection,addition_case
+    task,block=str(uuid4()),str(uuid4())
+    conn.execute(t.study_blocks.insert().values(id=block,subject_id=case['subject'],unit_id=None,task_type='review',created_at=NOW))
+    conn.execute(t.study_tasks.insert().values(id=task,block_id=block,subject_id=case['subject'],plan_id=case['old_task']['plan_id'],
+        task_type='review',title='페이지 없는 총복습',scheduled_date=TODAY,starts_at=at(TODAY,'10:00'),ends_at=at(TODAY,'10:30'),
+        estimated_minutes=30,status='planned',created_at=NOW))
+    owner=dict(conn.execute(select(t.users).where(t.users.c.id==case['user'])).mappings().one())
+    event=add_event(conn,owner,day=TODAY,start='15:00',end='16:00');conn.commit()
+    key=f"{event['id']}@{TODAY}"
+    response=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'10:00','end':'11:00'})
+    assert response.status_code==200,response.text
+    moved=next(x for x in response.json()['data']['moves'] if x['taskId']==task)
+    assert len(moved['pieces'])==1 and moved['pieces'][0]['minutes']==30
+    assert moved['pieces'][0]['pages']==0 and moved['pieces'][0]['from'] is None
+    applied=apply(api_client,case['user'],key,response.json()['data']['previewId'])
+    assert applied.status_code==200,applied.text
+    row=conn.execute(select(t.study_tasks).where(t.study_tasks.c.origin_task_id==task)).mappings().one()
+    assert row['block_id']==block and row['estimated_minutes']==30
+    assert conn.execute(select(t.study_task_ranges).where(t.study_task_ranges.c.task_id==row['id'])).all()==[]
