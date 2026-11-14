@@ -84,7 +84,7 @@ def _placements(request, result, candidate, conn):
     return [{'id': str(uuid4()), 'subjectId': task.subject_id, 'kind': task.kind,
         'date': task.day.isoformat(), 'start': _fraction(task.start), 'end': _fraction(task.end),
         'minutes': task.display_minutes, 'title': ' · '.join(dict.fromkeys(titles[part.unit_id] for part in task.parts)),
-        'parts': [{'unitId': part.unit_id, 'materialId': part.span.material_id,
+        'parts': [{'requirementId': part.requirement_id, 'unitId': part.unit_id, 'materialId': part.span.material_id,
             'from': part.span.start, 'to': part.span.end, 'baseline': _fraction(part.baseline_minutes_per_page),
             'multiplier': _fraction(part.difficulty_multiplier)} for part in task.parts]} for task in result.placements]
 
