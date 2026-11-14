@@ -13,12 +13,18 @@ from tests.test_mastery_rules import mastery_case, submit_quiz, make_quiz, DAY, 
 def add_direct(conn, case, *, day, unit_index=0, **changes):
     metrics=QuizService(conn,case['user'].to_mapping(),day)._metrics_input()
     unit=next(row for row in metrics['units'] if row['id']==case['units'][unit_index]['id'])
-    snapshot={'schemaVersion':'1','materialId':unit['material_id'],'recordIds':[],
+    block,task,record=(str(uuid4()) for _ in range(3))
+    conn.execute(t.study_blocks.insert().values(id=block,subject_id=case['subject_id'],unit_id=unit['id'],task_type='review',created_at=AT))
+    conn.execute(t.study_tasks.insert().values(id=task,subject_id=case['subject_id'],block_id=block,task_type='review',title='직접 재학습',scheduled_date=day,estimated_minutes=15,status='completed',created_at=AT))
+    conn.execute(t.study_task_ranges.insert().values(id=str(uuid4()),task_id=task,unit_id=unit['id'],start_page=1,end_page=5,sort_order=0))
+    conn.execute(t.study_records.insert().values(id=record,task_id=task,result='completed',recorded_at=AT,study_date=day,updated_at=AT))
+    conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()),record_id=record,unit_id=unit['id'],start_page=1,end_page=5))
+    snapshot={'schemaVersion':'1','materialId':unit['material_id'],'recordIds':[record],
         'requiredRanges':[[1,5]],'masteryScopeRevision':current_scope(unit,metrics['concepts']).revision,
         'directRequestHash':'a'*64}
     snapshot.update(changes.pop('snapshot',{}))
     row=dict(id=str(uuid4()),unit_id=unit['id'],pass_number=1,completion_kind='full_relearn',
-        evidence_key='direct:'+'b'*64,evidence_snapshot=snapshot,completed_at=AT,completed_date=day)
+        evidence_key='direct:'+'b'*64,evidence_snapshot=snapshot,source_task_id=task,completed_at=AT,completed_date=day)
     row.update(changes);conn.execute(t.learning_passes.insert().values(**row));conn.commit()
     return row
 
@@ -125,3 +131,26 @@ def test_initial_pass_keeps_frozen_evidence_after_scope_selection_changes(api_cl
     assert [row['id'] for row in verified_passes(conn,c['user'].id,unit,metrics['concepts'])]==[ids['pass']]
     conn.execute(update(t.study_record_ranges).where(t.study_record_ranges.c.id==ids['range']).values(end_page=4))
     assert verified_passes(conn,c['user'].id,unit,metrics['concepts'])==[]
+
+
+@pytest.mark.parametrize('damage',['missing_records','invalidated','foreign_record'])
+def test_direct_claim_without_owned_current_records_never_establishes_first_pass(api_client,domain_connection,mastery_case,damage):
+    from app.services.recovery_evidence import first_passes
+    c,conn=mastery_case,domain_connection
+    row=add_direct(conn,c,day=DAY)
+    if damage=='invalidated':
+        conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==row['id']).values(invalidated_at=AT))
+    else:
+        snap=dict(row['evidence_snapshot']);snap['recordIds']=[] if damage=='missing_records' else [str(uuid4())]
+        conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==row['id']).values(evidence_snapshot=snap))
+    metrics=QuizService(conn,c['user'].to_mapping(),DAY)._metrics_input();unit=next(x for x in metrics['units'] if x['id']==row['unit_id'])
+    assert first_passes(conn,c['user'].id,unit,metrics['concepts'])==[]
+
+
+def test_verified_full_relearn_is_a_first_pass_even_after_retirement(api_client,domain_connection,mastery_case):
+    from app.services.recovery_evidence import first_passes
+    c,conn=mastery_case,domain_connection
+    row=add_direct(conn,c,day=DAY)
+    metrics=QuizService(conn,c['user'].to_mapping(),DAY)._metrics_input();unit=dict(next(x for x in metrics['units'] if x['id']==row['unit_id']))
+    unit['retired_at']=AT
+    assert [x['id'] for x in first_passes(conn,c['user'].id,unit,metrics['concepts'])]==[row['id']]
