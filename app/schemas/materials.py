@@ -28,3 +28,13 @@ class MaterialList(BaseModel):
 class MaterialsResponse(BaseModel):
     success: Literal[True] = True
     data: MaterialList
+
+
+class MaterialAccepted(BaseModel):
+    materialId: UUID
+    jobId: UUID
+
+
+class MaterialUploadResponse(BaseModel):
+    success: Literal[True] = True
+    data: MaterialAccepted
