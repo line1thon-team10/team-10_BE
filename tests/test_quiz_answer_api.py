@@ -159,7 +159,8 @@ def test_set_item_and_parent_ownership(api_client, answer_case, domain_connectio
         conn.execute(update(t.quiz_items).where(t.quiz_items.c.id == other["essay_item"]).values(question_id=case["essay"]))
         case["essay_item"] = other["essay_item"]
     elif variant == "foreign_material":
-        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(material_id=other["material"]))
+        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(
+            material_id=other["material"], code="FOREIGN2", sort_order=2))
     else:
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case["quiz"]).values(subject_id=other["subject"]))
     before = snapshot(conn)
@@ -248,6 +249,9 @@ def test_closed_or_unready_legacy_set_never_gets_new_answers(api_client, answer_
 
 
 def make_daily(conn, case):
+    # Daily eligibility requires an analyzed unit; a manual structure without
+    # analysis evidence remains quizless even when the material flag is true.
+    conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(evidence=["PDF 1~10쪽 분석 근거"]))
     plan, block, task, record, record_range = (str(uuid4()) for _ in range(5))
     conn.execute(t.plans.insert().values(id=plan, user_id=case["user"], created_at=NOW, approved_at=NOW))
     conn.execute(t.study_blocks.insert().values(id=block, subject_id=case["subject"], unit_id=case["unit"],
@@ -265,7 +269,7 @@ def make_daily(conn, case):
     return task, record_range
 
 
-@pytest.mark.parametrize("change", ["progress", "quizless", "scope", "excluded", "new_day"])
+@pytest.mark.parametrize("change", ["progress", "quizless", "analysis_evidence", "scope", "excluded", "new_day"])
 def test_current_eligibility_is_rechecked_except_received_receipts(api_client, answer_case, domain_connection, change):
     case, conn = answer_case, domain_connection
     task, record_range = make_daily(conn, case)
@@ -275,6 +279,8 @@ def test_current_eligibility_is_rechecked_except_received_receipts(api_client, a
         conn.execute(update(t.study_record_ranges).where(t.study_record_ranges.c.id == record_range).values(end_page=6))
     elif change == "quizless":
         conn.execute(update(t.materials).where(t.materials.c.id == case["material"]).values(quiz_enabled=False))
+    elif change == "analysis_evidence":
+        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(evidence=[]))
     elif change == "scope":
         conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(in_scope=False))
     elif change == "excluded":
