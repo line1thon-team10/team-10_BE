@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 
-from app.ai.gateway import AiGateway, CleanupFailed, GatewayRequest, MaterialRevision, ResultIdentity, canonical_json
+from app.ai.gateway import AiGateway, CleanupFailed, GatewayRequest, GatewayResult, MaterialRevision, ResultIdentity, canonical_json
 from app.ai.material_adapter import MODEL_VERSION
 from app.ai.tutor_adapter import PROMPT_VERSION, SCHEMA_VERSION, PROVIDER, VALIDATOR, validate_tutor_result
 from app.core.clock import now_utc
@@ -208,6 +208,59 @@ class TutorService:
         request, payload = self._request(user_id, body)
         try:
             outcome = self.gateway.run(request, validator=VALIDATOR, provider=PROVIDER)
+            return self._complete(request, payload, outcome)
+        except CleanupFailed:
+            self._failure(request)
+            raise
+        except Exception:
+            self._failure(request)
+            raise failed() from None
+
+    def backup(self, user_id, kind='basic'):
+        ai_kind = 'tutor_simplify' if kind == 'easy' else 'tutor'
+        with self.engine.begin() as conn:
+            _lock(conn, user_id)
+            failures = list(conn.execute(select(t.ai_jobs).where(t.ai_jobs.c.user_id == user_id,
+                t.ai_jobs.c.kind == ai_kind, t.ai_jobs.c.status == 'failed')
+                .order_by(t.ai_jobs.c.created_at.desc(), t.ai_jobs.c.id.desc())).mappings())
+            if not failures:
+                raise failed()
+            latest = failures[0]
+            tied = [job for job in failures if job['created_at'] == latest['created_at']]
+            if len({job['input_hash'] for job in tied}) != 1 or latest['input_payload'].get('schemaVersion') != 'tutor-request-v1':
+                raise failed()
+            payload = latest['input_payload']['payload']
+            identity = self._identity(payload)
+            if identity.kind != ai_kind or identity.input_hash != latest['input_hash']:
+                raise failed()
+            self._check_current(conn, user_id, payload)
+            lookup = GatewayRequest(user_id, identity)
+            previous = self._stored(conn, lookup)
+            outcome = None
+            if previous:
+                response, result_id = previous
+                if result_id is None:
+                    raise failed()
+                outcome = GatewayResult({'subjectId': response['subjectId'], 'answer': response['answer'],
+                    'sources': self._sources(conn, response['id'])}, result_id, 'private_cache', 0)
+            else:
+                # A gateway result may have committed before message persistence
+                # failed. Only one distinct exact-input owned result is safe.
+                candidates = conn.execute(select(t.ai_saved_results.c.result).where(t.ai_saved_results.c.user_id == user_id,
+                    t.ai_saved_results.c.kind == ai_kind, t.ai_saved_results.c.input_hash == identity.input_hash,
+                    t.ai_saved_results.c.schema_version == SCHEMA_VERSION)).scalars().all()
+                if len({canonical_json(value) for value in candidates}) != 1:
+                    raise failed()
+            identifier, now = str(uuid4()), now_utc()
+            conn.execute(t.ai_jobs.insert().values(id=identifier, user_id=user_id, kind=ai_kind,
+                status='running', stage='backup', target_type='tutor', target_id=payload['parent']['id'] if payload['parent'] else None,
+                idempotency_key='tutor:' + identifier, input_hash=identity.input_hash,
+                input_payload={'schemaVersion': 'tutor-request-v1', 'payload': payload}, schema_version=SCHEMA_VERSION,
+                created_at=now, started_at=now))
+        request = GatewayRequest(user_id, identity, job_id=identifier)
+        try:
+            if outcome is None:
+                outcome = self.gateway.run(request, validator=VALIDATOR, provider=None, mode='backup')
             return self._complete(request, payload, outcome)
         except CleanupFailed:
             self._failure(request)

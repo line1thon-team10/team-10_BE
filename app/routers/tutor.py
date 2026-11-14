@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import Connection
 
@@ -15,3 +17,11 @@ def ask_tutor(body: TutorRequest, user: dict = Depends(current_user), conn: Conn
     engine = conn.engine
     conn.close()
     return ok(TutorService(engine).ask(user['id'], body))
+
+
+@router.get('/backup', response_model=TutorResponse)
+def backup_tutor(kind: Literal['basic', 'easy'] = 'basic', user: dict = Depends(current_user),
+                 conn: Connection = Depends(get_conn)):
+    engine = conn.engine
+    conn.close()
+    return ok(TutorService(engine).backup(user['id'], kind))
