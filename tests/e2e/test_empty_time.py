@@ -88,3 +88,12 @@ def test_stale_owner_and_empty_slots(api_client,progress_world):
     assert apply(api_client,w,candidate,'rest').status_code==409
     empty=offer(w,slots=[{'date':(w.day-timedelta(days=1)).isoformat(),'start':'09:00','end':'10:00'}])
     assert empty=={'emptyTime':None,'slots':[],'options':[],'previewId':None}
+
+
+
+def test_unplaceable_legacy_task_never_exposes_fake_free_time(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,10)
+    task=w.task((unit,1,10))
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task).values(estimated_minutes=901))
+    response=offer(w)
+    assert response=={'emptyTime':None,'slots':[],'options':[],'previewId':None}

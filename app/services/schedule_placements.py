@@ -65,7 +65,11 @@ def free_calendar_slots(conn, user, requested_slots, *, ignore_task_ids=()):
             # Legacy date-only placements still occupy their promised duration.
             duration=Fraction(row['estimated_minutes'])
             slot=next((slot for slot in free_slots(row['scheduled_date'],busy) if slot.minutes>=duration),None)
-            if slot and duration>0: busy.append(BusyInterval(slot.day,slot.start,slot.start+duration))
+            if slot and duration>0:
+                busy.append(BusyInterval(slot.day,slot.start,slot.start+duration))
+            else:
+                # Unknown legacy occupancy cannot be advertised as free time.
+                busy.append(BusyInterval(row['scheduled_date'],Fraction(480),Fraction(1380)))
     available=[]
     for day in days:
         intersections=sorted((max(source.start,free.start),min(source.end,free.end))
