@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from dataclasses import replace
+import json
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -446,3 +447,168 @@ def test_regular_today_uses_user_timezone_while_demo_date_controls_week(domain_c
         date(2026, 11, 2), "09:00", "America/Los_Angeles")
     demo = OnboardingEventsService(conn, user).calendar()
     assert (demo["today"], demo["weekStart"]) == ("2026-11-11", "2026-11-09")
+
+
+def auth(user):
+    return {"X-Anonymous-Id": user["id"]}
+
+
+def assert_http_error(response, status, code):
+    assert response.status_code == status, response.text
+    assert response.json()["success"] is False and response.json()["error"]["code"] == code
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_http_crud_returns_complete_calendar_and_commits_each_change(api_client, events_user, domain_connection):
+    client, user, conn = api_client, events_user, domain_connection
+    first = client.get("/api/onboarding/calendar", headers=auth(user))
+    assert first.status_code == 200, first.text
+    assert first.json() == {"success": True, "data": {
+        "weekStart": "2026-11-09", "today": "2026-11-11", "events": [], "exams": [],
+        "summary": {"fixedMinutes": 0, "freeMinutes": 6300}, "addedId": None}}
+    created = client.post("/api/onboarding/events", headers=auth(user), json=payload(days=[3, 1]))
+    assert created.status_code == 200, created.text
+    result = created.json()["data"]
+    event_id = result["events"][0]["id"]
+    assert result["addedId"] is None and result["events"][0]["added"] is False
+    assert result["events"][0]["days"] == [1, 3] and result["summary"]["fixedMinutes"] == 120
+    assert client.get("/api/onboarding/calendar", headers=auth(user)).json() == created.json()
+    one_off = client.patch(f"/api/onboarding/events/{event_id}", headers=auth(user),
+                          json={"days": None, "date": "2026-11-14", "kind": "meet", "title": "동아리"})
+    assert one_off.status_code == 200, one_off.text
+    assert one_off.json()["data"]["events"][0] == {
+        "id": event_id, "kind": "meet", "title": "동아리", "days": None, "date": "2026-11-14",
+        "start": "09:00", "end": "10:00", "added": False}
+    assert one_off.json()["data"]["summary"]["fixedMinutes"] == 60
+    assert one_off.json()["data"]["addedId"] is None
+    # A failed merged PATCH must not turn the persisted event into an overnight one.
+    invalid = client.patch(f"/api/onboarding/events/{event_id}", headers=auth(user), json={"end": "08:00"})
+    assert_http_error(invalid, 422, "INVALID_INPUT")
+    assert client.get("/api/onboarding/calendar", headers=auth(user)).json() == one_off.json()
+    deleted = client.delete(f"/api/onboarding/events/{event_id}", headers=auth(user))
+    assert deleted.status_code == 200 and deleted.json() == first.json()
+    assert stored_event(conn, event_id)["deleted_at"] is not None
+    assert stored_event(conn, event_id)["revision"] == 3
+    assert conn.execute(select(t.plans)).first() is None
+    assert_http_error(client.delete(f"/api/onboarding/events/{event_id}", headers=auth(user)), 404, "EVENT_NOT_FOUND")
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("GET", "/api/onboarding/calendar", None), ("POST", "/api/onboarding/events", payload()),
+    ("PATCH", "/api/onboarding/events/00000000-0000-0000-0000-000000000001", {"title": "수정"}),
+    ("DELETE", "/api/onboarding/events/00000000-0000-0000-0000-000000000001", None),
+])
+def test_all_calendar_routes_require_authenticated_owner(api_client, method, path, body):
+    assert_http_error(api_client.request(method, path, json=body), 401, "NO_SESSION")
+    assert_http_error(api_client.request(method, path, json=body, headers={"X-Anonymous-Id": str(uuid4())}),
+                      401, "UNKNOWN_SESSION")
+
+
+@pytest.mark.parametrize("body", [
+    {}, payload(days=[True]), payload(days=[1.0]), payload(days=[1, 1]), payload(days=[]),
+    payload(date="2026-11-14"), payload(days=None), payload(days=None, date="2026-1-01"),
+    payload(start="9:00"), payload(end="24:00"), payload(start="23:00", end="01:00"),
+    payload(kind="exam"), payload(added=True), payload(subjectId=str(uuid4())),
+])
+def test_http_create_rejects_invalid_shapes_without_writes(api_client, events_user, domain_connection, body):
+    response = api_client.post("/api/onboarding/events", headers=auth(events_user), json=body)
+    assert_http_error(response, 422, "INVALID_INPUT")
+    assert domain_connection.execute(select(t.calendar_events)).first() is None
+
+
+@pytest.mark.parametrize("title", ["a\x00b", "a\ud800b", "a\udfffb"])
+@pytest.mark.parametrize("operation", ["create", "patch"])
+def test_http_db_unsupported_text_is_422_on_both_backends(api_client, events_user, domain_connection, title, operation):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user)
+    conn.commit()
+    method, path, body = ("POST", "/api/onboarding/events", payload(title=title)) if operation == "create" else (
+        "PATCH", f"/api/onboarding/events/{event['id']}", {"title": title})
+    # Escaped JSON lets the HTTP parser receive isolated UTF-16 surrogates too.
+    response = api_client.request(method, path, headers={**auth(user), "Content-Type": "application/json"}, content=json.dumps(body))
+    assert_http_error(response, 422, "INVALID_INPUT")
+    assert stored_event(conn, event["id"])["title"] == "수업" and stored_event(conn, event["id"])["revision"] == 1
+    assert len(conn.execute(select(t.calendar_events)).all()) == 1
+
+
+def test_http_blank_titles_unknown_query_and_malformed_ids_use_common_errors(api_client, events_user):
+    user, client = events_user, api_client
+    assert_http_error(client.post("/api/onboarding/events", headers=auth(user), json=payload(title="  \t")), 400, "EMPTY")
+    for query in ("weekStart=2026-11-02", "subjectId=" + str(uuid4()), "saved=true"):
+        assert_http_error(client.get("/api/onboarding/calendar?" + query, headers=auth(user)), 422, "INVALID_INPUT")
+    assert_http_error(client.patch("/api/onboarding/events/not-a-uuid", headers=auth(user), json={"title": "x"}), 422, "INVALID_INPUT")
+    assert_http_error(client.delete("/api/onboarding/events/not-a-uuid", headers=auth(user)), 422, "INVALID_INPUT")
+
+
+def test_http_other_owner_get_is_empty_and_mutations_are_404(api_client, events_user, domain_connection):
+    conn, user = domain_connection, events_user
+    other = User.anonymous(now=NOW)
+    UserRepository(conn).add(other)
+    event = add_event(conn, other.to_mapping())
+    conn.commit()
+    client = api_client
+    assert client.get("/api/onboarding/calendar", headers=auth(user)).json()["data"]["events"] == []
+    assert_http_error(client.patch(f"/api/onboarding/events/{event['id']}", headers=auth(user), json={"title": "변경"}),
+                      404, "EVENT_NOT_FOUND")
+    assert_http_error(client.delete(f"/api/onboarding/events/{event['id']}", headers=auth(user)), 404, "EVENT_NOT_FOUND")
+    assert stored_event(conn, event["id"])["revision"] == 1
+
+
+def test_http_approved_get_and_added_draft_subject_cannot_reopen_event_mutations(api_client, events_user, domain_connection):
+    conn, user, client = domain_connection, events_user, api_client
+    event = add_event(conn, user)
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(onboarding_status="completed"))
+    conn.execute(t.plans.insert().values(id=str(uuid4()), user_id=user["id"], revision=8, created_at=NOW, approved_at=NOW))
+    conn.commit()
+    before = client.get("/api/onboarding/calendar", headers=auth(user))
+    assert before.status_code == 200
+    subject_id = add_subject(conn, user["id"], exam_date=MONDAY + timedelta(days=14))
+    conn.commit()
+    after = client.get("/api/onboarding/calendar", headers=auth(user)).json()["data"]
+    assert after["events"] == before.json()["data"]["events"] and after["summary"] == before.json()["data"]["summary"]
+    assert after["exams"] == [{"subjectId": subject_id, "name": "시험 과목", "examDate": "2026-11-23"}]
+    assert_http_error(client.post("/api/onboarding/events", headers=auth(user), json=payload()), 409, "ONBOARDING_COMPLETED")
+    assert_http_error(client.patch(f"/api/onboarding/events/{event['id']}", headers=auth(user), json={"title": "변경"}),
+                      409, "ONBOARDING_COMPLETED")
+    assert_http_error(client.delete(f"/api/onboarding/events/{event['id']}", headers=auth(user)), 409, "ONBOARDING_COMPLETED")
+    assert stored_event(conn, event["id"])["revision"] == 1 and conn.scalar(select(t.plans.c.revision)) == 8
+
+
+@pytest.mark.parametrize("operation", ["create", "patch", "delete"])
+def test_http_projection_failure_rolls_back_committed_request_transaction(api_client, events_user, domain_connection, monkeypatch, operation):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user)
+    before = stored_event(conn, event["id"])
+    conn.commit()
+    def fail_projection(self):
+        raise RuntimeError("calendar unavailable")
+    monkeypatch.setattr(OnboardingEventsService, "calendar", fail_projection)
+    path = f"/api/onboarding/events/{event['id']}"
+    if operation == "create":
+        response = api_client.post("/api/onboarding/events", headers=auth(user), json=payload())
+    elif operation == "patch":
+        response = api_client.patch(path, headers=auth(user), json={"title": "롤백"})
+    else:
+        response = api_client.delete(path, headers=auth(user))
+    assert_http_error(response, 500, "SERVER_ERROR")
+    assert stored_event(conn, event["id"]) == before and len(conn.execute(select(t.calendar_events)).all()) == 1
+
+
+def test_day9_seed_calendar_get_preserves_kst_clocks_and_utc_storage(api_client, demo_user, domain_connection):
+    from app.seed import demo_data
+    response = api_client.get("/api/onboarding/calendar", headers={"X-Anonymous-Id": demo_user})
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert (data["weekStart"], data["today"], data["addedId"]) == ("2026-11-09", "2026-11-09", None)
+    names = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
+    expected = {(title, days): (kind, start, end) for kind, title, days, start, end in demo_data.EVENTS}
+    assert {(event["title"], ",".join(names[day - 1] for day in event["days"])):
+            (event["kind"], event["start"], event["end"]) for event in data["events"]} == expected
+    for row in domain_connection.execute(select(t.calendar_events).where(t.calendar_events.c.user_id == demo_user)).mappings():
+        for column, field in (("starts_at", 1), ("ends_at", 2)):
+            instant = row[column] if row[column].tzinfo else row[column].replace(tzinfo=timezone.utc)
+            assert instant.astimezone(ZoneInfo("Asia/Seoul")).strftime("%H:%M") == expected[
+                (row["title"], row["recurrence_rule"].split("BYDAY=")[1])][field]
+    assert all(event["added"] is False for event in data["events"])
+    assert 0 <= data["summary"]["fixedMinutes"] <= 6300
+    assert data["summary"]["fixedMinutes"] + data["summary"]["freeMinutes"] == 6300
