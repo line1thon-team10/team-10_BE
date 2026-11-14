@@ -142,3 +142,33 @@ def test_concurrent_identical_requests_publish_only_one_ready_candidate(api_clie
     ready=domain_connection.scalars(select(t.plan_proposal_states.c.proposal_id).where(
         t.plan_proposal_states.c.kind=='remaining_plan_resplit',t.plan_proposal_states.c.status=='ready')).all()
     assert ready==[successes[0]['previewId']]
+
+
+@pytest.mark.parametrize('stale',[False,True])
+def test_initial_resplit_preserves_latest_explicit_subject_selection(api_client,domain_connection,plan_case,interpretation,stale):
+    conn,case=domain_connection,plan_case
+    conn.execute(update(t.subjects).where(t.subjects.c.id==case['active']).values(status='archived'))
+    other,material,unit=(str(uuid4()) for _ in range(3))
+    subject=dict(conn.execute(select(t.subjects).where(t.subjects.c.id==case['subject'])).mappings().one())
+    conn.execute(t.subjects.insert().values(**{**subject,'id':other,'code':other,'name':'미선택 과목'}))
+    row=dict(conn.execute(select(t.materials).where(t.materials.c.id==case['material'])).mappings().one())
+    conn.execute(t.materials.insert().values(**{**row,'id':material,'subject_id':other,'sha256':'unselected'}))
+    row=dict(conn.execute(select(t.units).where(t.units.c.id==case['unit'])).mappings().one())
+    conn.execute(t.units.insert().values(**{**row,'id':unit,'material_id':material}));conn.commit()
+    assert call(api_client,case,'get','/api/plan/draft').status_code==200
+    selected=call(api_client,case,'get','/api/plan/draft',params={'draftSubjectIds':case['subject']})
+    assert selected.status_code==200,selected.text
+    if stale:
+        conn.execute(update(t.materials).where(t.materials.c.id==case['material']).values(analysis_version='changed'))
+        conn.commit()
+    response=prepare(api_client,case);assert response.status_code==200,response.text
+    identifier=response.json()['data']['previewId']
+    assert call(api_client,case,'post','/api/plan/resplit/apply',json={'previewId':identifier}).status_code==200
+    current=call(api_client,case,'get','/api/plan/draft')
+    assert current.status_code==200,current.text
+    assert {row['subjectId'] for row in current.json()['data']['allocation']}=={case['subject']}
+    response=call(api_client,case,'post','/api/plan/approve',json={'previewId':identifier})
+    assert response.status_code==200,response.text
+    assert conn.scalar(select(t.subjects.c.status).where(t.subjects.c.id==other))=='draft'
+    assert conn.scalar(select(t.subjects.c.status).where(t.subjects.c.id==case['subject']))=='active'
+    assert set(conn.scalars(select(t.study_tasks.c.subject_id)))=={case['subject']}
