@@ -30,8 +30,14 @@ def test_fresh_session_returns_complete_empty_shape_without_invented_dialogue(ap
     assert domain_connection.execute(select(t.subjects)).first() is None
 
 
-def test_get_restores_optional_none_confirmations_and_has_no_side_effects(api_client, domain_connection, onboarding_user):
+def test_get_restores_optional_none_confirmations_and_has_no_side_effects(api_client, domain_connection, onboarding_user, monkeypatch):
+    from app.services import day_rollover
+
     conn, user = domain_connection, onboarding_user
+    monkeypatch.setattr(day_rollover, "now_utc", lambda: NOW)
+    # D04 initializes the date marker on admission. Snapshot an already-settled
+    # user so the complete row comparison still detects every O01 GET mutation.
+    user = day_rollover.DayRolloverService(conn).reconcile(user)
     subject_id = add_subject(conn, user)
     expected = OnboardingService(conn, user).save_turn(
         goals=[full_goal(subject_id)], messages=[ConversationMessage("user", "추가 정보는 없어요"),
