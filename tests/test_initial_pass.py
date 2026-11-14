@@ -189,3 +189,20 @@ def test_concurrent_completion_and_retry_allocate_one_pass(api_client, demo_user
         assert first.result(timeout=5).status_code == 200
     record(api_client, demo_user, task_id)
     assert len(passes(conn, unit_id)) == 1
+
+
+@pytest.mark.parametrize("invalidated", [False, True])
+def test_full_relearn_consumed_evidence_cannot_be_reused_for_initial(
+        api_client, demo_user, domain_connection, invalidated):
+    conn = domain_connection
+    task = task_for(conn, demo_user)
+    unit_id = task.ranges[0]["unit_id"]
+    old = passes(conn, unit_id)[0]
+    conn.execute(update(t.learning_passes).where(t.learning_passes.c.id == old["id"]).values(
+        completion_kind="full_relearn", evidence_key=str(uuid4()),
+        invalidated_at=old["completed_at"] if invalidated else None))
+    conn.commit()
+    record(api_client, demo_user, task.id)
+    found = passes(conn, unit_id)
+    assert len(found) == 1
+    assert found[0]["completion_kind"] == "full_relearn"
