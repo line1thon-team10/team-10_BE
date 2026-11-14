@@ -15,7 +15,7 @@ def request(client,w,unit,key,**changes):
 
 
 def test_direct_relearn_records_current_scope_without_plan_or_score_change(api_client,progress_world):
-    w=progress_world;unit=w.unit(1,10);w.concept(unit,1,3);w.concept(unit,7,10);w.concept(unit,4,6,in_scope=False)
+    w=progress_world;unit=w.unit(1,10);w.concept(unit,1,3,sort_order=0);w.concept(unit,7,10,sort_order=1,code="C2");w.concept(unit,4,6,in_scope=False,sort_order=2,code="C3")
     before=(w.conn.execute(select(t.plans)).all(),w.conn.execute(select(t.units.c.mastery_score,t.units.c.mastery_level).where(t.units.c.id==unit['id'])).all())
     key=str(uuid4());response=request(api_client,w,unit,key)
     assert response.status_code==200,response.text
