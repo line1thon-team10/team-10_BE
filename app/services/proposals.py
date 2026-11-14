@@ -291,3 +291,19 @@ class ProposalService:
                 # A late state change must not commit the domain a second time.
                 raise ProposalConflict("The candidate changed after its domain callback")
             return canonical_object(applied.proposal["result_response"])
+
+    def cancel(self, user_id, preview_id, *, domain: PreviewDomain, target: dict | str) -> dict:
+        """Cancel only this candidate; retries preserve its first decided_at.
+
+        Ready candidates may be cancelled after their basis/date has changed.
+        The request, siblings and approved domain data are never changed here.
+        """
+        identifier, target_json = self._preview_id(preview_id), self._target(target)
+        with self._transaction(user_id) as context:
+            state = self._candidate(context, identifier, domain, target_json)
+            if state["status"] == "cancelled":
+                return {"cancelled": True}
+            if state["status"] != "ready":
+                raise _stale()
+            self.repository.cancel(context.user.id, identifier, expected_revision=state["state_revision"], now=context.now)
+            return {"cancelled": True}
