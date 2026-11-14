@@ -23,13 +23,13 @@
 
 공통 검사는 중첩된 NaN/Infinity/overflow float, JSON 이외의 타입, 순환 객체, 문자열이 아닌 객체 키, 중복 JSON 키, 인코딩할 수 없는 문자열을 거절한다. PostgreSQL JSONB/Text에서 표현할 수 없는 U+0000은 값·키·provider 식별자에서도 거절해 SQLite와 같은 결과를 낸다. 최종 루트는 object 또는 array다. 값의 의미·근거·자료 범위·점수·문항 구조와 OCR 품질(POL-03)은 각 domain validator가 고정 snapshot으로 검사한다. 공통 경로 자체가 OCR이나 정답 품질을 검증했다고 표시하지 않는다.
 
-실제 transport 성공 뒤 반환된 문자열의 `JSONDecodeError`만 한 번 재시도한다. 두 번째 시도에는 `ProviderCall.format_retry=True`가 전달된다. 자격 누락, 권한 오류, 실패 transport, NaN, 잘못된 범위/근거/구조, validator 오류는 재시도하지 않는다. SDK가 문자열을 먼저 파싱해 예외를 숨기지 않도록 adapter는 원문 JSON 문자열을 반환하거나 이미 얻은 JSON 값을 전달한다.
+해당 시도의 모든 실제 transport가 성공한 뒤 반환된 문자열의 `JSONDecodeError`만 한 번 재시도한다. retrieval 성공 뒤 generation이 실패한 경우도 전체 시도는 실패이며 다른 요청의 성공으로 형식 재시도를 허용하지 않는다. 두 번째 시도에는 `ProviderCall.format_retry=True`가 전달된다. 자격 누락, 권한 오류, 실패 transport, NaN, 잘못된 범위/근거/구조, validator 오류는 재시도하지 않는다. SDK가 문자열을 먼저 파싱해 예외를 숨기지 않도록 adapter는 원문 JSON 문자열을 반환하거나 이미 얻은 JSON 값을 전달한다.
 
 ## 시간과 종료
 
 `AiSettings`는 환경의 `AI_REQUEST_BUDGET_SECONDS`(기본20, 양수·최대25), `AI_PDF_JOB_BUDGET_SECONDS`(기본300, 양수)를 별도로 검증한다. NaN/무한/표현 불가능한 값은 거절한다. PDF 예산은 `kind="pdf_analysis"`와 `pdf_job=True`를 명시한 백그라운드 실행에만 적용한다. 일반 PDF 동기 요청에 자동으로300초를 주지 않는다.
 
-하나의 monotonic deadline 안에 spawn, 공급자 호출 전체, 최대 한 번 JSON 재시도, domain validation, 종료 정리를 묶는다. 정리를 위해 남은 시간의 최대10%와 `cleanup_timeout_seconds`(기본1초) 중 작은 값을 미리 남긴다. 모든 transport는 `context.remaining_seconds`를 timeout으로 사용해야 한다. 작업마다 예산을 새로 만들지 않는다.
+하나의 monotonic deadline 안에 spawn, 공급자 호출 전체, 최대 한 번 JSON 재시도, domain validation, 종료 정리를 묶는다. spawn에는 작은 pipe 참조와 deadline만 전달하고, 큰 identity/캐시 본문은 시작 후 별도 비차단 pipe로 남은 예산을 확인하며 보낸다. Python bootstrap이 느려도 `process.start()`의 큰 인자 전송에서 기다리지 않는다. 이 입력 pipe의 pickle은 신뢰된 parent가 만든 typed 객체의 내부 전송이며 외부 사용자/AI가 만든 pickle을 읽는 API가 아니다. 정리를 위해 남은 시간의 최대10%와 `cleanup_timeout_seconds`(기본1초) 중 작은 값을 미리 남긴다. 모든 transport는 `context.remaining_seconds`를 timeout으로 사용해야 한다. 작업마다 예산을 새로 만들지 않는다.
 
 실행은 POSIX spawn 프로세스에서 이루어진다. 완료·실패·timeout 뒤 해당 process group에 SIGKILL을 보내고 join으로 종료를 확인한다. SIGTERM을 무시하는 SDK도 종료 대상이다. parent는 비차단 framed pipe를 사용하므로 일부만 전송된 큰 출력에서 blocking recv로 멈추지 않는다. 출력 frame8MiB, telemetry4096개는 IPC 자원 보호 경계이며 제품의 PDF/문항 한도가 아니다. 초과하면 성공으로 저장하지 않는다.
 
@@ -47,7 +47,7 @@ DB cache 조회와 사후 usage/cache 저장 지연은 DB 운영 timeout 정책�
 
 여러 내부 요청을 하는 library 함수를 한 번 감싼 훅은 충분하지 않다. 해당 library가 쓰는 SDK/HTTP transport에 훅을 연결해 요청 수만큼 기록해야 한다. 중첩 호출의 provider/model도 각 행에 보존한다. 누락 훅, 미종료 요청, 중복/위조 request ID, 음수·bool 토큰 수 등 잘못된 telemetry를 정상 결과로 채택하지 않는다. 이 훅은 신뢰된 adapter의 관측 계약이며 숨겨진 네트워크 호출을 자동 탐지하는 기능이 아니다.
 
-사용량에는 parent가 정한 사용자/job/kind만 넣는다. cache hit/miss, 키 누락, validator-only 실행은 사용량0건이다. 응답 JSON이 잘못됐어도 실제 transport가 성공했다면 그 요청은 `succeeded`로 기록하고 결과 저장은 실패한다. timeout/프로세스 비정상 종료로 끝 이벤트가 없는 실제 시작 요청은 `failed`, 알 수 없는 토큰·비용·latency는 null이다. 진행 중 자료가 삭제되더라도 사용량은 보존하고 결과 저장은 소유권 검증에서 실패한다. job이 삭제되었으면 다른 작업에 연결하지 않고 `job_id=null`로 남긴다.
+사용량에는 parent가 정한 사용자/job/kind만 넣는다. cache hit/miss, 키 누락, validator-only 실행은 사용량0건이다. 응답 JSON이 잘못됐어도 실제 transport가 성공했다면 그 요청은 `succeeded`로 기록하고 결과 저장은 실패한다. timeout/프로세스 비정상 종료로 끝 이벤트가 없는 실제 시작 요청은 `failed`, 알 수 없는 토큰·비용·latency는 null이다. 진행 중 자료가 삭제되더라도 사용량은 보존하고 결과 저장은 소유권 검증에서 실패한다. job이 삭제되었으면 다른 작업에 연결하지 않고 `job_id=null`로 남긴다. 조회 직후 job이 삭제되는 경쟁으로 FK 저장이 실패하면 실패한 전체 batch를 rollback하고 새 트랜잭션에서 실제 삭제를 확인한 경우에만 null 참조로 한 번 재저장한다. 다른 제약 위반은 숨기지 않는다.
 
 ## 후속 연결과 검증 범위
 
@@ -56,3 +56,4 @@ DB cache 조회와 사후 usage/cache 저장 지연은 DB 운영 timeout 정책�
 - `tests/test_ai_gateway.py`는 SQLite/PostgreSQL의 캐시·소유권·usage와 synthetic transport의 취소·형식 재시도·근거/범위 검사·큰 출력·부분 프레임·비정상 종료를 검증한다. 기존 `test_ai_dependency.py`, `test_essay_failure.py`도 회귀 대상이다.
 - 모든 공급자 실행 테스트는 로컬 fake다. 실제 API 키 사용, 과금 호출, OCR/채점/튜터 품질 또는 실제 모델 지연 측정은 수행하지 않았다.
 - 독립 검토에서 유효 JSON의 U+0000이 SQLite에는 저장되지만 PostgreSQL에서는 SQL 오류로 빠지는 결함을 재현했다. 저장 전에 공통 경계에서 거절하도록 보완했다. 잘못된 결과는503 AI_FAILED이며 완료된 실제 transport 사용량은 유지한다. 잘못된 provider request ID 때문에 완료 이벤트를 해석할 수 없으면 시작된 요청을 failed/null로 남긴다. 수정 후 두 DB의 관련 회귀161개가 통과했다.
+- Astra의 추가 검토에서 job 삭제 경쟁, 큰 spawn 인자의 bootstrap 대기, 성공/실패 transport 혼합 결과 채택을 재현해 각각 독립 커밋으로 수정했다. 최종 관련 회귀169개가 통과했으며 원래 독립 재현을 새 SHA로 다시 검증한다. 정상2MiB 입력 전송과256KiB/2초 bootstrap 지연에서0.5초 예산 종료를 포함한다.
