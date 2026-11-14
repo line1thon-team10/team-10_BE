@@ -64,6 +64,49 @@ class QuizService:
             t.quiz_sessions.c.quiz_date == self.today, t.quiz_sessions.c.type == "daily")
             .order_by(t.quiz_sessions.c.created_at)).mappings()]
 
+    def submission_session(self, key: str, answers: list[dict], quiz_id: str | None = None) -> tuple[dict, list[dict]]:
+        """Resolve old FE submissions from existing owned sets, never create one."""
+        try:
+            session = self.session(key, quiz_id=quiz_id if quiz_id is not None else key)
+        except ApiError as error:
+            if quiz_id is not None or error.code != "NO_QUIZ" or key not in self.data.subject_by_id:
+                raise
+            matches = []
+            for candidate in self.daily_sessions(key):
+                if candidate["status"] not in ("ready", "in_progress", "submitted"):
+                    continue
+                items = self.items(candidate["id"])
+                try:
+                    mapped = self._submission_ids(items, answers)
+                except ApiError:
+                    continue
+                matches.append((candidate, items, mapped))
+            if len(matches) != 1:
+                raise ApiError("INVALID_INPUT", "제출할 기존 퀴즈를 확인하지 못했어요. 문항을 다시 불러와 주세요", 422)
+            session, items, mapped = matches[0]
+        else:
+            items = self.items(session["id"])
+            mapped = self._submission_ids(items, answers)
+        # Resolving legacy aliases must never admit a foreign question attached
+        # to an otherwise owned session by malformed historical data.
+        owned = set(self.conn.scalars(select(t.quiz_items.c.id)
+            .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
+            .join(t.units, t.questions.c.unit_id == t.units.c.id)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id).where(
+                t.quiz_items.c.quiz_session_id == session["id"], t.subjects.c.user_id == self.user["id"],
+                True if session["subject_id"] is None else t.subjects.c.id == session["subject_id"])))
+        if owned != {item["item_id"] for item in items}:
+            raise ApiError("NO_QUIZ", "퀴즈 문항의 소유권을 확인하지 못했어요", 404)
+        return session, mapped
+
+    @staticmethod
+    def _submission_ids(items: list[dict], answers: list[dict]) -> list[dict]:
+        ids = [answer["questionId"] for answer in answers]
+        if not items or len(set(ids)) != len(ids) or set(ids) != {item["item_id"] for item in items}:
+            raise ApiError("INVALID_INPUT", "현재 퀴즈의 모든 문항을 정확히 한 번씩 제출해 주세요", 422)
+        return answers
+
     def items(self, session_id: str) -> list[dict]:
         rows = self.conn.execute(
             select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.question_id,

@@ -71,9 +71,10 @@ def quiz_set(key: UUID, saved: int = 0, quizId: UUID | None = None,
 def quiz_submit(key: UUID, body: SubmitIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """제출 → 채점(서술형은 AI) → 단원 점수·오답 노트 반영 → 결과 (S8-2, P3)"""
     svc = QuizService(conn, user, today_for(user))
-    session = svc.session(str(key), quiz_id=str(body.quizId))
+    session, answers = svc.submission_session(str(key), [a.model_dump(mode="json") for a in body.answers],
+        quiz_id=str(body.quizId) if body.quizId is not None else None)
     _check_open(svc, session)
-    svc.submit(session, [a.model_dump(mode="json") for a in body.answers])
+    svc.submit(session, answers)
     fresh = QuizService(conn, user, svc.today)
     return ok(fresh.result_view(fresh.session(session["id"])))
 

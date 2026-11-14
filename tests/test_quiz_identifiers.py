@@ -137,7 +137,7 @@ def test_submit_requires_valid_quiz_id(api_client, quiz_case, quiz_id):
     assert_error(response, 422, "INVALID_INPUT")
 
 
-def test_missing_quiz_id_does_not_create_or_select_a_quiz(api_client, quiz_case, domain_connection):
+def test_missing_quiz_id_never_creates_or_selects_an_unrelated_set(api_client, quiz_case, domain_connection):
     case = quiz_case
     before = domain_connection.scalar(select(func.count()).select_from(t.quiz_sessions))
     domain_connection.commit()
@@ -361,11 +361,13 @@ def test_saved_grading_requires_boolean(api_client, quiz_case, value):
     assert_error(response, 422, "INVALID_INPUT")
 
 
-def test_openapi_marks_quiz_id_and_confidence_required(api_client):
+def test_openapi_allows_legacy_quiz_id_omission_but_keeps_answer_fields_required(api_client):
     response = api_client.get("/openapi.json")
     assert response.status_code == 200
     schemas = response.json()["components"]["schemas"]
-    assert set(schemas["SubmitIn"]["required"]) == {"quizId", "answers"}
+    # FE main49c serializes only answers/savedGrading; explicit IDs remain UUIDs.
+    assert set(schemas["SubmitIn"]["required"]) == {"answers"}
+    assert schemas["SubmitIn"]["properties"]["quizId"]["format"] == "uuid"
     assert set(schemas["Answer"]["required"]) == {"questionId", "confidence"}
     assert schemas["Answer"]["properties"]["confidence"]["enum"] == ["sure", "unsure"]
 
