@@ -157,6 +157,45 @@ class QuizAnswerRepository:
                 input_recovered=True, sealed_answers=sealed, legacy=False))
             return self.submission(user_id, quiz["id"])
 
+    def store_result_snapshot(self, user_id, quiz_id, *, expected_hash: str | None, snapshot: dict,
+                              provenance: str, schema_version: str, now: datetime) -> dict:
+        now = aware_time(now)
+        if (not isinstance(snapshot, dict) or provenance not in ("submitted", "legacy_reconstructed")
+                or not isinstance(schema_version, str) or not schema_version.strip()):
+            raise ApiError("INVALID_INPUT", "결과 스냅샷과 출처·버전이 필요해요", 422)
+        try:
+            canonical_hash(snapshot)  # reject non-JSON and non-finite values before writing
+        except (ValueError, TypeError, OverflowError):
+            raise ApiError("INVALID_INPUT", "결과 스냅샷의 값이 올바르지 않아요", 422) from None
+        quiz = self.lock_quiz(user_id, quiz_id)
+        with self.connection.begin_nested():
+            state = self.submission(user_id, quiz["id"])
+            if state is None:
+                raise ApiError("NO_RESULT", "답안을 먼저 봉인해 주세요")
+            if state["answer_set_hash"] != expected_hash:
+                raise ApiError("ANSWER_CONFLICT", "봉인한 답안 집합이 아니에요", 409)
+            required_provenance = "legacy_reconstructed" if state["legacy"] else "submitted"
+            if provenance != required_provenance or now < state["sealed_at"]:
+                raise ApiError("INVALID_INPUT", "결과 출처 또는 저장 시각이 맞지 않아요", 422)
+            if state["result_snapshot"] is not None:
+                return state  # the first response remains authoritative, even if a caller recomputes it
+            if not state["legacy"]:
+                current = {answer["id"]: answer["revision"] for answer in self.list_current(user_id, quiz["id"])}
+                sealed = {answer["answerId"]: answer["revision"] for answer in state["sealed_answers"]}
+                if current != sealed:
+                    raise ApiError("ANSWER_CONFLICT", "봉인 뒤 답안이 바뀌었어요", 409)
+                jobs = {row["answer_id"]: row for row in self.connection.execute(select(t.quiz_grading_jobs).where(
+                    t.quiz_grading_jobs.c.answer_id.in_(sealed))).mappings()}
+                if any(answer_id not in jobs or jobs[answer_id]["status"] != "succeeded" or
+                       jobs[answer_id]["answer_revision"] != revision for answer_id, revision in sealed.items()):
+                    raise ApiError("AI_FAILED", "채점이 아직 완료되지 않았어요", 503)
+            self.connection.execute(update(t.quiz_submission_states).where(
+                t.quiz_submission_states.c.quiz_session_id == quiz["id"],
+                t.quiz_submission_states.c.result_snapshot.is_(None)
+            ).values(result_snapshot=snapshot, result_provenance=provenance,
+                     result_schema_version=schema_version, result_captured_at=now))
+            return self.submission(user_id, quiz["id"])
+
     def save(self, user_id, quiz_id, item_id, *, revision: int, choice: int | None = None,
              text: str | None = None, confidence: str, now: datetime, answered_date: date) -> AnswerSave:
         if type(revision) is not int or revision < 0 or type(answered_date) is not date:

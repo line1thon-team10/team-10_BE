@@ -322,6 +322,20 @@ def seal_answers(conn, case):
                      expected_revisions={case["choice_item"]: 1, case["essay_item"]: 1})
 
 
+def finish_answers(conn, case):
+    jobs = GradingJobRepository(conn)
+    for kind in ("choice", "essay"):
+        job = jobs.enqueue(case["user"], case["quiz"], case[f"{kind}_item"], revision=1, now=NOW)
+        lease = claim(jobs, case, job)
+        assert complete(jobs, case, lease, result={"is_correct": True, "essay_score": 85 if kind == "essay" else None})
+
+
+def store_snapshot(repo, case, state, **changes):
+    return repo.store_result_snapshot(case["user"], case["quiz"], **{
+        "expected_hash": state["answer_set_hash"], "snapshot": {"quizId": case["quiz"], "summary": {"correct": 2}},
+        "provenance": "submitted", "schema_version": "quiz-result-v1", "now": NOW + timedelta(seconds=20), **changes})
+
+
 def test_seal_freezes_exact_revisions_and_replays_original_state(domain_connection, storage_case):
     conn, case = domain_connection, storage_case
     repo = QuizAnswerRepository(conn)
@@ -361,6 +375,65 @@ def test_incomplete_or_stale_sets_cannot_be_sealed(domain_connection, storage_ca
     assert repo.submission(case["user"], case["quiz"]) is None
 
 
+def test_pending_grading_cannot_publish_snapshot_but_answers_and_seal_survive(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    error("AI_FAILED", lambda: store_snapshot(repo, case, state), 503)
+    conn.commit()
+    assert repo.submission(case["user"], case["quiz"])["result_snapshot"] is None
+    assert len(repo.list_current(case["user"], case["quiz"])) == 2
+
+
+def test_first_result_snapshot_and_provenance_remain_immutable_after_reopen(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    finish_answers(conn, case)
+    first = store_snapshot(repo, case, state)
+    assert first["result_provenance"] == "submitted" and first["result_schema_version"] == "quiz-result-v1"
+    assert first["result_captured_at"] == NOW + timedelta(seconds=20)
+    conn.commit()
+    second = store_snapshot(QuizAnswerRepository(conn), case, state, now=NOW + timedelta(days=1),
+                             schema_version="quiz-result-v2", snapshot={"changed": True})
+    assert second == first
+    assert conn.execute(select(t.quiz_attempts)).first() is None
+    assert conn.execute(select(t.mastery_history)).first() is None
+
+
+@pytest.mark.parametrize("change,code,status", [
+    ({"expected_hash": "a" * 64}, "ANSWER_CONFLICT", 409),
+    ({"provenance": "legacy_reconstructed"}, "INVALID_INPUT", 422),
+    ({"provenance": "other"}, "INVALID_INPUT", 422),
+    ({"schema_version": " "}, "INVALID_INPUT", 422),
+    ({"now": NOW}, "INVALID_INPUT", 422),
+    ({"snapshot": {"score": float("nan")}}, "INVALID_INPUT", 422),
+    ({"snapshot": {"nested": [float("inf")]}}, "INVALID_INPUT", 422),
+    ({"snapshot": []}, "INVALID_INPUT", 422),
+])
+def test_snapshot_hash_metadata_and_json_are_validated(domain_connection, storage_case, change, code, status):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    error(code, lambda: store_snapshot(repo, case, state, **change), status)
+    assert repo.submission(case["user"], case["quiz"])["result_snapshot"] is None
+
+
+def test_legacy_unknown_hash_can_store_explicit_reconstruction_provenance(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    conn.execute(t.quiz_submission_states.insert().values(quiz_session_id=case["quiz"], sealed_at=NOW,
+        input_recovered=False, sealed_answers=[], legacy=True, legacy_snapshot={"preserved": "legacy facts"}))
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case["quiz"]).values(status="submitted", submitted_at=NOW))
+    repo = QuizAnswerRepository(conn)
+    state = repo.submission(case["user"], case["quiz"])
+    error("INVALID_INPUT", lambda: store_snapshot(repo, case, state), 422)
+    result = store_snapshot(repo, case, state, provenance="legacy_reconstructed")
+    assert result["result_provenance"] == "legacy_reconstructed" and result["answer_set_hash"] is None
+    assert result["legacy_snapshot"] == {"preserved": "legacy facts"}
+    submitted = conn.scalar(select(t.quiz_sessions.c.submitted_at).where(t.quiz_sessions.c.id == case["quiz"]))
+    assert submitted.replace(tzinfo=timezone.utc) == NOW
+
+
 def test_foreign_user_cannot_seal_a_quiz(domain_connection, storage_case):
     conn, case = domain_connection, storage_case
     other = make_case(conn)
@@ -368,3 +441,22 @@ def test_foreign_user_cannot_seal_a_quiz(domain_connection, storage_case):
     seal_answers(conn, case)
     error("NO_QUIZ", lambda: repo.seal(other["user"], case["quiz"], now=NOW, expected_revisions={}), 404)
     error("NO_QUIZ", lambda: repo.submission(other["user"], case["quiz"]), 404)
+
+
+def test_foreign_user_cannot_store_snapshot(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    other = make_case(conn)
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    error("NO_QUIZ", lambda: store_snapshot(repo, {**case, "user": other["user"]}, state), 404)
+
+
+def test_rollback_does_not_publish_a_seal_or_snapshot(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    finish_answers(conn, case)
+    store_snapshot(repo, case, state)
+    conn.rollback()
+    assert repo.submission(case["user"], case["quiz"]) is None
+    assert repo.list_current(case["user"], case["quiz"]) == []

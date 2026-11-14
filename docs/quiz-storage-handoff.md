@@ -35,3 +35,9 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 `QuizAnswerRepository.seal(user_id, quiz_id, expected_revisions={item_id: revision, ...}, now=...)`는 모든 현재 항목의 답안과 revision을 검증하고 정렬된 항목/revision/answerHash 집합을 봉인한다. 동일 집합 재호출은 최초 상태를 반환하며 다른 집합은 `QUIZ_FINALIZED`다. 봉인만으로 기존 quiz_sessions.status나 점수/이력을 확정하지 않는다.
 
 `submission`은 소유권을 검증한 내부 저장 상태를 반환한다.
+
+## 최초 결과 저장
+
+`store_result_snapshot(user_id, quiz_id, expected_hash=..., snapshot=..., provenance=..., schema_version=..., now=...)`는 봉인 hash를 확인하고 최초 결과만 저장한다. 신규 세트는 봉인한 답안이 여전히 현재 revision이고 모든 해당 작업이 succeeded일 때만 저장할 수 있다. 미완료면 `AI_FAILED`이며 원문과 봉인은 유지된다. 기존 결과가 있으면 재계산한 다른 내용으로 덮어쓰지 않는다.
+
+legacy의 `expected_hash=None`은 복원 불가능한 입력의 봉인에 한해 그대로 비교하며 provenance는 `legacy_reconstructed`만 허용한다. 신규 세트는 `submitted`만 허용한다. Q-05가 응답 스키마·집계·근거를 검증하고 동일 외부 transaction에서 실제 확정 및 이 스냅샷 저장을 수행해야 한다. 저장소는 AI 호출, API 노출, 집계 반영 또는 legacy 응답 생성 정책을 구현하지 않는다.
