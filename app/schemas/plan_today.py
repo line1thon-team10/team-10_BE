@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, model_validator
 
-Action = Literal['more30', 'postpone']
+Action = Literal['more30', 'rest', 'postpone']
 
 
 class TodayPreview(BaseModel):

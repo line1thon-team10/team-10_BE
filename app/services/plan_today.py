@@ -10,13 +10,16 @@ from sqlalchemy import select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.ranges import PageSpan, subtract, page_count
-from app.domain.scheduling import BusyInterval, Slot, free_slots, half_up
+from app.domain.scheduling import BusyInterval, Slot, free_slots, half_up, POLICY_VERSION, SearchLimit
 from app.repositories.proposals import ProposalRepository, ProposalNotFound, LegacyProposalUnavailable, LegacyResponseUnavailable
 from app.services.onboarding_events import _local, _minute
 from app.services.schedule_placements import free_calendar_slots
 from app.services.plan_draft import _basis, _instant, _fraction, _apply as apply_allocation
 from app.services.proposals import PlanEffect, PreviewDomain, ProposalService
 from app.services.study import StudyData
+from app.services.allocator import allocate
+from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
+from app.services.plan_draft import _present
 
 
 def _apply(conn, context, changes):
@@ -96,10 +99,52 @@ class TodayPlanService:
             sessions=defaultdict(list)
             for row in conn.execute(select(t.study_sessions).where(t.study_sessions.c.user_id==user_id)).mappings():
                 sessions[row['task_id']].append(row)
-            changes,response=self._single(conn,user,data,sessions,today,command)
-            return service.create(user_id,domain=DOMAIN,target=target,snapshot=snapshot,
-                normalized_input=target,changes={**changes,'action':command.action,'timezone':user['timezone']},
-                preview_response=response,proposal_type='today',description='오늘 학습 계획 조정')
+            if command.action!='rest':
+                changes,response=self._single(conn,user,data,sessions,today,command)
+                return service.create(user_id,domain=DOMAIN,target=target,snapshot=snapshot,
+                    normalized_input=target,changes={**changes,'action':command.action,'timezone':user['timezone']},
+                    preview_response=response,proposal_type='today',description='오늘 학습 계획 조정')
+            movable=[task for task in data.tasks_on(today) if _movable(task,sessions)]
+            if not movable: raise ApiError('NO_TASK','옮길 오늘의 미완료 범위가 없어요',400)
+            try:
+                request,supersede,_=existing_allocation_input(conn,user_id,today=today,timezone_name=user['timezone'],
+                    subject_ids=(),affected_subject_ids=tuple(sorted({x.row['subject_id'] for x in movable})),
+                    earliest_day=today+timedelta(days=1),movable_task_ids=tuple(x.id for x in movable))
+            except PendingObligations as error:
+                raise ApiError('OVERDUE_OBLIGATIONS',str(error),409) from None
+            except PlanInputError as error:
+                raise ApiError('INVALID_INPUT',str(error),422) from None
+        # Allocation can search many alternatives; no user/DB lock spans it.
+        try:
+            result=allocate(request)
+        except SearchLimit:
+            raise ApiError('PLAN_SEARCH_LIMIT','계획 탐색 한도에 도달했어요',503) from None
+        if not result.feasible:
+            raise ApiError('PLAN_INFEASIBLE','남은 일정에 오늘 범위를 배치할 수 없어요',409)
+        with self.engine.begin() as conn:
+            service=ProposalService(conn)
+            current=service.capture(user_id,domain=DOMAIN,target=target)
+            if current!=snapshot:
+                raise ApiError('PREVIEW_STALE','계획을 계산하는 동안 입력이 바뀌었어요',409)
+            _,placements=_present(conn,user_id,request,result,False)
+            obligations={task.id:task for task in data.tasks if task.row['task_type'] in ('review','remedial')}
+            for placement in placements:
+                keys={part['requirementId'] for part in placement['parts']}
+                if placement['kind']!='study':
+                    if len(keys)!=1 or not keys<=obligations.keys():
+                        raise ApiError('PLAN_INFEASIBLE','보충 의무의 원본을 보존할 수 없어요',409)
+                    source=obligations[next(iter(keys))]
+                    placement['source']={'taskId':source.id,'blockId':source.row['block_id']}
+            allocation={'schemaVersion':'plan-placements-v1','policy':POLICY_VERSION,'timezone':user['timezone'],
+                'activateSubjectIds':[],'supersedeIds':supersede,'placements':placements}
+            days=defaultdict(int)
+            for placement in placements: days[placement['date']]+=placement['minutes']
+            response={'subjectName':None,'changes':[{'label':'오늘 미완료 태스크','before':str(len(movable)),'after':'남은 일정에 재배분'}],
+                'days':[{'date':day,'text':f'{minutes}분'} for day,minutes in sorted(days.items())],
+                'note':'이미 시작한 태스크와 기록한 범위는 유지해요'}
+            return service.create(user_id,domain=DOMAIN,target=target,snapshot=snapshot,normalized_input=target,
+                changes={'allocation':allocation,'action':'rest','timezone':user['timezone']},
+                preview_response=response,proposal_type='today',description='오늘 미완료 범위 재배분')
 
     def _single(self,conn,user,data,sessions,today,command):
         candidates=[task for task in data.tasks if _movable(task,sessions)
