@@ -140,6 +140,7 @@ class WorkRequirement:
     kind: Literal["remedial", "review"]
     parts: tuple[ScopePart, ...]
     not_before: date | None = None
+    indivisible: bool = False
 
     def __post_init__(self):
         _id(self.id)
@@ -150,6 +151,8 @@ class WorkRequirement:
         if not parts:
             raise ValueError("A page-backed obligation must contain ranges")
         object.__setattr__(self, "parts", parts)
+        if type(self.indivisible) is not bool:
+            raise ValueError("Indivisible must be boolean")
         if self.not_before is not None:
             _date(self.not_before)
 
