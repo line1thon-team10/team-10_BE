@@ -236,7 +236,8 @@ class QuizService:
                 self.conn.execute(update(t.weak_questions).where(t.weak_questions.c.question_id == question_id).values(**values))
             else:
                 self.conn.execute(t.weak_questions.insert().values(question_id=question_id, **values))
-        elif w and w["status"] == "active":
+        elif (w and w["status"] == "active" and w["next_review_date"] is not None
+              and self.today >= w["next_review_date"]):
             step = w["review_step"] + 1
             values = (dict(status="resolved", review_step=2, next_review_date=None, resolved_at=now) if step >= 2 else
                       dict(review_step=step, next_review_date=self.today.fromordinal(self.today.toordinal() + 3)))

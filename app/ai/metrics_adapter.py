@@ -6,7 +6,7 @@ import json
 from app.domain.mastery import ConfirmedAttempt, RecoveryEntry, UnitScope, calculate_mastery
 
 
-KINDS = {"daily": "daily", "extra": "more", "more": "more", "practice": "custom", "custom": "custom", "retry": "retry"}
+KINDS = {"daily": "daily", "extra": "more", "more": "more", "practice": "custom", "custom": "custom", "retry": "retry", "review": "retry"}
 
 
 def _index(rows, label):
