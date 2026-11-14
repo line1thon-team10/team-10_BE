@@ -17,7 +17,7 @@ from app.repositories.proposals import (
     ProposalRepository, canonical_hash,
 )
 from app.services.allocator import allocate
-from app.services.plan_inputs import PlanInputError, initial_allocation_input
+from app.services.plan_inputs import PlanInputError, PendingObligations, initial_allocation_input, existing_allocation_input
 from app.services.proposals import DomainBasis, PlanEffect, PreviewDomain, ProposalService
 
 
@@ -56,6 +56,15 @@ def _basis(conn, context, target):
         'events': _rows(conn, select(t.calendar_events).where(t.calendar_events.c.id.in_(events)).order_by(t.calendar_events.c.id)),
         'exceptions': _rows(conn, select(t.calendar_event_exceptions).where(t.calendar_event_exceptions.c.event_id.in_(events))
                             .order_by(t.calendar_event_exceptions.c.id))}
+    tasks = select(t.study_tasks.c.id).where(t.study_tasks.c.subject_id.in_(subjects))
+    records = select(t.study_records.c.id).where(t.study_records.c.task_id.in_(tasks))
+    data.update({
+        'tasks': _rows(conn, select(t.study_tasks).where(t.study_tasks.c.id.in_(tasks)).order_by(t.study_tasks.c.id)),
+        'taskRanges': _rows(conn, select(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(tasks)).order_by(t.study_task_ranges.c.id)),
+        'records': _rows(conn, select(t.study_records).where(t.study_records.c.id.in_(records)).order_by(t.study_records.c.id)),
+        'recordRanges': _rows(conn, select(t.study_record_ranges).where(t.study_record_ranges.c.record_id.in_(records)).order_by(t.study_record_ranges.c.id)),
+        'sessions': _rows(conn, select(t.study_sessions).where(t.study_sessions.c.user_id == context.user.id).order_by(t.study_sessions.c.id)),
+    })
     digest = canonical_hash(data)
     return DomainBasis({'policy': POLICY_VERSION, 'inputHash': digest},
                        structure_hash=digest if context.plan is None else None)
@@ -77,14 +86,19 @@ def _instant(day, minute, timezone_name):
 def _apply(conn, context, changes):
     if changes.get('schemaVersion') != 'plan-placements-v1' or changes.get('policy') != POLICY_VERSION:
         raise ApiError('PREVIEW_STALE', '계획 후보의 버전이 달라졌어요', 409)
+    if changes.get('supersedeIds'):
+        conn.execute(update(t.study_tasks).where(t.study_tasks.c.id.in_(changes['supersedeIds']),
+            t.study_tasks.c.plan_id == context.plan.id).values(status='carried_over'))
     for task in changes['placements']:
-        block_id = str(uuid4())
+        source = task.get('source')
+        block_id = source['blockId'] if source else str(uuid4())
         parts = task['parts']
         unit_ids = {part['unitId'] for part in parts}
-        conn.execute(t.study_blocks.insert().values(id=block_id, subject_id=task['subjectId'],
-            unit_id=next(iter(unit_ids)) if len(unit_ids) == 1 else None, task_type=task['kind'], created_at=context.now))
+        if source is None:
+            conn.execute(t.study_blocks.insert().values(id=block_id, subject_id=task['subjectId'],
+                unit_id=next(iter(unit_ids)) if len(unit_ids) == 1 else None, task_type=task['kind'], created_at=context.now))
         conn.execute(t.study_tasks.insert().values(id=task['id'], plan_id=context.plan.id, subject_id=task['subjectId'],
-            block_id=block_id, task_type=task['kind'], title=task['title'], scheduled_date=date.fromisoformat(task['date']),
+            block_id=block_id, origin_task_id=source['taskId'] if source else None, task_type=task['kind'], title=task['title'], scheduled_date=date.fromisoformat(task['date']),
             starts_at=_instant(task['date'], task['start'], changes['timezone']),
             ends_at=_instant(task['date'], task['end'], changes['timezone']), estimated_minutes=task['minutes'],
             placement_reason=POLICY_VERSION, status='planned', created_at=context.now))
@@ -99,10 +113,11 @@ def _apply(conn, context, changes):
 
 
 INITIAL_DOMAIN = PreviewDomain(KIND, PlanEffect.CREATE, _basis, _apply)
+ADDITION_DOMAIN = PreviewDomain('draft_subject_addition', PlanEffect.UPDATE, _basis, _apply)
 
 
 def _fresh_ready(service, user_id, snapshot):
-    for candidate in service.repository.ready(user_id, kind=KIND):
+    for candidate in service.repository.ready(user_id, kind=snapshot.kind):
         if candidate['target'] != snapshot.target:
             continue
         try:
@@ -118,6 +133,10 @@ def _present(conn, user_id, request, result, saved):
     unit_ids = [unit.id for unit in request.units]
     units = {row['id']: dict(row) for row in conn.execute(select(t.units).where(t.units.c.id.in_(unit_ids))).mappings()}
     totals, week, placements = defaultdict(int), defaultdict(lambda: defaultdict(int)), []
+    for task in result.fixed:
+        if task.day >= request.start_date:
+            totals[task.day] += half_up(task.minutes)
+            week[task.day][task.subject_id] += half_up(task.minutes)
     for task in result.placements:
         totals[task.day] += task.display_minutes
         week[task.day][task.subject_id] += task.display_minutes
@@ -127,18 +146,20 @@ def _present(conn, user_id, request, result, saved):
             'parts': [{'requirementId': part.requirement_id, 'unitId': part.unit_id, 'materialId': part.span.material_id,
                 'from': part.span.start, 'to': part.span.end, 'baseline': _fraction(part.baseline_minutes_per_page),
                 'multiplier': _fraction(part.difficulty_multiplier)} for part in task.parts]})
+    current_fixed = [task for task in result.fixed if task.day >= request.start_date]
     allocation = []
     for subject in request.subjects:
         row = subjects[subject.id]
         scoped = [unit for unit in request.units if unit.subject_id == subject.id]
         allocation.append({'subjectId': subject.id, 'name': row['name'], 'color': row['color'], 'goalLabel': row['target_grade'],
             'pages': page_count(span for unit in scoped for span in unit.ranges),
-            'tasks': sum(task.subject_id == subject.id for task in result.placements),
+            'tasks': sum(task.subject_id == subject.id for task in (*result.placements, *current_fixed)),
             'units': [{'unitId': unit.id, 'materialId': unit.material_id, 'no': units[unit.id]['sort_order'],
                 'title': units[unit.id]['title'], 'pages': page_count(unit.ranges),
-                'tasks': sum(any(part.unit_id == unit.id for part in task.parts) for task in result.placements)} for unit in scoped]})
+                'tasks': sum(any(part.unit_id == unit.id for part in task.parts) for task in result.placements) +
+                    sum(any(part.unit_id == unit.id for part in task.ranges) for task in current_fixed)} for unit in scoped]})
     response = {'saved': saved, 'today': request.start_date.isoformat(),
-        'summary': {'totalPages': sum(item['pages'] for item in allocation), 'taskCount': len(result.placements),
+        'summary': {'totalPages': sum(item['pages'] for item in allocation), 'taskCount': len(result.placements) + len(current_fixed),
             'dailyAvgMinutes': half_up(Fraction(sum(totals.values()), len(totals))) if totals else 0,
             'daysToFirstExam': (min(subject.exam_date for subject in request.subjects) - request.start_date).days},
         'allocation': allocation,
@@ -156,14 +177,23 @@ class PlanDraftService:
         target = {'draftSubjectIds': sorted(draft_subject_ids) if draft_subject_ids is not None else None}
         with self.engine.begin() as conn:
             service = ProposalService(conn)
-            snapshot = service.capture(user_id, domain=INITIAL_DOMAIN, target=target)
+            existing = conn.scalar(select(t.plans.c.id).where(t.plans.c.user_id == user_id)) is not None
+            domain = ADDITION_DOMAIN if existing else INITIAL_DOMAIN
+            snapshot = service.capture(user_id, domain=domain, target=target)
             ready = _fresh_ready(service, user_id, snapshot)
             if ready is not None:
                 return ready
             try:
-                request = initial_allocation_input(conn, user_id, today=snapshot.base_date,
+                options = dict(today=snapshot.base_date,
                     timezone_name=conn.scalar(select(t.users.c.timezone).where(t.users.c.id == user_id)),
                     subject_ids=tuple(target['draftSubjectIds']) if target['draftSubjectIds'] is not None else None)
+                if existing:
+                    request, supersede, display_request = existing_allocation_input(conn, user_id, **options)
+                else:
+                    request = initial_allocation_input(conn, user_id, **options)
+                    supersede, display_request = [], request
+            except PendingObligations as exc:
+                raise ApiError('OVERDUE_OBLIGATIONS', str(exc), 409) from None
             except PlanInputError as exc:
                 raise ApiError('INVALID_INPUT', str(exc), 422) from None
         try:
@@ -174,18 +204,19 @@ class PlanDraftService:
             raise ApiError('PLAN_INFEASIBLE', ' '.join(reason.message for reason in result.reasons) or '남은 시간에 계획을 배정할 수 없어요', 409)
         with self.engine.begin() as conn:
             service = ProposalService(conn)
-            current = service.capture(user_id, domain=INITIAL_DOMAIN, target=target)
+            current = service.capture(user_id, domain=domain, target=target)
             if current != snapshot:
                 raise ApiError('PREVIEW_STALE', '계획을 계산하는 동안 입력이 바뀌었어요. 다시 요청해 주세요', 409)
             ready = _fresh_ready(service, user_id, snapshot)
             if ready is not None:
                 return ready
-            response, placements = _present(conn, user_id, request, result, saved)
+            response, placements = _present(conn, user_id, display_request, result, saved)
             timezone_name = conn.scalar(select(t.users.c.timezone).where(t.users.c.id == user_id))
-            return service.create(user_id, domain=INITIAL_DOMAIN, target=target, snapshot=snapshot,
+            activate = target['draftSubjectIds'] if existing else [subject.id for subject in request.subjects]
+            return service.create(user_id, domain=domain, target=target, snapshot=snapshot,
                 normalized_input={'target': target, 'basis': snapshot.basis.dependency_versions},
                 changes={'schemaVersion': 'plan-placements-v1', 'policy': POLICY_VERSION, 'timezone': timezone_name,
-                    'activateSubjectIds': [subject.id for subject in request.subjects], 'placements': placements},
+                    'activateSubjectIds': activate, 'placements': placements, 'supersedeIds': supersede},
                 preview_response=response, proposal_type='initial', description='자료·목표·일정에 따른 초기 계획')
 
     def approve(self, user_id, preview_id):
@@ -196,6 +227,7 @@ class PlanDraftService:
                 raise ApiError('NO_PREVIEW', '미리보기를 찾지 못했어요', 404 if error.foreign else 400) from None
             except (LegacyProposalUnavailable, LegacyResponseUnavailable):
                 raise ApiError('PREVIEW_STALE', '과거 후보를 확인할 수 없어요. 새 후보를 요청해 주세요', 409) from None
-            if candidate['kind'] != KIND:
-                raise ApiError('NO_PREVIEW', '초기 계획 후보가 아니에요', 404)
-            return ProposalService(conn).apply(user_id, preview_id, domain=INITIAL_DOMAIN, target=candidate['target'])
+            domains = {INITIAL_DOMAIN.kind: INITIAL_DOMAIN, ADDITION_DOMAIN.kind: ADDITION_DOMAIN}
+            if candidate['kind'] not in domains:
+                raise ApiError('NO_PREVIEW', '초기 계획 또는 과목 추가 후보가 아니에요', 404)
+            return ProposalService(conn).apply(user_id, preview_id, domain=domains[candidate['kind']], target=candidate['target'])
