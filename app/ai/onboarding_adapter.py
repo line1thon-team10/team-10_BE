@@ -9,11 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.ai.gateway import FunctionRef, InvalidOutput, ProviderSpec, canonical_json
 from app.ai.material_adapter import ObservedGroq
 from app.domain.onboarding import GOAL_COLUMNS
+from app.domain.onboarding_goal_evidence import grounded_goal_group
 from app.core.responses import ApiError
 from app.schemas.onboarding_events import EventCreate
 
 MODEL_VERSION = 'openai/gpt-oss-120b'
-PROMPT_VERSION = 'onboarding-explicit-confirmation-v1'
+PROMPT_VERSION = 'onboarding-explicit-confirmation-v2'
 SCHEMA_VERSION = 'onboarding-interpretation-v1'
 PROVIDER = ProviderSpec(FunctionRef(__name__, 'onboarding_provider'))
 VALIDATOR = FunctionRef(__name__, 'validate_onboarding_result')
@@ -107,6 +108,9 @@ def validate_onboarding_result(value, context):
                 raise InvalidOutput('Confirmation needs exact evidence in the current user message')
             if not confirmed and quote is not None:
                 raise InvalidOutput('Unconfirmed fields cannot claim confirmation evidence')
+            if confirmed and not grounded_goal_group(group, quote, values=values, fields=fields,
+                    previous=owned[subject_id], context=context):
+                raise InvalidOutput('Confirmation evidence does not support this goal group')
             if confirmed and group == 'examDate':
                 merged = values['exam_date'] if 'exam_date' in fields else owned[subject_id]['exam_date']
                 if merged is None or date.fromisoformat(merged) <= date.fromisoformat(context['today']):
@@ -144,7 +148,9 @@ def onboarding_provider(call, context):
 현재 소유 draft 과목의 UUID만 사용하고 이름이 모호하면 질문하세요. 없는 과목을 만들지 마세요.
 시험 날짜/목표 학점/시험 총 목표/기타 정보 네 칸은 각자 명시적으로 확인해야 합니다.
 null만 보고 확인 처리하지 마세요. 사용자가 명시한 값만 providedFields에 넣으세요.
-confirmedFields=true에는 이번 발화에서 그대로 인용한 confirmationEvidence가 필요합니다.
+confirmedFields=true에는 그 칸에 대한 이번 발화의 정확한 구절을 confirmationEvidence로 인용하세요.
+다른 칸의 문장을 재사용해 확인하지 마세요. 날짜·학점·점수는 인용과 일치해야 합니다.
+총 목표 없음과 기타 없음은 서로 별개입니다. 직전 질문이 한 칸만 물었을 때만 짧은 없음 답변을 그 칸에 적용하세요.
 불명확한 날짜/시간/목표이면 isConfirmed=false, goals=[], event=null로 질문만 하세요.
 확정 응답은 isConfirmed=true이지만 네 confirmedFields는 각각 별도로 판단합니다.
 A+ 목표 점수90, B+80, 통과60의 정책 매핑은 명시된 목표에만 적용하세요.
