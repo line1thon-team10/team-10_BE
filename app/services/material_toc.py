@@ -7,7 +7,7 @@ from app.ai.material_adapter import MODEL_VERSION, ObservedGroq
 from app.core.responses import ApiError
 from app.repositories.materials import MaterialRepository
 
-LINE = re.compile(r'^\s*(\d+)[.)]\s*(.+?)\s+(?:p(?:age)?\.?\s*)?(\d+)\s*[~\-–]\s*(\d+)\s*(?:쪽|p)?\s*$', re.IGNORECASE)
+LINE = re.compile(r'^\s*(-?\d+)[.)]\s*(.+?)\s+(?:p(?:age)?\.?\s*)?(-?\d+)\s*[~\-–]\s*(-?\d+)\s*(?:쪽|p)?\s*$', re.IGNORECASE)
 VALIDATOR = FunctionRef(__name__, 'validate_toc')
 PROVIDER = ProviderSpec(FunctionRef(__name__, 'toc_provider'))
 
@@ -65,8 +65,12 @@ class MaterialTocService:
         pages = material['page_count']
         if type(pages) is not int or pages < 1:
             raise ApiError('INVALID_INPUT', 'PDF 페이지 수를 먼저 확인해 주세요', 422)
-        if type(text) is not str or not text.strip():
+        if type(text) is not str or not text.strip() or '\x00' in text:
             raise ApiError('INVALID_INPUT', '목차 내용을 입력해 주세요', 422)
+        try:
+            text.encode('utf-8')
+        except UnicodeError:
+            raise ApiError('INVALID_INPUT', '목차 문자열을 확인해 주세요', 422) from None
         matches = [LINE.fullmatch(line) for line in text.splitlines() if line.strip()]
         context = {'pageCount': pages}
         if all(matches):

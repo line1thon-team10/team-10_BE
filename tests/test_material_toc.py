@@ -20,7 +20,7 @@ def test_explicit_toc_is_parsed_without_saving(api_client, material_case, domain
     assert (conn.execute(select(t.materials)).all(), conn.execute(select(t.ai_jobs)).all()) == before
 
 
-@pytest.mark.parametrize('text', ['', '  ', '0. Intro 1~1쪽', '1. Intro 0~1쪽', '1. Intro 1~2쪽',
+@pytest.mark.parametrize('text', ['', '  ', '\x00', '-1. Intro 1~1쪽', '1. Intro -1~1쪽', '0. Intro 1~1쪽', '1. Intro 0~1쪽', '1. Intro 1~2쪽',
                                   '1. Intro 1~1쪽\n1. Duplicate 1~1쪽', '1. Intro 1~1쪽\n2. Overlap 1~1쪽'])
 def test_invalid_toc_ranges_and_empty_text_are_rejected(api_client, material_case, text):
     case = material_case
