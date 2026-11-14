@@ -35,6 +35,21 @@ Table child {
   let output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
   assert.match(output, /ForeignKey\("parent.id", ondelete="CASCADE"\)/);
   assert.match(output, /CheckConstraint\("revision > 0", name="ck_child_revision"\)/);
+  const proposalConfigPath = path.join(fixture, 'schema/proposal-storage-constraints.json');
+  fs.writeFileSync(proposalConfigPath, JSON.stringify({
+    checks: [{ table: 'child', name: 'ck_child_revision_limit', sql: 'revision < 10' }], foreignKeys: {},
+  }));
+  result = generate();
+  assert.equal(result.status, 0, result.stderr);
+  output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
+  assert.match(output, /CheckConstraint\("revision > 0", name="ck_child_revision"\)/);
+  assert.match(output, /CheckConstraint\("revision < 10", name="ck_child_revision_limit"\)/);
+  assert.match(output, /ForeignKey\("parent.id", ondelete="CASCADE"\)/);
+  for (const duplicate of [config, { checks: [], foreignKeys: config.foreignKeys }]) {
+    fs.writeFileSync(proposalConfigPath, JSON.stringify(duplicate));
+    assert.notEqual(generate().status, 0);
+  }
+  fs.unlinkSync(proposalConfigPath);
   fs.unlinkSync(configPath);
   result = generate();
   assert.equal(result.status, 0, result.stderr);
@@ -48,7 +63,7 @@ Table child {
     fs.writeFileSync(configPath, JSON.stringify(invalid));
     assert.notEqual(generate().status, 0);
   }
-  console.log('schema generator: CHECK/CASCADE, backward compatibility and invalid configuration passed');
+  console.log('schema generator: merged CHECK/CASCADE, backward compatibility and invalid configuration passed');
 } finally {
   fs.rmSync(fixture, { recursive: true, force: true });
 }

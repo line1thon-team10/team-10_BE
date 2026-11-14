@@ -1,0 +1,366 @@
+"""Durable preview primitives; callers own the surrounding transaction."""
+import hashlib
+import json
+import math
+import re
+from datetime import date, datetime, timezone
+from dataclasses import dataclass
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+from sqlalchemy import Connection, null, select, update
+
+from app.db import schema as t
+from app.repositories.locking import lock_user
+
+
+class InvalidProposalJSON(ValueError):
+    """The input cannot be stored losslessly in both SQLite and PostgreSQL."""
+
+
+def _json_string(value: str) -> str:
+    if "\x00" in value:
+        raise InvalidProposalJSON("JSON strings and keys must not contain NUL")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidProposalJSON("JSON strings and keys must be valid Unicode") from None
+    return value
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise InvalidProposalJSON("Duplicate JSON object keys are not allowed")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(_value):
+    raise InvalidProposalJSON("JSON numbers must be finite")
+
+
+def canonical_object(value: dict | str) -> dict:
+    """Validate/copy an object, or parse raw JSON before duplicate keys are lost.
+
+    Whitespace within strings and array ordering are preserved. Domain-specific
+    normalization (for example sorting a set of dependency IDs) is the caller's
+    responsibility, not an implicit change to the recorded input.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+        except (json.JSONDecodeError, RecursionError):
+            raise InvalidProposalJSON("A valid JSON object is required") from None
+    if not isinstance(value, dict):
+        raise InvalidProposalJSON("A JSON object is required")
+    active = set()
+
+    def visit(item):
+        if item is None or type(item) in (bool, int):
+            return item
+        if isinstance(item, str):
+            return _json_string(item)
+        if type(item) is float:
+            if not math.isfinite(item):
+                raise InvalidProposalJSON("JSON numbers must be finite")
+            # JSONB reloads integral decimal JSON numbers as int, including -0.
+            # Use the JSON decimal spelling, not int(float)'s binary expansion.
+            if item.is_integer():
+                return int(Decimal(str(item)))
+            return item
+        if isinstance(item, (dict, list)):
+            if id(item) in active:
+                raise InvalidProposalJSON("Circular JSON objects are not allowed")
+            active.add(id(item))
+            try:
+                if isinstance(item, list):
+                    return [visit(child) for child in item]
+                result = {}
+                for key, child in item.items():
+                    if not isinstance(key, str):
+                        raise InvalidProposalJSON("JSON object keys must be strings")
+                    result[_json_string(key)] = visit(child)
+                return result
+            finally:
+                active.remove(id(item))
+        raise InvalidProposalJSON("Only JSON object, array, string, boolean, finite number or null values are allowed")
+
+    try:
+        result = visit(value)
+        # Also reject oversized integers/depth unsupported by the JSON encoder.
+        json.dumps(result, ensure_ascii=False, allow_nan=False)
+        return result
+    except (RecursionError, OverflowError):
+        raise InvalidProposalJSON("JSON nesting or numbers exceed the supported representation") from None
+
+
+def canonical_hash(value: dict | str) -> str:
+    encoded = json.dumps(canonical_object(value), ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class ProposalNotFound(LookupError):
+    def __init__(self, *, foreign=False):
+        super().__init__("The proposal or its owning request was not found")
+        self.foreign = foreign
+
+
+class ProposalConflict(RuntimeError):
+    """Stored ownership, basis or state no longer matches the expected value."""
+
+
+class LegacyProposalUnavailable(ProposalConflict):
+    """A legacy candidate has no complete basis and cannot be executed."""
+
+
+class LegacyResponseUnavailable(LegacyProposalUnavailable):
+    """Application is known, but its original response was never stored."""
+
+
+@dataclass(frozen=True)
+class ProposalTransition:
+    proposal: dict
+    changed: bool
+
+
+def _uuid(value) -> str:
+    try:
+        return str(value if isinstance(value, UUID) else UUID(value))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("A UUID identifier is required") from None
+
+
+def _time(value) -> datetime:
+    if not isinstance(value, datetime) or value.utcoffset() is None:
+        raise ValueError("A timezone-aware timestamp is required")
+    return value.astimezone(timezone.utc)
+
+
+def _positive(value, label):
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{label} must be a positive integer")
+    return value
+
+
+def _hash(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError("A canonical lowercase SHA256 hash is required")
+    return value
+
+
+def _text(value, label, *, nonempty=False):
+    if not isinstance(value, str) or (nonempty and not value.strip()):
+        raise ValueError(f"{label} must be a string" + (" with content" if nonempty else ""))
+    return _json_string(value)
+
+
+def _row(row):
+    return {key: value.replace(tzinfo=timezone.utc) if isinstance(value, datetime) and value.tzinfo is None else value
+            for key, value in dict(row).items()}
+
+
+class ProposalRepository:
+    def __init__(self, connection: Connection):
+        self.connection = connection
+
+    def _lock(self, user_id):
+        if lock_user(self.connection, UUID(user_id)) is None:
+            raise ProposalNotFound()
+
+    def _request(self, user_id, request_id):
+        row = self.connection.execute(select(t.plan_change_requests).where(
+            t.plan_change_requests.c.id == request_id)).mappings().first()
+        if row is None or row["user_id"] != user_id:
+            raise ProposalNotFound(foreign=row is not None)
+        return _row(row)
+
+    @staticmethod
+    def _snapshot_query():
+        request, proposal, state = t.plan_change_requests, t.plan_proposals, t.plan_proposal_states
+        return select(state, request.c.id.label("request_id"), request.c.status.label("request_status"),
+            request.c.accepted_proposal_id, request.c.user_id.label("_request_owner"),
+            request.c.kind.label("_request_kind"), request.c.base_plan_id.label("_request_plan"),
+            request.c.base_plan_revision.label("_request_revision"), proposal.c.proposal_type,
+            proposal.c.description, proposal.c.changes, proposal.c.created_at).select_from(proposal).join(
+                request, request.c.id == proposal.c.request_id).outerjoin(
+                state, state.c.proposal_id == proposal.c.id)
+
+    @staticmethod
+    def _snapshot(user_id, row):
+        if row is None:
+            raise ProposalNotFound()
+        state = _row(row)
+        if state.pop("_request_owner") != user_id:
+            raise ProposalNotFound(foreign=True)
+        request_kind = state.pop("_request_kind")
+        request_basis = (state.pop("_request_plan"), state.pop("_request_revision"))
+        if state["proposal_id"] is None:
+            raise LegacyProposalUnavailable("The candidate predates complete preview metadata")
+        if state["user_id"] != user_id or state["kind"] != request_kind:
+            raise ProposalConflict("Candidate owner or kind does not match its request")
+        if not state["legacy"] and (state["base_plan_id"], state["base_plan_revision"]) != request_basis:
+            raise ProposalConflict("Candidate basis does not match its request")
+        return state
+
+    def get(self, user_id, proposal_id) -> dict:
+        user_id, proposal_id = _uuid(user_id), _uuid(proposal_id)
+        row = self.connection.execute(self._snapshot_query().where(
+            t.plan_proposals.c.id == proposal_id)).mappings().first()
+        return self._snapshot(user_id, row)
+
+    def ready(self, user_id, *, kind: str, input_hash: str | None = None) -> list[dict]:
+        """Read one consistent candidate/request snapshot, without locking it.
+
+        SYS-05 must recheck freshness and selection under its apply lock.
+        """
+        user_id = _uuid(user_id)
+        _text(kind, "kind", nonempty=True)
+        query = self._snapshot_query().where(
+            t.plan_proposal_states.c.user_id == user_id, t.plan_proposal_states.c.kind == kind,
+            t.plan_proposal_states.c.status == "ready", t.plan_change_requests.c.user_id == user_id,
+            t.plan_change_requests.c.kind == kind, t.plan_change_requests.c.status == "ready",
+            t.plan_change_requests.c.accepted_proposal_id.is_(None)).order_by(
+                t.plan_proposals.c.created_at, t.plan_proposals.c.id)
+        if input_hash is not None:
+            query = query.where(t.plan_proposal_states.c.input_hash == _hash(input_hash))
+        return [self._snapshot(user_id, row) for row in self.connection.execute(query).mappings()]
+
+    def result(self, user_id, proposal_id) -> dict:
+        state = self.get(user_id, proposal_id)
+        if state["legacy"]:
+            if state["status"] == "applied":
+                raise LegacyResponseUnavailable("The original applied response is unknown; do not re-execute")
+            raise LegacyProposalUnavailable("Legacy candidates need a newly generated preview")
+        if state["status"] != "applied":
+            raise ProposalConflict("The proposal has no applied result")
+        return state["result_response"]
+
+    def create(self, user_id, *, kind: str, target: dict | str, normalized_input: dict | str,
+               base_date: date, dependency_versions: dict | str, changes: dict | str,
+               preview_response: dict | str, now: datetime, proposal_type: str, description: str,
+               base_plan_id=None, base_plan_revision=None, base_structure_hash=None,
+               request_id=None, request_text=None, proposal_id=None, preview_schema_version=1) -> dict:
+        """Insert one immutable candidate, optionally attaching to an owned ready request.
+
+        No approved plan, task, schedule, goal or request decision is changed.
+        New requests and all candidate rows are protected by one savepoint.
+        """
+        user_id = _uuid(user_id)
+        proposal_id = _uuid(proposal_id) if proposal_id is not None else str(uuid4())
+        request_id = _uuid(request_id) if request_id is not None else None
+        base_plan_id = _uuid(base_plan_id) if base_plan_id is not None else None
+        now = _time(now)
+        _text(kind, "kind", nonempty=True)
+        _text(proposal_type, "proposal_type", nonempty=True)
+        _text(description, "description")
+        if request_text is not None:
+            _text(request_text, "request_text")
+        if type(base_date) is not date:
+            raise ValueError("A base date is required")
+        _positive(preview_schema_version, "preview_schema_version")
+        if base_plan_id is not None:
+            _positive(base_plan_revision, "base_plan_revision")
+            if base_structure_hash is not None:
+                raise ValueError("A planned candidate uses a plan revision, not an initial structure hash")
+        elif base_plan_revision is not None:
+            raise ValueError("A plan revision requires its plan ID")
+        else:
+            _hash(base_structure_hash)
+        target, normalized_input, dependency_versions, changes, preview_response = (
+            canonical_object(item) for item in (target, normalized_input, dependency_versions, changes, preview_response))
+        if not target:
+            raise ValueError("An explicit target is required")
+        input_hash = canonical_hash(normalized_input)
+
+        # SQLite's user UPDATE also starts the real outer transaction before a
+        # SAVEPOINT; releasing it must never commit a caller's uncommitted work.
+        self._lock(user_id)
+        with self.connection.begin_nested():
+            if base_plan_id is not None and self.connection.scalar(select(t.plans.c.id).where(
+                    t.plans.c.id == base_plan_id, t.plans.c.user_id == user_id)) is None:
+                raise ProposalNotFound(foreign=True)
+            if request_id is not None:
+                request = self._request(user_id, request_id)
+                if (request["kind"], request["base_plan_id"], request["base_plan_revision"]) != (
+                        kind, base_plan_id, base_plan_revision):
+                    raise ProposalConflict("Candidate kind or basis does not match its request")
+                if request["status"] != "ready" or request["accepted_proposal_id"] is not None:
+                    raise ProposalConflict("A candidate can only join a ready, unselected request")
+            else:
+                request_id = str(uuid4())
+                self.connection.execute(t.plan_change_requests.insert().values(
+                    id=request_id, user_id=user_id, kind=kind, status="ready", base_plan_id=base_plan_id,
+                    base_plan_revision=base_plan_revision, input_payload=normalized_input, request_text=request_text,
+                    created_at=now, updated_at=now))
+            self.connection.execute(t.plan_proposals.insert().values(
+                id=proposal_id, request_id=request_id, proposal_type=proposal_type, description=description,
+                changes=changes, created_at=now))
+            self.connection.execute(t.plan_proposal_states.insert().values(
+                proposal_id=proposal_id, user_id=user_id, kind=kind, target=target, normalized_input=normalized_input,
+                input_hash=input_hash, base_date=base_date, base_plan_id=base_plan_id,
+                base_plan_revision=base_plan_revision, base_structure_hash=base_structure_hash,
+                dependency_versions=dependency_versions, status="ready", state_revision=0,
+                preview_response=preview_response, preview_schema_version=preview_schema_version,
+                result_response=null(), result_schema_version=None, result_captured_at=None, decided_at=None,
+                legacy=False, legacy_snapshot=null()))
+            return self.get(user_id, proposal_id)
+
+    def mark_applied(self, user_id, proposal_id, *, expected_revision: int, response: dict | str,
+                     now: datetime, schema_version: int = 1) -> ProposalTransition:
+        """Record the first success alongside the caller's domain writes.
+
+        SYS-05 must validate live bases and execute the saved changes within the
+        same outer transaction. This method never increments plans.revision.
+        """
+        response = canonical_object(response)
+        _positive(schema_version, "schema_version")
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="applied", now=now,
+                            response=response, schema_version=schema_version)
+
+    def cancel(self, user_id, proposal_id, *, expected_revision: int, now: datetime) -> ProposalTransition:
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="cancelled", now=now)
+
+    def mark_stale(self, user_id, proposal_id, *, expected_revision: int, now: datetime) -> ProposalTransition:
+        """Persist a caller's stale decision without inspecting domain tables."""
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="stale", now=now)
+
+    def _finish(self, user_id, proposal_id, *, expected_revision, status, now,
+                response=None, schema_version=None) -> ProposalTransition:
+        user_id, proposal_id, now = _uuid(user_id), _uuid(proposal_id), _time(now)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        self._lock(user_id)
+        with self.connection.begin_nested():
+            state = self.get(user_id, proposal_id)
+            if state["legacy"]:
+                if state["status"] == "applied":
+                    raise LegacyResponseUnavailable("The legacy success has no replayable original response")
+                raise LegacyProposalUnavailable("Legacy candidates cannot be executed or relabelled")
+            if state["status"] == "applied" and status == "applied":
+                if state["request_status"] != "accepted" or state["accepted_proposal_id"] != proposal_id:
+                    raise ProposalConflict("The accepted request no longer matches this result")
+                return ProposalTransition(state, changed=False)
+            if state["status"] != "ready" or state["state_revision"] != expected_revision:
+                raise ProposalConflict("The candidate state revision has changed")
+            if now < state["created_at"]:
+                raise ValueError("A decision must not precede candidate creation")
+            values = dict(status=status, state_revision=expected_revision + 1, decided_at=now)
+            if status == "applied":
+                selected = self.connection.execute(update(t.plan_change_requests).where(
+                    t.plan_change_requests.c.id == state["request_id"], t.plan_change_requests.c.user_id == user_id,
+                    t.plan_change_requests.c.kind == state["kind"], t.plan_change_requests.c.status == "ready",
+                    t.plan_change_requests.c.accepted_proposal_id.is_(None)).values(
+                        status="accepted", accepted_proposal_id=proposal_id, decided_at=now, updated_at=now))
+                if selected.rowcount != 1:
+                    raise ProposalConflict("Another candidate or request decision has already won")
+                values.update(result_response=response, result_schema_version=schema_version, result_captured_at=now)
+            changed = self.connection.execute(update(t.plan_proposal_states).where(
+                t.plan_proposal_states.c.proposal_id == proposal_id, t.plan_proposal_states.c.user_id == user_id,
+                t.plan_proposal_states.c.kind == state["kind"], t.plan_proposal_states.c.status == "ready",
+                t.plan_proposal_states.c.state_revision == expected_revision).values(**values))
+            if changed.rowcount != 1:
+                raise ProposalConflict("The candidate compare-and-set failed")
+            return ProposalTransition(self.get(user_id, proposal_id), changed=True)
