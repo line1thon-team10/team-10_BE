@@ -26,7 +26,7 @@
 - questionId는 원본 문항 ID가 아니라 **현재 quiz의 문항 항목 ID**(BE quizItemId)다. GET questions[].id, answers[].questionId, 결과 items[].questionId가 모두 같은 항목 ID를 사용한다. 원본 문항의 반복 출제 이력을 섞지 않는다.
 - header X-Anonymous-Id, body {choice:integer|null,text:string|null,confidence:sure|unsure,revision:integer}. 최초 revision=0, 이후 서버가 반환한 revision 사용.
 - 200 data:{quizId,questionId,saved:true,revision:integer}. 점수·정답·해설·채점 상태는 반환하지 않는다. 이전 BE 초안의 gradingStatus 노출도 철회한다. 저장 후 다음 문제로 진행 가능.
-- 문항별 답안 저장을 먼저 커밋한 뒤 서술형 채점 작업을 큐에 넣는다. 마지막 submit은 저장된 전체 답안을 봉인하고 채점 완료분을 재사용한다. 기존 answers bulk도 호환 입력으로 검증/저장하되 동일 attempt를 중복 생성하지 않는다.
+- 문항별 답안과 내구성 있는 채점 작업 접수를 같은 트랜잭션에 저장해 커밋하고, 외부 AI는 커밋 후에 실행한다. 이전 문구의 답안 커밋과 큐 접수 사이에 서버가 종료되면 작업을 잃을 수 있어 원자 저장으로 보완했다. 마지막 submit은 저장된 전체 답안을 봉인하고 채점 완료분을 재사용한다. 기존 answers bulk도 호환 입력으로 검증/저장하되 동일 attempt를 중복 생성하지 않는다.
 - 같은 revision+동일 입력 재전송은 같은 응답; 같은 revision+다른 입력은409 ANSWER_CONFLICT. 새 답안을 허용하는 미제출 상태에서는 이전 채점 작업의 answer revision을 무효화해 오래된 결과가 덮어쓰지 못하게 한다. 제출 완료 후 변경은409 QUIZ_FINALIZED.
 - GET 문항 응답에 quizId와 savedAnswers:[{questionId,choice,text,confidence,revision}]를 추가한다. 새로고침 후 풀이 복구. 정확한 정답/채점 결과는 완료된 결과 조회에만 공개한다.
 - AI 실패는 답 저장 성공 자체를 취소하지 않는다. 마지막 submit의503 AI_FAILED 및 재시도 규칙 유지. 문제 진행 API와 최종 결과 API를 구별한다.
