@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
 
-from app.core.clock import today_for
+from app.core.clock import now_utc, today_for
 from app.db import schema as t
 from app.domain.scheduling import BusyInterval, Slot, free_slots
 from app.repositories.events import EventRepository
@@ -28,11 +28,14 @@ def clock_text(value):
 
 def free_calendar_slots(conn, user, requested_slots, *, ignore_task_ids=()):
     """Intersect supplied gaps with actual active calendar/task availability."""
-    today = today_for(user)
+    instant = _local(now_utc(), ZoneInfo(user['timezone']))
+    today = user.get('demo_date') or instant.date()
     requested = []
     for value in requested_slots:
         slot = value if isinstance(value, Slot) else Slot(date.fromisoformat(value['date']),
             clock_minute(value['start']), clock_minute(value['end']))
+        if user.get('demo_date') is None and slot.day == today:
+            slot = Slot(slot.day,max(slot.start,_minute(instant)),slot.end)
         if slot.day >= today and slot.start < slot.end:
             requested.append(slot)
     if not requested:
