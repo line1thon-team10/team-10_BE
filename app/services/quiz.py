@@ -59,8 +59,10 @@ class QuizService:
 
     def items(self, session_id: str) -> list[dict]:
         rows = self.conn.execute(
-            select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.sort_order, t.quiz_items.c.inclusion_reason,
-                   t.questions, t.quiz_attempts.c.id.label("attempt_id"), t.quiz_attempts.c.answer,
+            select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.question_id,
+                   t.quiz_items.c.sort_order, t.quiz_items.c.inclusion_reason,
+                   *(column for column in t.questions.c if column.name != "id"),
+                   t.quiz_attempts.c.id.label("attempt_id"), t.quiz_attempts.c.answer,
                    t.quiz_attempts.c.confidence, t.quiz_attempts.c.is_correct, t.quiz_attempts.c.essay_score,
                    t.quiz_attempts.c.got_points, t.quiz_attempts.c.missing_points,
                    t.quiz_attempts.c.grading_status)
@@ -71,10 +73,10 @@ class QuizService:
         if out:
             srcs = {}
             for r in self.conn.execute(select(t.question_sources).where(
-                    t.question_sources.c.question_id.in_([x["id"] for x in out]))).mappings():
+                    t.question_sources.c.question_id.in_([x["question_id"] for x in out]))).mappings():
                 srcs.setdefault(r["question_id"], dict(r))
             for x in out:
-                x["source"] = srcs.get(x["id"])
+                x["source"] = srcs.get(x["question_id"])
         return out
 
     # ---------- 구성 ----------
@@ -182,7 +184,7 @@ class QuizService:
         qtype = "choice" if x["type"] in ("choice", "ox") else x["type"]  # 화면은 OX도 객관식 모양
         u = self.data.units.get(x["unit_id"])
         src = x.get("source")
-        return {"id": x["id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
+        return {"id": x["item_id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
                 "unitNo": unit_no(u["code"]) if u else None,
                 "page": f"p.{src['start_page']}" if src else None, "prompt": x["prompt"],
                 "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
@@ -207,7 +209,7 @@ class QuizService:
         src = q.get("source") or {}
         try:
             r = ai.module("essay_grader").grade_essay(
-                {"id": q["code"] or q["id"], "question": q["prompt"], "answer": q["correct_answer"],
+                {"id": q["code"] or q["question_id"], "question": q["prompt"], "answer": q["correct_answer"],
                  "page": src.get("start_page") or 1, "source_text": src.get("quote") or ""}, text)
             return r["score"], r["strengths"], r["missing_points"], "graded"
         except Exception:  # noqa: BLE001 — AI 실패·키 없음은 저장된 채점으로 (NF-10)
@@ -220,13 +222,13 @@ class QuizService:
         if session["status"] == "submitted":
             raise ApiError("QUIZ_FINALIZED", "이미 제출한 퀴즈예요", 409)
         items = self.items(session["id"])
-        by_q = {a["questionId"]: a for a in answers}
-        if any(not by_q.get(x["id"], {}).get("confidence") for x in items):
+        by_item = {a["questionId"]: a for a in answers}
+        if any(not by_item.get(x["item_id"], {}).get("confidence") for x in items):
             raise ApiError("CONFIDENCE_REQUIRED", "모든 문항에 확실/애매를 골라 주세요")
         now = _now()
         fallback = False
         for x in items:
-            a = by_q[x["id"]]
+            a = by_item[x["item_id"]]
             score, good, miss, status = None, None, None, "graded"
             if x["type"] in ("choice", "ox"):
                 idx = a.get("choice")
@@ -244,7 +246,7 @@ class QuizService:
                 id=str(uuid.uuid4()), quiz_item_id=x["item_id"], answer=answer, confidence=a["confidence"],
                 is_correct=correct, grading_status=status, essay_score=score, got_points=good, missing_points=miss,
                 answered_at=now, answered_date=self.today, finalized_at=now, graded_at=now, mastery_applied_at=now))
-            self._update_weak(x["id"], correct and a["confidence"] == "sure", now)
+            self._update_weak(x["question_id"], correct and a["confidence"] == "sure", now)
         self.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == session["id"]).values(
             status="submitted", current_position=len(items), grading_status="completed", is_fallback=fallback,
             submitted_at=now, finalized_at=now, graded_at=now))
@@ -326,7 +328,7 @@ class QuizService:
             src = x.get("source")
             essay = x["type"] == "essay"
             out_items.append({
-                "questionId": x["id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
                 "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
                 "confidence": x["confidence"], "correct": bool(x["is_correct"]),
