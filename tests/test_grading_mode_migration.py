@@ -50,7 +50,7 @@ def test_mode_upgrade_preserves_existing_jobs_answers_and_results_with_live_defa
         assert after == before
         assert [dict(row) for row in conn.execute(sa.select(t.quiz_answers).order_by(t.quiz_answers.c.id)).mappings()] == answers
         assert compare_metadata(MigrationContext.configure(conn, opts={"compare_server_default": True}), t.metadata) == []
-        assert ScriptDirectory.from_config(config).get_heads() == ["0008_grading_execution_mode"]
+        assert MigrationContext.configure(conn).get_current_heads() == tuple(ScriptDirectory.from_config(config).get_heads())
         conn.commit()
         command.downgrade(config, "0007_preview_storage")
         assert "execution_mode" not in {column["name"] for column in sa.inspect(conn).get_columns("quiz_grading_jobs")}
