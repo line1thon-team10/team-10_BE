@@ -81,16 +81,19 @@ class QuizAnswerRepository:
     def items(self, user_id, quiz_id) -> list[dict]:
         quiz = self.quiz(user_id, quiz_id)
         rows = self.connection.execute(select(t.quiz_items, t.questions.c.type, t.questions.c.choices,
-            t.questions.c.unit_id, t.units.c.material_id, t.materials.c.subject_id,
+            t.questions.c.unit_id, t.questions.c.concept_id, t.concepts.c.unit_id.label("concept_unit_id"),
+            t.units.c.material_id, t.materials.c.subject_id,
             t.subjects.c.user_id.label("question_owner"))
             .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
             .join(t.units, t.questions.c.unit_id == t.units.c.id)
             .join(t.materials, t.units.c.material_id == t.materials.c.id)
             .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+            .outerjoin(t.concepts, t.questions.c.concept_id == t.concepts.c.id)
             .where(t.quiz_items.c.quiz_session_id == quiz["id"])
             .order_by(t.quiz_items.c.sort_order, t.quiz_items.c.id)).mappings().all()
         if any(row["question_owner"] != quiz["user_id"] or (
-                quiz["subject_id"] is not None and row["subject_id"] != quiz["subject_id"]) for row in rows):
+                quiz["subject_id"] is not None and row["subject_id"] != quiz["subject_id"]) or (
+                row["concept_id"] is not None and row["concept_unit_id"] != row["unit_id"]) for row in rows):
             raise ApiError("NO_QUIZ", "퀴즈 문항을 확인하지 못했어요", 404)
         return [dict(row) for row in rows]
 
