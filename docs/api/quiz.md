@@ -4,6 +4,7 @@
 
 - 경로 subjectId는 사용자 과목 ID 또는 custom/more quiz ID. 응답에 quizId:string을 추가해 제출 대상을 명시한다. POST submit의 quizId는 필수이며 FE는 GET에서 받은 값을 전달한다. 과목 경로와 quizId 소유 과목 불일치는 404 NO_QUIZ.
 - daily 퀴즈는 출제 가능한 오늘 페이지 진행률이 전체 또는 해당 과목 70% 이상일 때 열림. 분모 0이면 닫힘. 잠긴 GET/submit은 403 QUIZ_LOCKED. 결과 재조회는 열림 조건과 무관.
+- 이 진행률은 현재 유효한 오늘 배치의 quiz_enabled 시험 범위를 자료별 합집합으로 계산한다. 오늘 해당 배치의 실제 완료 근거만 교차하며 과거·미래·제외·이월된 다른 배치는 섞지 않는다. 같은 페이지의 새 학습100쪽 미완료+보충100쪽 완료는 홈 달성률50%, 퀴즈 진행률100%다. 표시 HALF_UP과 원시 70% 판정은 별개다.
 - **QZ-01·06·07·09, 원문 pp.10,18:** 완료/부분 완료 페이지까지만 출제. 평일은 전날 취약 문항, 토요일은 월~금 오답, 일요일은 토요일 재풀이 중 재오답+토요일 새 범위 오답. 퀴즈 없는 날 취약 문항은 다음 과목 퀴즈로 넘긴다. 미풀이 문항은 다음날 퀴즈에 합친다.
 - 1회독은 low 고정,2회독 이후는 사용자가 low/mid/high 선택. GET 문항 요청은 difficulty=low|mid|high를 받는다. 2회독 이상에서 새 세트를 만들 때 필수(누락422 INVALID_INPUT), 1회독은 low로 강제한다. 기존 세트는 quizId로 재조회하며 기존 세트와 다른 난이도 요청은409 QUIZ_DIFFICULTY_CONFLICT로 거절한다. AI가 임의 선택하거나 진행 답안을 덮어쓰지 않는다.
 - GET 문항에는 정답·해설·근거 페이지/인용을 반환하지 않는다. choice/ox는 화면 type=choice와 options:string[]. choice는 0 기반이며 범위 밖은 422 INVALID_INPUT. short/essay는 text:string; 답을 비워 제출할 때는 빈 문자열을 명시한다.
