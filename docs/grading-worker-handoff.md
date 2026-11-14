@@ -53,6 +53,16 @@ GradingJobRepository(connection).enqueue(
 
 `GradingRun.state`는 `SUCCEEDED/FAILED/STALE/NOT_CLAIMED/MODE_CONFLICT/BUDGET_EXHAUSTED/IDLE`의 내부 enum이다. 특히 mode conflict를 공개 `AI_FAILED`로 미리 고정하지 않았다. Q-05가 기존 제출 API의 처리 중/재시도 응답과 연결한다. 내부 enum과 provenance를 FE에 그대로 노출할 필요는 없다.
 
+### 부적격 퀴즈가 뒤 작업을 가리지 않는 탐색
+
+`pending(now=..., limit=100, after=(created_at, id))`는 현재 답안에 대응하는 queued/expired-running 후보 한 페이지를 반환한다. 페이지 상한은 그대로이며 반환 행에는 탐색용 created_at/quiz_session_id가 추가된다. 개별 후보의 자료 소유권만으로 전체 퀴즈의 적격성을 추정하지 않는다. `run_next()`는 claim도 사용하는 `QuizAnswerRepository.items()`의 전체 퀴즈 검증을 먼저 수행하고, 같은 탐색에서 퀴즈별 검증 결과를 캐시한다. 따라서 Q-03의 concept 동일-unit 검증을 포함해 공유 소유권 규칙이 강화되면 polling에도 적용된다. claim은 잠금 아래에서 다시 검증한다.
+
+손상된 형제 문항 때문에 부적격인 퀴즈는 건너뛰고 `(created_at, id)` keyset으로 다음 페이지까지 탐색한다. 선두 손상 작업 100개가 뒤의 정상 사용자 작업을 영구히 가리지 않는다. 이 과정은 잘못된 job을 삭제하거나 failed로 전환하지 않으며 답안·lease·execution_mode도 바꾸지 않는다. 예상된 NO_QUIZ만 부적격으로 다루고 예상 밖 DB/검증 오류는 숨기지 않는다.
+
+`run_next()` 시작 시 만든 절대 GradingBudget을 탐색과 실제 run_job에 공유한다. 각 페이지 조회·전체 퀴즈 검증·선점 전에 잔여 시간과 종료 신호를 확인한다. 예산이 끝나면 BUDGET_EXHAUSTED를 반환하며 새 채점을 시작하지 않는다. 마지막으로 처리하거나 제외한 cursor는 같은 worker 인스턴스의 다음 polling에서 이어간다. 아직 선점하지 못한 정상 후보는 cursor 뒤에 남긴다. 큐 끝에서는 한 번 순환하여 앞쪽에 새로 생긴 작업도 찾는다.
+
+cursor는 DB에 저장하는 작업 상태가 아닌 loop 프로세스의 탐색 위치다. worker 재시작이나 매번 새로운 `--once` 프로세스에서는 처음부터 다시 검사하며, 영속 job/mode에는 영향이 없다. deadline 검사는 이미 실행 중인 SQL 자체를 강제 취소하는 DB statement timeout을 대체하지 않는다. SQL이 반환한 뒤에는 남은 예산 없이 후속 탐색·선점·외부 요청을 시작하지 않는다.
+
 ## 제출 전체 시간 예산
 
 Q-05는 한 제출에 `GradingBudget.start()`를 한 번 만들고 모든 문항에 같은 인스턴스를 전달한다. 기본은 20초이며 환경 설정도 공통 AI 예산 제한을 따른다.
@@ -105,12 +115,14 @@ Compose의 grading-worker는 API와 같은 고정 BE_IMAGE, runtime 환경, 저�
 
 SQLite와 PostgreSQL에서 원자 claim/소유권, 중복 worker, crash/만료 lease, 변경 답안·문항·근거·자료, rollback, SQL NULL, saved/backup mode CAS, legacy provenance, strict 결과와 경계를 검증한다. 실제 CLI subprocess로 SIGTERM/SIGINT 뒤 provider child 소멸, CleanupFailed nonzero, expired saved/backup 재시작의 외부 0회 및 실패 자동 재시도 없음도 확인한다. 배포 테스트는 mock Docker와 실제 shell/Python probe로 수행한다.
 
+독립 검토의 손상 퀴즈 starvation 재현 파일은 변경 없이 두 DB에서 2 passed로 재확인했다. 추가 polling 검증은 전체 퀴즈 검사 캐시, 같은 created_at의 ID 순서, 페이지 진행, stop/예산 소진 뒤 재개, 미선점 정상 후보 보존, cursor 순환을 포함한다. 보정 후 polling·worker·mode·CLI·채점 저장소·Q-02 저장소 회귀는 361 passed였으며 실제 외부 AI를 호출하지 않았다.
+
 재현 명령은 다음과 같다. PostgreSQL URL은 운영 DB가 아닌 전용 로컬 테스트 DB를 사용한다.
 
 ```sh
 TEST_POSTGRES_URL=postgresql+psycopg://postgres:team10-local-test@127.0.0.1:54511/team10_test \
   .venv/bin/python -m pytest -q \
-  tests/test_grading_repository.py tests/test_grading_adapter.py tests/test_grading_worker.py \
+  tests/test_grading_repository.py tests/test_grading_adapter.py tests/test_grading_worker.py tests/test_grading_polling.py \
   tests/test_grading_modes.py tests/test_grading_mode_migration.py tests/test_grading_worker_cli.py \
   tests/test_quiz_storage.py tests/test_quiz_storage_migration.py tests/test_ai_gateway.py \
   tests/test_ai_dependency.py tests/test_essay_failure.py tests/test_proposal_storage_migration.py \
