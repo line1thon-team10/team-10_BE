@@ -11,7 +11,6 @@ from app.domain.onboarding import subject_view
 from app.domain.ranges import normalize, page_count
 from app.repositories.locking import UserBusyError, lock_user
 from app.services.study import StudyData
-from app.services.task_views import unit_no
 
 
 COLORS = ('#7974E8', '#ED986A', '#5BAA95', '#639FC7', '#CA7EAF', '#B39A56')
@@ -50,7 +49,7 @@ class SubjectService:
             units = sorted((u for u in data.units.values() if u['material_id'] == row['id']),
                            key=lambda u: (u['sort_order'], u['id']))
             materials[row['subject_id']].append({'id': row['id'], 'name': row['original_name'],
-                'pages': row['page_count'], 'toc': [{'unitId': u['id'], 'no': unit_no(u['code']),
+                'pages': row['page_count'], 'toc': [{'unitId': u['id'], 'no': u['sort_order'],
                     'title': u['title'], 'from': u['start_page'], 'to': u['end_page']} for u in units]})
         cards = []
         for subject in data.subjects:
