@@ -365,6 +365,21 @@ class QuizService:
                 daily_increase_limit=r.daily_increase_limit, created_at=now))
 
     # ---------- 결과 ----------
+    def _result_evidence(self, source):
+        if source is None:
+            return None
+        material = self.conn.execute(select(t.materials).join(t.subjects,
+            t.materials.c.subject_id == t.subjects.c.id).where(t.materials.c.id == source["material_id"],
+                t.subjects.c.user_id == self.user["id"])).mappings().first()
+        start, end, quote = source["start_page"], source["end_page"], source["quote"]
+        if (material is None or type(material["page_count"]) is not int
+                or type(start) is not int or type(end) is not int
+                or not 1 <= start <= end <= material["page_count"] or type(quote) is not str or not quote.strip()):
+            return None
+        # No writer/version currently establishes the shape of highlight JSON.
+        # Keep verified citation navigation without inventing rectangle geometry.
+        return {"materialId": material["id"], "page": start, "quote": quote, "rects": []}
+
     def result_view(self, session: dict, *, seen=frozenset()) -> dict:
         repo = QuizAnswerRepository(self.conn)
         repo.items(self.user["id"], session["id"])
@@ -391,19 +406,19 @@ class QuizService:
         out_items = []
         for i, x in enumerate(items):
             src = x.get("source")
+            evidence = self._result_evidence(src)
             essay = x["type"] == "essay"
             out_items.append({
                 "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(units[x["unit_id"]]["code"]),
                 "materialId": x["material_id"], "unitId": x["unit_id"],
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
-                "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
+                "prompt": x["prompt"], "page": f"p.{evidence['page']}" if evidence else None,
                 "confidence": x["confidence"], "correct": bool(x["is_correct"]),
                 "score": x["essay_score"] if essay else None,
                 "feedback": {"good": " ".join(x["got_points"] or []), "miss": " ".join(x["missing_points"] or [])}
                 if essay else None,
                 "answer": x["correct_answer"], "explanation": x["explanation"],
-                "evidence": {"materialId": src["material_id"], "page": src["start_page"], "quote": src["quote"]}
-                if src else None,
+                "evidence": evidence,
             })
         hist = self.conn.execute(select(t.mastery_history).where(
             t.mastery_history.c.quiz_session_id == session["id"])).mappings().all()
