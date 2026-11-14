@@ -92,6 +92,10 @@ def snapshot_for_task(task, tasks, snapshots, at):
         available = [value for decided, value in snapshots.get(original.id, []) if decided <= aware(at)]
         if available:
             source = available[-1]
+            try:
+                task_factors(original, source)
+            except (ValueError, KeyError, TypeError, ZeroDivisionError):
+                return None
             if original.id == task.id:
                 return source
             parts=[]
