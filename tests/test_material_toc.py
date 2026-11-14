@@ -27,7 +27,8 @@ def test_invalid_toc_ranges_and_empty_text_are_rejected(api_client, material_cas
     accepted = upload(api_client, case, pdf_bytes()).json()['data']
     result = api_client.post('/api/materials/toc', headers=case['headers'], json={
         'subjectId': case['subject'], 'materialId': accepted['materialId'], 'text': text})
-    assert result.status_code == 422, result.text
+    assert result.status_code == (422 if text.strip() else 400), result.text
+    assert result.json()['error']['code'] == ('INVALID_INPUT' if text.strip() else 'EMPTY')
 
 
 def test_toc_ownership_and_subject_match(api_client, material_case):
