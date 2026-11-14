@@ -17,10 +17,31 @@ _CLOCK = re.compile(
     r'|(?<![\d:열물])(?P<hour>\d{1,2}|열두|열한|다섯|여섯|일곱|여덟|아홉|한|두|세|네|열)\s*시'
     r'(?:\s*(?:(?P<minute>\d{1,2})\s*분|(?P<half>반)))?'
     r'|(?P<noon>정오)|(?P<midnight>자정))')
+_NON_CREATION = re.compile(
+    r'취소|삭제|지워|지우|제외|보류|미정|않|아니|아닌|'
+    r'없(?:어|다|음|는|으|을|었|습)|'
+    r'안\s*(?:해|하|할|잡|넣|추가|등록|저장|만들)|'
+    r'(?:하지|하지는|넣지|잡지|만들지)\s*(?:마|말)|'
+    r'(?:추가|등록|저장)\s*(?:금지|말고|말아)|빼\s*줘')
+_CREATE_REQUEST = re.compile(r'추가|등록|저장|넣어|넣으|잡아|잡으|만들어|만드[는시]')
+_EVENT_DESCRIPTION = re.compile(r'수업|약속|회의|근무|알바|점심|운동|병원|식사|모임|상담|면접|여행|출근|퇴근')
+
+
+def _creation_intent(text, event):
+    # An add endpoint may accept a definite event description, but never turn
+    # cancellation, negation, a hypothetical, or coordinates alone into an add.
+    if _NON_CREATION.search(text) or re.search(r'(?:있으|없으|되|하|가능하|된다|맞으)면|할까|될까', text):
+        _fail()
+    explicit_request = _CREATE_REQUEST.search(text) is not None
+    if not explicit_request and re.search(r'\?|할까|될까|가능|어때|있나|인지|확인|알려', text):
+        _fail()
+    stated_title = len(event.title.strip()) >= 2 and event.title.strip() in text
+    if not explicit_request and not _EVENT_DESCRIPTION.search(text) and not stated_title:
+        _fail()
 
 
 def _fail():
-    raise ApiError('PARSE_FAILED', '날짜·요일과 시작·종료 시각을 정확히 알려 주세요', 400)
+    raise ApiError('PARSE_FAILED', '추가할 일정과 날짜·요일, 시작·종료 시각을 명확히 알려 주세요', 400)
 
 
 def _dates(text, today):
@@ -62,6 +83,7 @@ def _clocks(text):
 
 def validate_voice_evidence(text, event, *, today):
     """Reject inferred or contradictory coordinates before creating any event."""
+    _creation_intent(text, event)
     if isinstance(today, str):
         today = date.fromisoformat(today)
     dates = _dates(text, today)
