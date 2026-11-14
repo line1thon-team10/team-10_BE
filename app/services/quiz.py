@@ -209,6 +209,26 @@ class QuizService:
         }
 
     # ---------- 채점 ----------
+    def _validated_answers(self, items: list[dict], answers: list[dict]) -> dict[str, dict]:
+        """전체 답안의 항목·타입을 확인한 뒤에만 채점과 저장을 시작한다."""
+        by_item = {answer["questionId"]: answer for answer in answers}
+        if len(by_item) != len(answers) or set(by_item) != {item["item_id"] for item in items}:
+            raise ApiError("INVALID_INPUT", "현재 퀴즈의 모든 문항을 정확히 한 번씩 제출해 주세요", 422)
+        if any(answer.get("confidence") is None for answer in answers):
+            raise ApiError("CONFIDENCE_REQUIRED", "모든 문항에 확실/애매를 골라 주세요")
+        for item in items:
+            answer = by_item[item["item_id"]]
+            if answer["confidence"] not in CONF_KO:
+                raise ApiError("INVALID_INPUT", "확신도는 확실/애매 중에서 골라 주세요", 422)
+            if item["type"] in ("choice", "ox"):
+                choice = answer.get("choice")
+                if (type(choice) is not int or not 0 <= choice < len(item["choices"] or [])
+                        or answer.get("text") is not None):
+                    raise ApiError("INVALID_INPUT", "객관식 답은 유효한 보기 번호로 제출해 주세요", 422)
+            elif not isinstance(answer.get("text"), str) or answer.get("choice") is not None:
+                raise ApiError("INVALID_INPUT", "단답·서술형 답은 문자열로 제출해 주세요", 422)
+        return by_item
+
     def _grade_essay(self, q: dict, text: str):
         if not text.strip():
             return 0, [], ["답안을 입력하지 않았어요."], "graded"
@@ -228,23 +248,20 @@ class QuizService:
         if session["status"] == "submitted":
             raise ApiError("QUIZ_FINALIZED", "이미 제출한 퀴즈예요", 409)
         items = self.items(session["id"])
-        by_item = {a["questionId"]: a for a in answers}
-        if any(not by_item.get(x["item_id"], {}).get("confidence") for x in items):
-            raise ApiError("CONFIDENCE_REQUIRED", "모든 문항에 확실/애매를 골라 주세요")
+        by_item = self._validated_answers(items, answers)
         now = _now()
         fallback = False
         for x in items:
             a = by_item[x["item_id"]]
             score, good, miss, status = None, None, None, "graded"
             if x["type"] in ("choice", "ox"):
-                idx = a.get("choice")
-                picked = x["choices"][idx]["text"] if isinstance(idx, int) and 0 <= idx < len(x["choices"] or []) else None
+                picked = x["choices"][a["choice"]]["text"]
                 answer, correct = str(picked or ""), _norm(picked) == _norm(x["correct_answer"])
             elif x["type"] == "short":
-                answer = a.get("text") or ""
+                answer = a["text"]
                 correct = bool(answer.strip()) and _norm(answer) == _norm(x["correct_answer"])
             else:
-                answer = a.get("text") or ""
+                answer = a["text"]
                 score, good, miss, status = self._grade_essay(x, answer)
                 correct = score >= 85
                 fallback = fallback or status == "fallback"

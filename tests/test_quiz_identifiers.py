@@ -1,10 +1,13 @@
+from copy import deepcopy
 from datetime import date, datetime, timezone
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select, update
 
 from app.db import schema as t
+from app.services.quiz import QuizService
 
 
 def create_quiz(conn, user_id, subject_id, question_ids):
@@ -211,6 +214,210 @@ def test_quiz_uuid_spellings_are_normalized(api_client, quiz_case):
                               params={"quizId": case["quiz_id"].replace("-", "")})
     assert response.status_code == 200, response.text
     assert response.json()["data"]["quizId"] == case["quiz_id"]
+    answers = deepcopy(case["answers"])
+    for answer in answers:
+        answer["questionId"] = answer["questionId"].replace("-", "").upper()
     response = api_client.post(f"/api/quiz/{case['quiz_id'].replace('-', '')}/submit", headers=case["headers"],
-                               json={"quizId": case["quiz_id"].upper(), "answers": case["answers"]})
+                               json={"quizId": case["quiz_id"].upper(), "answers": answers})
     assert response.status_code == 200, response.text
+
+
+def quiz_effects(conn, case):
+    question_ids = [question["id"] for question in case["questions"]]
+    return {
+        "session": dict(conn.execute(select(t.quiz_sessions).where(
+            t.quiz_sessions.c.id == case["quiz_id"])).mappings().one()),
+        "attempts": conn.execute(select(t.quiz_attempts).where(
+            t.quiz_attempts.c.quiz_item_id.in_([item["id"] for item in case["items"]]))).all(),
+        "weak": conn.execute(select(t.weak_questions).where(
+            t.weak_questions.c.question_id.in_(question_ids)).order_by(t.weak_questions.c.question_id)).all(),
+        "unit": conn.execute(select(t.units).where(t.units.c.id == case["unit"]["id"])).one(),
+        "history": conn.execute(select(t.mastery_history).where(
+            t.mastery_history.c.quiz_session_id == case["quiz_id"])).all(),
+    }
+
+
+@pytest.mark.parametrize("kind", [
+    "original_question", "other_set_same_question", "other_subject", "other_user", "unknown",
+    "duplicate", "duplicate_normalized", "missing", "empty", "extra",
+])
+def test_answers_must_match_exact_item_set(api_client, quiz_case, domain_connection, kind):
+    case = quiz_case
+    answers = deepcopy(case["answers"])
+    if kind == "original_question":
+        answers[0]["questionId"] = case["questions"][0]["id"]
+    elif kind == "other_set_same_question":
+        _, repeated_items = create_quiz(domain_connection, case["user_id"], case["subject_id"],
+                                         [q["id"] for q in case["questions"]])
+        answers[0]["questionId"] = repeated_items[0]["id"]
+    elif kind in ("other_subject", "other_user"):
+        user = case["user_id"] if kind == "other_subject" else api_client.post(
+            "/api/session").json()["data"]["anonymousId"]
+        answers[0]["questionId"] = domain_connection.scalar(select(t.quiz_items.c.id)
+            .join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
+            .where(t.quiz_sessions.c.user_id == user, t.quiz_sessions.c.subject_id != case["subject_id"]))
+    elif kind == "unknown":
+        answers[0]["questionId"] = str(uuid4())
+    elif kind in ("duplicate", "duplicate_normalized"):
+        answers[1]["questionId"] = answers[0]["questionId"]
+        if kind == "duplicate_normalized":
+            answers[1]["questionId"] = answers[1]["questionId"].replace("-", "").upper()
+    elif kind == "missing":
+        answers.pop()
+    elif kind == "empty":
+        answers = []
+    elif kind == "extra":
+        answers.append({"questionId": str(uuid4()), "choice": 0, "confidence": "sure"})
+    before = quiz_effects(domain_connection, case)
+    domain_connection.commit()
+    response = api_client.post(f"/api/quiz/{case['quiz_id']}/submit", headers=case["headers"],
+                               json={"quizId": case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+    assert quiz_effects(domain_connection, case) == before
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", "", None, 123, True, {}, []])
+def test_question_id_must_be_a_uuid(api_client, quiz_case, value):
+    answers = deepcopy(quiz_case["answers"])
+    answers[0]["questionId"] = value
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["choice", "ox"])
+@pytest.mark.parametrize("value", [-1, 2, 1000000, 0.0, "0", True, False, None, [], {}])
+def test_choice_requires_in_range_strict_integer(api_client, quiz_case, index, value):
+    answers = deepcopy(quiz_case["answers"])
+    answers[index]["choice"] = value
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("index", [2, 3], ids=["short", "essay"])
+@pytest.mark.parametrize("value", [None, 1, False, [], {}])
+def test_text_answers_require_strings(api_client, quiz_case, index, value):
+    answers = deepcopy(quiz_case["answers"])
+    answers[index]["text"] = value
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("index,field", [(0, "choice"), (1, "choice"), (2, "text"), (3, "text")])
+def test_type_specific_answer_cannot_be_omitted(api_client, quiz_case, index, field):
+    answers = deepcopy(quiz_case["answers"])
+    del answers[index][field]
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("index,field,value", [(0, "text", ""), (1, "text", "O"),
+                                              (2, "choice", 0), (3, "choice", 1)])
+def test_answer_fields_cannot_mix_question_types(api_client, quiz_case, index, field, value):
+    answers = deepcopy(quiz_case["answers"])
+    answers[index][field] = value
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("value", [None, "", "certain", "SURE", True, 1, [], {}])
+def test_confidence_rejects_null_and_unknown_values(api_client, quiz_case, value):
+    answers = deepcopy(quiz_case["answers"])
+    answers[0]["confidence"] = value
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+def test_missing_confidence_uses_dedicated_error_without_writes(api_client, quiz_case, domain_connection):
+    answers = deepcopy(quiz_case["answers"])
+    del answers[-1]["confidence"]
+    before = quiz_effects(domain_connection, quiz_case)
+    domain_connection.commit()
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 400, "CONFIDENCE_REQUIRED")
+    assert quiz_effects(domain_connection, quiz_case) == before
+
+
+@pytest.mark.parametrize("location", ["body", "answer"])
+def test_unknown_request_fields_are_rejected(api_client, quiz_case, location):
+    payload = {"quizId": quiz_case["quiz_id"], "answers": deepcopy(quiz_case["answers"])}
+    target = payload if location == "body" else payload["answers"][0]
+    target["unexpected"] = True
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"], json=payload)
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false"])
+def test_saved_grading_requires_boolean(api_client, quiz_case, value):
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": quiz_case["answers"],
+                                     "savedGrading": value})
+    assert_error(response, 422, "INVALID_INPUT")
+
+
+def test_openapi_marks_quiz_id_and_confidence_required(api_client):
+    response = api_client.get("/openapi.json")
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    assert set(schemas["SubmitIn"]["required"]) == {"quizId", "answers"}
+    assert set(schemas["Answer"]["required"]) == {"questionId", "confidence"}
+    assert schemas["Answer"]["properties"]["confidence"]["enum"] == ["sure", "unsure"]
+
+
+def test_all_answers_are_validated_before_any_grading(api_client, quiz_case, domain_connection, monkeypatch):
+    answers = deepcopy(quiz_case["answers"])
+    answers[3]["text"] = "AI가 호출되면 안 되는 답안"
+    del answers[2]["text"]
+    # 서술형을 먼저 채점하게 배치해도 뒤 문항의 오류를 먼저 거절해야 한다.
+    domain_connection.execute(update(t.quiz_items).where(t.quiz_items.c.id == quiz_case["items"][3]["id"])
+                              .values(sort_order=0))
+    before = quiz_effects(domain_connection, quiz_case)
+    domain_connection.commit()
+    grader = Mock(side_effect=AssertionError("invalid submissions must not call a grader"))
+    monkeypatch.setattr(QuizService, "_grade_essay", grader)
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert_error(response, 422, "INVALID_INPUT")
+    grader.assert_not_called()
+    assert quiz_effects(domain_connection, quiz_case) == before
+
+
+def test_explicit_blank_text_null_unused_fields_and_unsure_are_valid(api_client, quiz_case):
+    answers = deepcopy(quiz_case["answers"])
+    for index, answer in enumerate(answers):
+        answer["confidence"] = "unsure"
+        if index < 2:
+            answer["text"] = None
+            answer["choice"] = 1  # 마지막 보기 역시 유효하다.
+        else:
+            answer["choice"] = None
+            answer["text"] = ""
+    response = api_client.post(f"/api/quiz/{quiz_case['quiz_id']}/submit", headers=quiz_case["headers"],
+                               json={"quizId": quiz_case["quiz_id"], "answers": answers})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["summary"] == {
+        "total": 4, "correct": 0, "sureCorrect": 0, "unsureCorrect": 0, "wrong": 4}
+    assert all(item["confidence"] == "unsure" for item in response.json()["data"]["items"])
+
+
+def test_answer_arrays_have_no_arbitrary_thousand_item_limit(api_client, quiz_case, domain_connection):
+    case = quiz_case
+    questions = [{**case["questions"][0], "id": str(uuid4()), "code": f"large-set-{index}"}
+                 for index in range(1001)]
+    domain_connection.execute(t.questions.insert(), questions)
+    quiz_id, items = create_quiz(domain_connection, case["user_id"], case["subject_id"],
+                                 [question["id"] for question in questions])
+    domain_connection.commit()
+    answers = [{"questionId": item["id"], "choice": 0, "confidence": "sure"} for item in items]
+    response = api_client.post(f"/api/quiz/{quiz_id}/submit", headers=case["headers"],
+                               json={"quizId": quiz_id, "answers": answers})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["summary"]["total"] == 1001
+    assert response.json()["data"]["summary"]["correct"] == 1001
+    assert [item["questionId"] for item in response.json()["data"]["items"]] == [item["id"] for item in items]
