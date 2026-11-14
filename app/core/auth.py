@@ -22,7 +22,11 @@ def current_user(
         anonymous_id = UUID(anonymous_ids[0])
     except ValueError:
         raise ApiError("UNKNOWN_SESSION", "익명 ID의 형식이 올바르지 않아요. 새로 발급받아 주세요", 401) from None
-    user = UserRepository(conn).get(anonymous_id)
-    if user is None:
-        raise ApiError("UNKNOWN_SESSION", "알 수 없는 익명 ID예요. 새로 발급받아 주세요", 401)
-    return user.to_mapping()
+    # Authentication and missed-date settlement finish before the endpoint's
+    # transaction. AI routes may close that untouched connection before work.
+    from app.services.day_rollover import DayRolloverService
+    with conn.engine.begin() as auth_conn:
+        user = UserRepository(auth_conn).get(anonymous_id)
+        if user is None:
+            raise ApiError("UNKNOWN_SESSION", "알 수 없는 익명 ID예요. 새로 발급받아 주세요", 401)
+        return DayRolloverService(auth_conn).reconcile(user.to_mapping())
