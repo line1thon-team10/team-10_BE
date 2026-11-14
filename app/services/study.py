@@ -70,12 +70,12 @@ class Task:
 class StudyData:
     """한 사용자의 과목·단원·계획 태스크를 한 번에 읽어 두고 계산해요."""
 
-    def __init__(self, conn: Connection, user_id: str):
+    def __init__(self, conn: Connection, user_id: str, *, subject_statuses=("active",)):
         self.conn = conn
         self.user_id = user_id
         self.subjects = [dict(r) for r in conn.execute(
-            select(t.subjects).where(t.subjects.c.user_id == user_id, t.subjects.c.status == "active")
-            .order_by(t.subjects.c.exam_date)).mappings()]
+            select(t.subjects).where(t.subjects.c.user_id == user_id, t.subjects.c.status.in_(subject_statuses))
+            .order_by(t.subjects.c.exam_date, t.subjects.c.created_at, t.subjects.c.id)).mappings()]
         sids = [s["id"] for s in self.subjects]
         self.subject_by_id = {s["id"]: s for s in self.subjects}
         unit_rows = conn.execute(
