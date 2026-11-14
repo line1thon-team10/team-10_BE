@@ -77,14 +77,14 @@ class Planner:
                 if x.row["subject_id"] == subject_id and x.row["origin_task_id"] is None}
         return scope / len(days) if days else 0
 
-    def next_study_day(self, subject_id: str, after: date) -> date:
+    def next_study_day(self, subject_id: str, after: date) -> date | None:
         days = sorted({x.row["scheduled_date"] for x in self.data.tasks
                        if x.row["subject_id"] == subject_id and x.row["scheduled_date"] > after
                        and x.row["status"] not in ("carried_over", "excluded")})
         exam = self.data.subject_by_id[subject_id]["exam_date"]
         if days and (exam is None or days[0] < exam):
             return days[0]
-        return after + timedelta(days=1)
+        return None
 
     # ---------- 자정 판정 ----------
     def advance_day(self) -> str:
@@ -116,8 +116,8 @@ class Planner:
             return exam is None or nxt < exam
 
         left = []  # (task, 남은 범위)
-        for x in self.data.tasks_on(today):
-            if x.row["status"] in ("planned", "partial"):
+        for x in self.data.tasks:
+            if x.row["subject_id"] in self.data.subject_by_id and x.row["scheduled_date"] <= today and x.row["status"] in ("planned", "partial", "missed"):
                 if not can_carry(x):
                     exam = self.data.subject_by_id[x.row["subject_id"]]["exam_date"]
                     if today < exam and x.row["status"] == "planned" and not x.record:
@@ -131,14 +131,19 @@ class Planner:
         if prev:
             by_id = {x.id: x for x in self.data.tasks}
             for item in prev["recovery_context"].get("tasks", []):
-                if item["taskId"] in by_id and can_carry(by_id[item["taskId"]]):
-                    left.append((by_id[item["taskId"]], item["ranges"]))
+                if item["taskId"] in by_id and by_id[item["taskId"]].row["subject_id"] in self.data.subject_by_id and can_carry(by_id[item["taskId"]]):
+                    task = by_id[item["taskId"]]
+                    if task.id not in {candidate.id for candidate, _ in left}:
+                        rest = remaining_ranges(task)
+                        if rest:
+                            left.append((task, rest))
             self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == prev["id"])
                               .values(status="stale", updated_at=_now()))
-        overdue = defaultdict(int)
+        overdue_ranges = defaultdict(list)
         for x, rest in left:
             if x.row["task_type"] == "study":
-                overdue[x.row["subject_id"]] += _pages(rest)
+                overdue_ranges[x.row["subject_id"]].extend(rest)
+        overdue = {sid: _pages(ranges) for sid, ranges in overdue_ranges.items()}
         over = {sid: pages for sid, pages in overdue.items()
                 if pages >= math.ceil(self.daily_average(sid) * CARRY_RATE)}
 
@@ -148,13 +153,17 @@ class Planner:
                 self.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == x.id).values(status="missed"))
             if x.row["subject_id"] in over and x.row["task_type"] == "study":
                 continue  # 분배안에서 처리
-            carried_items.append(self._carry(x, rest, reason="어제에서 이월"))
+            item = self._carry(x, rest, reason="어제에서 이월", after=today)
+            if item is not None:
+                carried_items.append(item)
 
         self._close_quizzes(today)
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
             demo_date=nxt, last_assessed_date=today, updated_at=_now()))
 
         if carried_items:
+            self.conn.execute(update(t.plans).where(t.plans.c.id == self.data.plan["id"]).values(
+                revision=t.plans.c.revision + 1))
             self._notice(nxt, "carry", f"carry:{nxt.isoformat()}", {"items": carried_items})
         if over:
             self._create_recovery(today, nxt, over, left)
@@ -162,25 +171,19 @@ class Planner:
         return "carry" if carried_items else "none"
 
     def _carry(self, x: Task, rest: list[dict], reason: str, day: date | None = None,
-               minutes: int | None = None) -> dict:
+               minutes: int | None = None, after: date | None = None) -> dict | None:
+        from app.services.carryover import append_carry
         sid = x.row["subject_id"]
-        day = day or self.next_study_day(sid, x.row["scheduled_date"])
-        pages = _pages(rest)
-        mpp = float(self.data.subject_by_id[sid]["minutes_per_page"] or 2.5)
-        minutes = minutes or max(15, round(pages * mpp / 5) * 5)
-        task_id = str(uuid.uuid4())
-        self.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == x.id).values(status="carried_over"))
-        self.conn.execute(t.study_tasks.insert().values(
-            id=task_id, plan_id=x.row["plan_id"], subject_id=sid, block_id=x.row["block_id"], origin_task_id=x.id,
-            task_type=x.row["task_type"], title=x.row["title"], scheduled_date=day, estimated_minutes=minutes,
-            placement_reason=reason, status="planned", created_at=_now()))
-        for i, r in enumerate(rest):
-            self.conn.execute(t.study_task_ranges.insert().values(
-                id=str(uuid.uuid4()), task_id=task_id, unit_id=r["unit_id"], start_page=r["start_page"],
-                end_page=r["end_page"], sort_order=i + 1))
-        avg = self.daily_average(sid)
-        return {"subjectId": sid, "from": rest[0]["start_page"], "to": rest[-1]["end_page"], "pages": pages,
-                "dailyAvg": round(avg), "ratio": round(pages / avg * 100) if avg else 0, "date": day.isoformat()}
+        day = day or self.next_study_day(sid, after or x.row["scheduled_date"])
+        exam = self.data.subject_by_id[sid]["exam_date"]
+        if day is None or (exam is not None and day >= exam):
+            # Keep the old unfinished obligation visible to future assessments.
+            return None
+        result = append_carry(self.conn, x, rest, day=day, reason=reason, at=_now(), minutes=minutes)
+        if result is not None:
+            avg = self.daily_average(sid)
+            result.update(dailyAvg=round(avg), ratio=round(result["pages"] / avg * 100) if avg else 0)
+        return result
 
     def _close_quizzes(self, day: date) -> None:
         """안 푼 오늘의 퀴즈는 닫고(carried_over) 다음 퀴즈에 합쳐져요 (4-4)"""
