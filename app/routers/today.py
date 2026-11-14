@@ -132,10 +132,10 @@ def _fix_record(task_id, body, user, conn):
     at = now_utc()
     today = records.record_date(user, at)
     data = StudyData(conn, user["id"])
-    task = records.owned_task(data, task_id)
+    task = records.owned_task(data, task_id, allow_planless_review=True)
     result, ranges = records.patch_ranges(task, body)
     records.save_record(conn, task, result, ranges, task.record["study_date"], user_id=user["id"], at=at)
     after = StudyData(conn, user["id"])
-    fixed = records.owned_task(after, task_id)
+    fixed = records.owned_task(after, task_id, allow_planless_review=True)
     return ok({"taskId": task_id, "status": result, **records.record_range_view(fixed),
                "rate": after.progress(today)["rate"]})

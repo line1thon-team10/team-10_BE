@@ -9,7 +9,8 @@ from app.domain.ranges import PageSpan, intersect, page_count
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.records import RecordRepository
 from app.services.learning_evidence import revalidate_record_passes
-from app.services.learning_passes import create_initial_passes
+from app.services.learning_passes import create_initial_passes, create_remedial_passes
+from app.services.remedial import after_initial_passes
 from app.services.study import StudyData, Task
 
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
@@ -32,12 +33,18 @@ def find_task(data: StudyData, task_id: str) -> Task:
     return task
 
 
-def owned_task(data: StudyData, task_id: str) -> Task:
+def owned_task(data: StudyData, task_id: str, *, allow_planless_review=False) -> Task:
     repository = RecordRepository(data.conn)
     context = repository.task_context(task_id, data.user_id)
+    task = None
+    if context is None and allow_planless_review:
+        context = repository.planless_review(task_id, data.user_id)
+        if context is not None:
+            record, done_ranges = repository.record_snapshot(task_id)
+            task = Task(dict(context), record=record, done_ranges=done_ranges)
     if context is None:
         raise ApiError("TASK_NOT_FOUND", "태스크를 찾지 못했어요", 404)
-    task = find_task(data, task_id)
+    task = task or find_task(data, task_id)
     ranges = repository.ranges(task_id)
     if any(item["range_subject_id"] != task.row["subject_id"] or (
         item["concept_id"] is not None and item["concept_unit_id"] != item["unit_id"]
@@ -141,6 +148,8 @@ def save_record(conn, task: Task, result: str, ranges: list[dict], study_date, s
         task, RESULT_TO_DB[result], status, ranges, study_date, session_id, at)
     revalidate_record_passes(conn, user_id, record_id, at)
     create_initial_passes(conn, user_id, task, record_id, at)
+    create_remedial_passes(conn, user_id, task, record_id, at)
+    after_initial_passes(conn, user_id, {row["unit_id"] for row in task.ranges}, at)
 
 
 def check_session(conn, task: Task, session_id: str | None, *, user_id: str) -> str | None:

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.db import schema as t
 from app.domain.ranges import PageSpan, intersect, page_count
+from app.repositories.records import RecordRepository
 
 
 class BookViews:
@@ -15,6 +16,23 @@ class BookViews:
         for task in data.tasks:
             if task.row["subject_id"] in data.subject_by_id:
                 self.tasks[task.row["block_id"]].append(task)
+        # Direct relearning is history, not a planned daily obligation. Keep its
+        # books discoverable without adding it to StudyData.tasks or denominators.
+        from app.services.study import Task
+        repository = RecordRepository(data.conn)
+        for row in data.conn.execute(select(t.study_tasks)
+                .join(t.study_blocks, t.study_blocks.c.id == t.study_tasks.c.block_id)
+                .join(t.study_records, t.study_records.c.task_id == t.study_tasks.c.id)
+                .where(t.study_tasks.c.plan_id.is_(None), t.study_tasks.c.task_type == "review",
+                       t.study_tasks.c.subject_id.in_(data.subject_by_id),
+                       t.study_blocks.c.subject_id == t.study_tasks.c.subject_id,
+                       t.study_blocks.c.task_type == "review")).mappings():
+            ranges = repository.ranges(row["id"])
+            if any(item["range_subject_id"] != row["subject_id"] or (
+                    item["concept_id"] and item["concept_unit_id"] != item["unit_id"]) for item in ranges):
+                continue
+            record, done_ranges = repository.record_snapshot(row["id"])
+            self.tasks[row["block_id"]].append(Task(dict(row), ranges, done_ranges, record))
         self.blocks = {row["id"]: dict(row) for row in data.conn.execute(select(t.study_blocks).where(
             t.study_blocks.c.id.in_(self.tasks),
             t.study_blocks.c.subject_id.in_(data.subject_by_id))).mappings()}
@@ -33,8 +51,17 @@ class BookViews:
                    t.quiz_sessions.c.finalized_at.is_not(None))))
 
     def ordered(self, block_id):
+        by_id = {task.id: task for task in self.tasks[block_id]}
+
+        def depth(task):
+            seen = {task.id}
+            while task.row["origin_task_id"] in by_id and task.row["origin_task_id"] not in seen:
+                task = by_id[task.row["origin_task_id"]]
+                seen.add(task.id)
+            return len(seen)
+
         return sorted(self.tasks[block_id], key=lambda task: (
-            task.row["scheduled_date"], task.row["created_at"], task.id))
+            task.row["scheduled_date"], task.row["created_at"], depth(task), task.id))
 
     def representative(self, block_id, day=None):
         tasks = self.ordered(block_id)

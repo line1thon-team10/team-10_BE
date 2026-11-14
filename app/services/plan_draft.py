@@ -58,7 +58,10 @@ def _basis(conn, context, target):
                             .order_by(t.calendar_event_exceptions.c.id))}
     tasks = select(t.study_tasks.c.id).where(t.study_tasks.c.subject_id.in_(subjects))
     records = select(t.study_records.c.id).where(t.study_records.c.task_id.in_(tasks))
+    obligations = select(t.remedial_obligations.c.id).where(t.remedial_obligations.c.user_id == context.user.id)
     data.update({
+        'remedialObligations': _rows(conn, select(t.remedial_obligations).where(t.remedial_obligations.c.id.in_(obligations)).order_by(t.remedial_obligations.c.id)),
+        'remedialBlocks': _rows(conn, select(t.remedial_obligation_blocks).where(t.remedial_obligation_blocks.c.obligation_id.in_(obligations)).order_by(t.remedial_obligation_blocks.c.obligation_id, t.remedial_obligation_blocks.c.block_id)),
         'tasks': _rows(conn, select(t.study_tasks).where(t.study_tasks.c.id.in_(tasks)).order_by(t.study_tasks.c.id)),
         'taskRanges': _rows(conn, select(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(tasks)).order_by(t.study_task_ranges.c.id)),
         'records': _rows(conn, select(t.study_records).where(t.study_records.c.id.in_(records)).order_by(t.study_records.c.id)),
@@ -89,9 +92,46 @@ def _apply(conn, context, changes):
     if changes.get('supersedeIds'):
         conn.execute(update(t.study_tasks).where(t.study_tasks.c.id.in_(changes['supersedeIds']),
             t.study_tasks.c.plan_id == context.plan.id).values(status='carried_over'))
+    used_blocks = set()
     for task in changes['placements']:
         source = task.get('source')
+        obligation_id = None
+        if task['kind'] in ('remedial', 'review'):
+            requirements = {part.get('requirementId') for part in task['parts']}
+            if None in requirements or len(requirements) != 1:
+                raise ApiError('PREVIEW_STALE', '보충·복습 의무의 원래 범위를 확인해 주세요', 409)
+            identifier = next(iter(requirements))
+            try:
+                identifier = str(UUID(identifier))
+            except (ValueError, TypeError, AttributeError):
+                raise ApiError('PREVIEW_STALE', '보충·복습 의무 식별자가 달라요', 409) from None
+            original = conn.execute(select(t.study_tasks).where(t.study_tasks.c.id == identifier,
+                t.study_tasks.c.plan_id == context.plan.id, t.study_tasks.c.subject_id == task['subjectId'],
+                t.study_tasks.c.task_type == task['kind'])).mappings().first()
+            if original is not None:
+                expected = {'blockId': original['block_id'], 'taskId': original['id']}
+                if source is not None and source != expected:
+                    raise ApiError('PREVIEW_STALE', '기존 의무의 책 연결이 달라요', 409)
+                source = expected
+            elif task['kind'] == 'remedial':
+                obligation = conn.execute(select(t.remedial_obligations).join(t.units,
+                    t.units.c.id == t.remedial_obligations.c.unit_id).join(t.materials,
+                    t.materials.c.id == t.units.c.material_id).where(t.remedial_obligations.c.id == identifier,
+                    t.remedial_obligations.c.user_id == context.user.id,
+                    t.materials.c.subject_id == task['subjectId'])).mappings().first()
+                if obligation is None or source is not None:
+                    raise ApiError('PREVIEW_STALE', '미배정 보충 의무를 찾지 못했어요', 409)
+                obligation_id = identifier
+            else:
+                raise ApiError('PREVIEW_STALE', '원래 복습 의무를 찾지 못했어요', 409)
+        if source is not None:
+            original = conn.execute(select(t.study_tasks).where(t.study_tasks.c.id == source['taskId'],
+                t.study_tasks.c.plan_id == context.plan.id, t.study_tasks.c.subject_id == task['subjectId'],
+                t.study_tasks.c.block_id == source['blockId'], t.study_tasks.c.task_type == task['kind'])).mappings().first()
+            if original is None or source['taskId'] not in changes.get('supersedeIds', ()) or source['blockId'] in used_blocks:
+                raise ApiError('PREVIEW_STALE', '기존 책은 하나의 유효 배치로만 옮길 수 있어요', 409)
         block_id = source['blockId'] if source else str(uuid4())
+        used_blocks.add(block_id)
         parts = task['parts']
         unit_ids = {part['unitId'] for part in parts}
         if source is None:
@@ -102,6 +142,13 @@ def _apply(conn, context, changes):
             starts_at=_instant(task['date'], task['start'], changes['timezone']),
             ends_at=_instant(task['date'], task['end'], changes['timezone']), estimated_minutes=task['minutes'],
             placement_reason=POLICY_VERSION, status='planned', created_at=context.now))
+        if obligation_id is not None:
+            allocation_snapshot = {'schemaVersion': 'remedial-allocation-v1', 'generatedAt': context.now.isoformat(),
+                'taskId': task['id'], 'date': task['date'], 'start': task['start'], 'end': task['end'],
+                'parts': [{key: part[key] for key in ('unitId', 'materialId', 'from', 'to', 'baseline', 'multiplier')}
+                          for part in parts]}
+            conn.execute(t.remedial_obligation_blocks.insert().values(obligation_id=obligation_id, block_id=block_id,
+                allocation_snapshot=allocation_snapshot))
         for order, part in enumerate(parts, 1):
             conn.execute(t.study_task_ranges.insert().values(id=str(uuid4()), task_id=task['id'],
                 unit_id=part['unitId'], start_page=part['from'], end_page=part['to'], sort_order=order,

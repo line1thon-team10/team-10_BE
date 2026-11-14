@@ -294,7 +294,9 @@ class QuizService:
         pending = unit_ids - recorded
         if not pending:
             return
-        result = calculate_learning_metrics(self._metrics_input())
+        from app.services.recovery_evidence import recovery_eligibility
+        metrics = self._metrics_input()
+        result = calculate_learning_metrics(metrics, eligibility=recovery_eligibility(self.conn, self.user["id"], metrics))
         by_unit = {row.unit_id: row for row in result.units}
         now = _now()
         for uid in sorted(pending):
@@ -311,6 +313,9 @@ class QuizService:
                 previous_score=u["mastery_score"], previous_level=u["mastery_level"], raw_score=float(r.raw_score),
                 score=r.score, level=r.grade, recovery_mode=r.recovery_mode, recorded_date=self.today,
                 daily_increase_limit=r.daily_increase_limit, created_at=now))
+
+        from app.services.remedial import generate_remedial
+        generate_remedial(self.conn, self.user, quiz_session_id, pending, self.today, now)
 
     # ---------- 결과 ----------
     def _result_evidence(self, source):
