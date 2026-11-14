@@ -42,7 +42,7 @@ def test_completed_extra_remains_visible_under_original_result(api_client, demo_
         for source in sources:
             conn.execute(t.question_sources.insert().values(**{**source, 'id': str(uuid4()), 'question_id': new_id}))
     conn.commit()
-    more = api_client.post(f"/api/quiz/{active['subjectId']}/more", headers=headers, json={'unitNo': 2})
+    more = api_client.post(f"/api/quiz/{active['subjectId']}/more", headers=headers, json={'unitId': template['unit_id']})
     assert more.status_code == 200, more.text
     child_id = more.json()['data']['quizId']
     child_open = api_client.get(f'/api/quiz/{child_id}', headers=headers)
