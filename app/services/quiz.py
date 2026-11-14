@@ -166,7 +166,7 @@ class QuizService:
                 "unitNo": unit_no(u["code"]) if u else None,
                 "materialId": x["material_id"], "unitId": x["unit_id"],
                 "prompt": x["prompt"],
-                "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
+                "options": [c["text"] for c in x["choices"]] if x["choices"] else []}
 
     def set_view(self, session: dict, saved: bool = False) -> dict:
         # list_current validates the set's material ownership even when no

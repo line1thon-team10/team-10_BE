@@ -3,7 +3,7 @@
     "schema_version": 1,
     "planned_on": "2026-11-14",
     "state": "executing",
-    "code_base_sha": "8dd128003ceb24100d3de08c75cd475a6021b45f",
+    "code_base_sha": "2e767f6b05e958a97e9635dce702ef999ef803ec",
     "deployed_be_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
     "fe_base_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
@@ -39,7 +39,7 @@
       "report_commit": "55e108e68c735389a2a4785cae3faefdf68e81e6"
     },
     "completion_unit": "verified_user_flow",
-    "current_flow": "FLOW-COMPAT-3475",
+    "current_flow": "BACKEND-CONTRACT-V1",
     "current_work_order": [
       "Finish all backend domains against docs/api, independent local code E2E and atomic commits.",
       "Integrate reviewed domain candidates; no push or GitHub CI while development continues.",
@@ -51,7 +51,7 @@
       {
         "id": "FLOW-COMPAT-3475",
         "title": "현재 FE 수동 기록 → 퀴즈 제출 → 결과 조회 호환 복구",
-        "state": "in_progress",
+        "state": "verified",
         "required_tasks": [
           "COMPAT-01",
           "COMPAT-02"
@@ -59,13 +59,14 @@
         "base_runtime_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
         "frozen_contract_sha": "3475cf204ac726f9c96d44bbc687ea8253f8c48e",
         "fe_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
-        "deployed_flow_complete": false
+        "deployed_flow_complete": true,
+        "verified_runtime_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f"
       },
       {
         "id": "FLOW-DAY9",
         "title": "day9 집중 종료 → 기록 → 퀴즈 저장/제출 → 결과 재조회",
-        "state": "in_progress",
-        "implemented_checkpoint": "FE focus/record and answer save/recovery merged to dev1edf606. BE answer API and worker integrated; Q05/Q06 reviewed and day9 API connection passed, PR32 mandatory CI running. FE final submission/result wiring in progress. Current deployment remains4c20454.",
+        "state": "outside_current_backend_scope",
+        "implemented_checkpoint": "Historical frontend work; current user forbids frontend changes and UI testing. Backend final CI pending.",
         "required_tasks": [
           "FE-02A",
           "Q-03",
@@ -76,7 +77,7 @@
           "FE-03B",
           "QA-DAY9"
         ],
-        "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+        "deployed_be_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
         "deployed_flow_complete": false,
         "release_state": "held_for_submission_contract_freeze"
       }
@@ -86,7 +87,7 @@
       "reason": "FE 담당자가 BE3475cf2 계약에 맞췄으므로 제출·심사까지 API 모양 변경의 main 병합을 보류한다.",
       "be_main_contract_sha": "3475cf204ac726f9c96d44bbc687ea8253f8c48e",
       "fe_main_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
-      "current_runtime_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+      "current_runtime_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
       "current_runtime_matches_frozen_contract": false,
       "allowed": "Isolated branch implementation, focused tests, independent review, PR CI, integration-only development.",
       "held": "BE API-changing main merges, FE dev to main promotion, new-contract production dispatch.",
@@ -95,9 +96,23 @@
       "compatibility_exception": "Prepare a minimal compatibility fix on the current runtime lineage only; keep main3475cf2 and new-contract integration isolated.",
       "compatibility_candidate_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
       "compatibility_ci_run_id": 43561071174,
-      "deployment_instruction": "CI43561071174 succeeded at exact bb8c824; compatibility-only deploy dispatched as43562567179, build in progress; verify actual runtime before reporting deployed."
+      "deployment_instruction": "Compatibility-only app bb8c824 deployment43562567179 verified complete. New-contract integration remains held; do not deploy."
     },
-    "handoff_entry": "../HANDOFF.md (workspace root; local file, not published)"
+    "handoff_entry": "../HANDOFF.md (workspace root; local file, not published)",
+    "current_validation": {
+      "state": "local_full_regression_running",
+      "snapshot": "7d45cbd271789e44b0f1cefee5126e0a19f1fceb",
+      "collected": 5470,
+      "partitions": [
+        1335,
+        1326,
+        1354,
+        1455
+      ],
+      "manifest_coverage": "exactly_once",
+      "github_ci": "not_started_during_development",
+      "log_directory": "/private/tmp/team10-full-regression-7d45cbd"
+    }
   },
   "tasks": [
     {
@@ -170,7 +185,7 @@
       "id": "SYS-03",
       "title": "남은 DB 불변 조건의 migration",
       "lane": "platform",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/schema_invariants",
       "depends_on": [
         "SYS-02"
@@ -198,10 +213,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "5702b3e038ffb452501bb11bb40e7825963997ec",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -609,7 +625,7 @@
       "id": "R-05",
       "title": "자연어 기록 해석",
       "lane": "study",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/record_interpretation",
       "depends_on": [
         "R-02",
@@ -636,10 +652,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "a3f23447b22237e16ac6061b4e938d8034565ce2",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -785,7 +802,7 @@
       "id": "D-04",
       "title": "일반 사용자 날짜 마감·미접속 날짜 정산",
       "lane": "study",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/day_rollover",
       "depends_on": [
         "D-02",
@@ -817,10 +834,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "254c92e6ca4d7a603c522bca65b6d05ca61a5a27",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -867,7 +885,7 @@
       "id": "B-02",
       "title": "보충 완료 회독 자동 생성",
       "lane": "study",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/learning_pass_implementation",
       "depends_on": [
         "B-01",
@@ -894,10 +912,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "5916b3aa6d37d27b5fbbb9d118fb155dd983659e",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -1333,7 +1352,7 @@
       "id": "Q-07",
       "title": "완료 범위 기반 일일 출제·난이도",
       "lane": "quiz",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/quiz_generation",
       "depends_on": [
         "Q-01",
@@ -1366,10 +1385,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "4b47343571aee702bb740fed0147e3e59f976c5e",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1380,7 +1400,7 @@
       "id": "Q-08",
       "title": "평일·주말 취약 문항과 미풀이 이월",
       "lane": "quiz",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/quiz_generation",
       "depends_on": [
         "Q-07",
@@ -1406,10 +1426,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "a05f326d3ec2f15f2b2c9f7d82ae479ddb5fa7da",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -1418,7 +1439,7 @@
       "id": "Q-09",
       "title": "더 풀기 정확히5문항·재요청",
       "lane": "quiz",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/quiz_generation",
       "depends_on": [
         "Q-07",
@@ -1447,10 +1468,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "4b47343571aee702bb740fed0147e3e59f976c5e",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1461,7 +1483,7 @@
       "id": "S-02",
       "title": "취약 개념 보충 태스크 생성",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/supplement_implementation",
       "depends_on": [
         "Q-05",
@@ -1487,10 +1509,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "aa024eaae742456f1a448a09f1cedd5d24581a65",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -1499,7 +1522,7 @@
       "id": "S-03",
       "title": "회복 자격·+15 보너스 근거 연결",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/supplement_implementation",
       "depends_on": [
         "B-02",
@@ -1529,10 +1552,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "aa024eaae742456f1a448a09f1cedd5d24581a65",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -1541,7 +1565,7 @@
       "id": "L-01",
       "title": "이월 계보·잔여 범위·의무 보존",
       "lane": "study",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/plan_implementation",
       "depends_on": [
         "R-02",
@@ -1569,10 +1593,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "d85f409ef64b4d6c732ead40c53cdd7c17a68bbe",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -1581,7 +1606,7 @@
       "id": "L-02",
       "title": "재계획 A/B/C 실제 후보 계산",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/plan_implementation",
       "depends_on": [
         "L-01",
@@ -1613,10 +1638,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "d85f409ef64b4d6c732ead40c53cdd7c17a68bbe",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1627,7 +1653,7 @@
       "id": "L-03",
       "title": "재계획 승인·경합·재시도",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/plan_implementation",
       "depends_on": [
         "L-02",
@@ -1656,10 +1682,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "d85f409ef64b4d6c732ead40c53cdd7c17a68bbe",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1670,7 +1697,7 @@
       "id": "L-04",
       "title": "P4 속도 보정 계산·적용",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/pace_implementation",
       "depends_on": [
         "R-02",
@@ -1704,10 +1731,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "4909de5a8ccba260aff2e190f9dca4a3bfdea960",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2188,7 +2216,7 @@
       "id": "P-03",
       "title": "계획 다시 나누기·질문·취소·적용",
       "lane": "planning",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/material_implementation",
       "depends_on": [
         "P-02",
@@ -2218,10 +2246,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "9d605a32d4fdc55e5a23ad68dbb6817a32967c42",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2277,7 +2306,7 @@
       "id": "U-02",
       "title": "시험일·목표 변경 미리보기·승인",
       "lane": "management",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/subject_management",
       "depends_on": [
         "U-01",
@@ -2308,10 +2337,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "bda8cdb8533deae5fa3d58bc9f603cfdc4ce7227",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2322,7 +2352,7 @@
       "id": "U-03",
       "title": "과목 제거·보관·빈 시간 후보",
       "lane": "management",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/subject_management",
       "depends_on": [
         "U-01",
@@ -2353,10 +2383,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "e8b126d667d8f161aee5e44c5641587fbc1bada7",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2367,7 +2398,7 @@
       "id": "U-04",
       "title": "기존 과목 학습 범위 추가",
       "lane": "management",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/plan_additions",
       "depends_on": [
         "P-02",
@@ -2395,10 +2426,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "4ff9987157254378932e295f8a5c037184b3577d",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2409,7 +2441,7 @@
       "id": "U-05",
       "title": "오늘 더 하기·쉬기·미루기",
       "lane": "management",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/today_adjustments",
       "depends_on": [
         "P-02",
@@ -2438,10 +2470,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "23f15f24f9d1dc84f1b38b7aea257d256395815c",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2452,7 +2485,7 @@
       "id": "U-06",
       "title": "남은 계획 재생성",
       "lane": "management",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/material_implementation",
       "depends_on": [
         "P-03",
@@ -2480,10 +2513,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "9d605a32d4fdc55e5a23ad68dbb6817a32967c42",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Candidate integrated locally. Independent review/follow-up fixes remain active; do not mark complete before final verification."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2535,7 +2569,7 @@
       "id": "C-04",
       "title": "빈 시간 선택지·적용",
       "lane": "calendar",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/schedule_mutations",
       "depends_on": [
         "P-01",
@@ -2562,10 +2596,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "f86c8d879eac16250aa6059b39de08aed5dee03e",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2576,7 +2611,7 @@
       "id": "C-02",
       "title": "반복 일정 수정·삭제 미리보기/승인",
       "lane": "calendar",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/schedule_mutations",
       "depends_on": [
         "C-01",
@@ -2607,10 +2642,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "fdcfbaba5727b899b4f5409e7a026cb224ff85d4",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2621,7 +2657,7 @@
       "id": "C-03",
       "title": "자연어 일정 추가·재배치 승인",
       "lane": "calendar",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/schedule_mutations",
       "depends_on": [
         "C-01",
@@ -2651,10 +2687,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "fdcfbaba5727b899b4f5409e7a026cb224ff85d4",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2750,7 +2787,7 @@
       "id": "V-01",
       "title": "오답 노트·복습 문항 조회",
       "lane": "review",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/review_implementation",
       "depends_on": [
         "Q-01"
@@ -2777,10 +2814,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "ba869b70c8bbe6703255b4996c3b7732157980a5",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2791,7 +2829,7 @@
       "id": "V-02",
       "title": "오답 재풀이·간격 복습",
       "lane": "review",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/review_implementation",
       "depends_on": [
         "V-01",
@@ -2820,10 +2858,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "ba869b70c8bbe6703255b4996c3b7732157980a5",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2834,7 +2873,7 @@
       "id": "V-03",
       "title": "범위 선택 문제 뽑기",
       "lane": "review",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/review_implementation",
       "depends_on": [
         "Q-07",
@@ -2861,10 +2900,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "ba869b70c8bbe6703255b4996c3b7732157980a5",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2875,7 +2915,7 @@
       "id": "V-04",
       "title": "직접 재학습·완료 근거 보완",
       "lane": "review",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/review_implementation",
       "depends_on": [
         "B-01",
@@ -2907,10 +2947,11 @@
       "optional": false,
       "branch": null,
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "31541b65b00cd7a29689fd265765a23cd2147bea",
       "pr_url": null,
       "validation_evidence": [
-        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report."
+        "Parallel implementation/review active. Domain candidate commits and preserved independent tests are in corresponding worktrees. Root final integration/CI still pending; do not infer complete from author report.",
+        "Domain implementation and preserved independent E2E integrated locally; final whole-backend SQLite/PostgreSQL regression and GitHub CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -3043,7 +3084,8 @@
       "validation_mode": "task-specific-tests-and-integration",
       "worktree": "FE-task-handoff",
       "upstream_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
-      "integration_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca"
+      "integration_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-02",
@@ -3094,7 +3136,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-03",
@@ -3143,7 +3186,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-04",
@@ -3188,7 +3232,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-05",
@@ -3239,7 +3284,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-06",
@@ -3281,7 +3327,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-07",
@@ -3318,7 +3365,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-08",
@@ -3360,7 +3408,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-09",
@@ -3397,7 +3446,8 @@
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "QA-01",
@@ -3550,14 +3600,15 @@
       "pr_url": null,
       "validation_evidence": [],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "External AI quality requires configured providers; new-contract production deployment remains held."
     },
     {
       "id": "QA-02",
       "title": "시드 학습 흐름 통합 검증",
       "lane": "quality",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/review_implementation",
       "depends_on": [
         "R-04",
         "D-03",
@@ -3603,8 +3654,8 @@
       "id": "QA-03",
       "title": "빈 계정·일반 날짜 전체 흐름 검증",
       "lane": "quality",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/review_implementation",
       "depends_on": [
         "D-04",
         "FE-04",
@@ -3676,7 +3727,8 @@
       "pr_url": null,
       "validation_evidence": [],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "current_scope": "External AI quality requires configured providers; new-contract production deployment remains held."
     },
     {
       "id": "OPT-01",
@@ -3803,7 +3855,8 @@
       ],
       "validation_mode": "risk-focused-impact-and-required-ci",
       "worktree": "FE-task-day9-record",
-      "integration_sha": "21481d494ae1bad3a0d4cbfbf196d2a5786c1220"
+      "integration_sha": "21481d494ae1bad3a0d4cbfbf196d2a5786c1220",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-03A",
@@ -3854,7 +3907,8 @@
       "worktree": "FE-task-quiz-answers",
       "integration_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
       "review_status": "approved",
-      "release_hold": true
+      "release_hold": true,
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "FE-03B",
@@ -3897,7 +3951,8 @@
       "validation_mode": "risk-focused-impact-and-required-ci",
       "worktree": "FE-task-quiz-submit",
       "release_hold": true,
-      "review_status": "changes_requested"
+      "review_status": "changes_requested",
+      "current_scope": "Excluded by latest user instruction: no frontend changes or UI testing."
     },
     {
       "id": "QA-DAY9",
@@ -3942,7 +3997,7 @@
       "id": "COMPAT-01",
       "title": "심사용 퀴즈 제출의3475 요청 계약 복구",
       "lane": "compatibility",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [],
       "write_scope": [
@@ -3968,7 +4023,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
       "validation_evidence": [
         "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed.",
-        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified."
+        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified.",
+        "Historical compatibility-only release bb8c824 verified in production. Explicitly excluded from the confirmed v1 integration contract."
       ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",
@@ -3980,7 +4036,7 @@
       "id": "COMPAT-02",
       "title": "심사용 수동 기록의 nullable session 계약 복구",
       "lane": "compatibility",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [],
       "write_scope": [
@@ -4004,7 +4060,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
       "validation_evidence": [
         "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed.",
-        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified."
+        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified.",
+        "Historical compatibility-only release bb8c824 verified in production. Explicitly excluded from the confirmed v1 integration contract."
       ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",

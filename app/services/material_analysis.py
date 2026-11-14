@@ -24,6 +24,8 @@ def _aware(value):
 
 
 class MaterialAnalysisService:
+    provider, validator = PROVIDER, VALIDATOR
+
     def __init__(self, engine, *, storage_dir=None, gateway=None, clock=now_utc):
         self.engine, self.clock = engine, clock
         self.settings = AiSettings.from_environment()
@@ -212,7 +214,7 @@ class MaterialAnalysisService:
             if prepared is None:
                 return False
             request, context = prepared
-            outcome = self.gateway.run(request, validator=VALIDATOR, provider=PROVIDER)
+            outcome = self.gateway.run(request, validator=self.validator, provider=self.provider)
             if not self._mark_saving(claim):
                 return False
             return self._finish(claim, outcome, context)
@@ -233,4 +235,6 @@ class MaterialAnalysisService:
                 continue
             if self.run_job(job['user_id'], job['id']):
                 return True
-        return False
+        from app.services.question_bank import QuestionBankService
+        return QuestionBankService(self.engine, storage_dir=self.storage.root,
+            gateway=self.gateway, clock=self.clock).run_next(stop_requested=stop_requested)
