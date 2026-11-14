@@ -1,6 +1,6 @@
 """Separate placement achievement, unique study progress and quiz eligibility."""
 from fractions import Fraction
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -36,10 +36,17 @@ class ProgressWorld:
                 "page_count": end, "quiz_enabled": quiz_enabled,
             }))
         unit = {key: value for key, value in self.unit_template.items() if key in t.units.c}
-        unit.update(id=str(uuid4()), material_id=material_id, code="TEST1", start_page=start, end_page=end,
-                    mastery_score=score, in_scope=True, retired_at=None, **values)
+        unit.update({"id": str(uuid4()), "material_id": material_id, "code": "TEST1", "start_page": start,
+                     "end_page": end, "mastery_score": score, "in_scope": True, "retired_at": None, **values})
         self.conn.execute(t.units.insert().values(**unit))
         return unit
+
+    def concept(self, unit, start, end, **values):
+        concept = {"id": str(uuid4()), "unit_id": unit["id"], "code": "C1", "title": "시험 범위", "sort_order": 0,
+                   "start_page": start, "end_page": end, "in_scope": True, "created_at": self.now,
+                   "updated_at": self.now, **values}
+        self.conn.execute(t.concepts.insert().values(**concept))
+        return concept
 
     def task(self, *parts, done=None, kind="study", status="planned", day=None):
         day = day or self.day
@@ -153,3 +160,124 @@ def test_home_half_up_and_unpaged_zero_denominator(api_client, progress_world):
     home = world.get(api_client, "/api/today")
     assert home["progress"] == {"doneCount": 1, "totalCount": 1, "donePages": 0, "totalPages": 0, "rate": 0}
     assert home["tasks"][0]["ranges"] == []
+
+
+def test_subject_progress_and_mastery_use_effective_concept_union_per_pdf(api_client, progress_world):
+    world = progress_world
+    first, second = world.unit(1, 10, score=80), world.unit(1, 10, score=20)
+    world.concept(first, 1, 6)
+    world.concept(first, 4, 8)
+    world.concept(first, 9, 10, in_scope=False)
+    world.task((first, 1, 10), done=[(first, 1, 10)], status="completed")
+    world.task((second, 1, 10), done=[(second, 1, 5)], status="partial")
+    # The same code/page numbers in a different PDF remain a separate scope.
+    assert first["code"] == second["code"]
+    books = world.get(api_client, "/api/books")
+    result = next(row for row in books["readiness"] if row["subjectId"] == world.subject["id"])
+    assert result == {"subjectId": world.subject["id"], "readiness": 34, "target": world.subject["target_score"],
+                      "targetLabel": world.subject["target_grade"], "progressRate": 72.2, "mastery": 46.7,
+                      "studiedPages": 13, "totalPages": 18}
+    home = world.get(api_client, "/api/today")
+    assert next(s for s in home["exams"] if s["subjectId"] == world.subject["id"])["readiness"] == 34
+
+
+def test_quizless_pages_count_for_progress_but_never_mastery(progress_world):
+    world = progress_world
+    quiz_unit = world.unit(1, 10, score=80)
+    manual = world.unit(1, 10, score=20, quiz_enabled=False)
+    world.task((manual, 1, 10), done=[(manual, 1, 10)], status="completed")
+    result = world.data().readiness(world.subject)
+    assert (result["studiedPages"], result["totalPages"], result["progressRate"]) == (10, 20, 50)
+    assert (result["mastery"], result["readiness"]) == (80, 40)
+
+    world.conn.execute(update(t.units).where(t.units.c.id == quiz_unit["id"]).values(mastery_score=None))
+    result = world.data().readiness(world.subject)
+    assert result["mastery"] is None and result["readiness"] == 0
+
+
+def test_subject_progress_keeps_carried_excluded_learning_but_not_remedial_or_retired_identity(progress_world):
+    world = progress_world
+    current = world.unit(1, 10)
+    retired = world.unit(1, 10, material_id=current["material_id"], retired_at=world.now)
+    world.task((current, 1, 5), done=[(current, 1, 50)], status="completed")
+    world.task((current, 1, 10), done=[(current, 1, 10)], status="completed", kind="remedial")
+    world.task((current, 6, 7), done=[(current, 6, 7)], status="carried_over", day=world.day - timedelta(days=1))
+    world.task((current, 8, 9), done=[(current, 8, 9)], status="excluded", day=world.day - timedelta(days=2))
+    world.task((retired, 10, 10), done=[(retired, 10, 10)], status="completed")
+    # A different unit's record must not complete the current unit's same page.
+    world.task((current, 10, 10), done=[(retired, 10, 10)], status="partial")
+    result = world.data().readiness(world.subject)
+    assert (result["studiedPages"], result["totalPages"], result["progressRate"]) == (9, 10, 90)
+    assert result["mastery"] == 80 and result["readiness"] == 72
+
+
+@pytest.mark.parametrize("other_state", ["active", "excluded", "retired", "concepts_excluded", "concepts_disjoint"])
+def test_overlapping_current_units_have_no_invented_mastery_weight(progress_world, other_state):
+    world = progress_world
+    first = world.unit(1, 10, score=80)
+    other = world.unit(5, 15, score=20, material_id=first["material_id"],
+                       in_scope=other_state != "excluded", retired_at=world.now if other_state == "retired" else None)
+    if other_state == "concepts_excluded":
+        world.concept(other, 5, 15, in_scope=False)
+    elif other_state == "concepts_disjoint":
+        world.concept(other, 11, 15)
+    world.task((first, 1, 10), done=[(first, 1, 10)], status="completed")
+    result = world.data().readiness(world.subject)
+    assert result["studiedPages"] == 10
+    if other_state == "active":
+        assert result["totalPages"] == 15 and result["progressRate"] == 66.7
+        assert result["mastery"] is None and result["readiness"] == 0
+    elif other_state == "concepts_disjoint":
+        assert result["totalPages"] == 15 and result["progressRate"] == 66.7
+        assert result["mastery"] == 60 and result["readiness"] == 40
+    else:
+        assert result["totalPages"] == 10 and result["progressRate"] == 100
+        assert result["mastery"] == 80 and result["readiness"] == 80
+
+
+def test_excluded_concepts_unpaged_and_archived_scopes_have_no_page_weight(progress_world):
+    world = progress_world
+    excluded = world.unit(1, 10)
+    world.concept(excluded, 1, 10, in_scope=False)
+    world.unit(None, None, score=99, quantity_basis="time")
+    world.task((excluded, 1, 10), done=[(excluded, 1, 10)], status="completed")
+    result = world.data().readiness(world.subject)
+    assert (result["studiedPages"], result["totalPages"], result["progressRate"]) == (0, 0, 0)
+    assert result["mastery"] is None and result["readiness"] == 0
+
+    world.conn.execute(update(t.subjects).where(t.subjects.c.id == world.subject["id"]).values(status="archived"))
+    result = world.data().readiness(world.subject)
+    assert (result["studiedPages"], result["totalPages"], result["readiness"]) == (0, 0, 0)
+    assert result["mastery"] is None
+
+
+@pytest.mark.parametrize("done,total,score,shown_progress,readiness", [
+    (1, 8, 20, 12.5, 3),  # 2.5 rounds up, not banker's 2.
+    (3496, 10000, 10, 35.0, 3),  # Multiplying displayed 35.0 * 10 would incorrectly round to 4.
+])
+def test_readiness_uses_unrounded_inputs_and_half_up(progress_world, done, total, score, shown_progress, readiness):
+    world = progress_world
+    unit = world.unit(1, total, score=score)
+    world.task((unit, 1, total), done=[(unit, 1, done)], status="partial")
+    result = world.data().readiness(world.subject)
+    assert result["progressRate"] == shown_progress and result["mastery"] == score
+    assert result["readiness"] == readiness
+
+
+def test_post_and_patch_replace_progress_evidence_without_duplicate_credit(api_client, progress_world):
+    world = progress_world
+    unit = world.unit(1, 10)
+    task = world.task((unit, 1, 10))
+    world.conn.commit()
+    headers = {"X-Anonymous-Id": world.user}
+    response = api_client.post("/api/records", headers=headers, json={"taskId": task, "result": "done"})
+    assert response.status_code == 200, response.text
+    assert world.data().readiness(world.subject)["studiedPages"] == 10
+    world.conn.commit()
+
+    response = api_client.patch(f"/api/tasks/{task}/record", headers=headers, json={"toPage": 3})
+    assert response.status_code == 200, response.text
+    data = world.data()
+    assert (data.readiness(world.subject)["studiedPages"], data.readiness(world.subject)["progressRate"]) == (3, 30)
+    assert data.progress(world.day)["donePages"] == 3
+    assert len(list(world.conn.scalars(select(t.study_records.c.id).where(t.study_records.c.task_id == task)))) == 1

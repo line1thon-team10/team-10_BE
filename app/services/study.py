@@ -10,11 +10,13 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from fractions import Fraction
 
 from sqlalchemy import Connection, func, select
 
 from app.db import schema as t
-from app.domain.progress import PageProgress
+from app.domain.progress import PageProgress, rounded_percent
+from app.domain.ranges import PageSpan, intersect, normalize, page_count
 from app.services.task_views import TaskView, unit_no
 
 OPEN_RATE = 70
@@ -77,11 +79,16 @@ class StudyData:
         sids = [s["id"] for s in self.subjects]
         self.subject_by_id = {s["id"]: s for s in self.subjects}
         unit_rows = conn.execute(
-            select(t.units, t.materials.c.subject_id)
+            select(t.units, t.materials.c.subject_id, t.materials.c.quiz_enabled)
             .join(t.materials, t.units.c.material_id == t.materials.c.id)
             .where(t.materials.c.subject_id.in_(sids), t.units.c.retired_at.is_(None))
             .order_by(t.units.c.sort_order)).mappings()
         self.units = {r["id"]: dict(r) for r in unit_rows}
+        concepts = defaultdict(list)
+        for row in conn.execute(select(t.concepts).where(
+                t.concepts.c.unit_id.in_(list(self.units)), t.concepts.c.retired_at.is_(None))).mappings():
+            concepts[row["unit_id"]].append(row)
+        self.unit_scopes = {uid: self._unit_scope(unit, concepts[uid]) for uid, unit in self.units.items()}
         self.plan = conn.execute(select(t.plans).where(t.plans.c.user_id == user_id)).mappings().first()
 
         self.tasks: list[Task] = []
@@ -159,6 +166,37 @@ class StudyData:
         return unit["mastery_level"]
 
     # ---------- 계산 ----------
+    @staticmethod
+    def _unit_scope(unit: dict, concepts: list) -> tuple[PageSpan, ...]:
+        """Current included concept union, or the whole unit when no concepts exist."""
+        start, end = unit["start_page"], unit["end_page"]
+        if not unit["in_scope"] or unit["quantity_basis"] != "page" or start is None or end is None or not 1 <= start <= end:
+            return ()
+        whole = (PageSpan(unit["material_id"], start, end),)
+        if not concepts:
+            return whole
+        return intersect(whole, (PageSpan(unit["material_id"], c["start_page"], c["end_page"])
+                                 for c in concepts if c["in_scope"]))
+
+    def _task_exam_ranges(self, task: Task) -> tuple[tuple[PageSpan, ...], tuple[PageSpan, ...]]:
+        """Clip this placement and its latest unit-owned evidence to current scope."""
+        by_unit = defaultdict(list)
+        for row in task.done_ranges:
+            if row["start_page"] is not None and row["end_page"] is not None:
+                by_unit[row["unit_id"]].append(PageSpan(row["unit_id"], row["start_page"], row["end_page"]))
+        planned, completed = [], []
+        for row in task.paged:
+            unit = self.units.get(row["unit_id"])
+            if unit is None:
+                continue
+            scope = intersect(self.unit_scopes[unit["id"]],
+                              (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),))
+            planned.extend(scope)
+            for span in scope:
+                matches = intersect((PageSpan(unit["id"], span.start, span.end),), by_unit[unit["id"]])
+                completed.extend(PageSpan(span.material_id, match.start, match.end) for match in matches)
+        return normalize(planned), normalize(completed)
+
     def progress(self, day: date) -> dict:
         tasks = self.tasks_on(day)
         total = sum(x.pages for x in tasks)
@@ -206,32 +244,31 @@ class StudyData:
         }
 
     def readiness(self, subject: dict) -> dict:
-        units = [u for u in self.units.values() if u["subject_id"] == subject["id"] and u["in_scope"]
-                 and u["start_page"] is not None]
-        scope = sum(u["end_page"] - u["start_page"] + 1 for u in units)
-        unit_ids = {u["id"] for u in units}
-        studied: dict[str, set[int]] = defaultdict(set)
+        units = [u for u in self.units.values() if u["subject_id"] == subject["id"] and self.unit_scopes[u["id"]]]
+        scope = normalize(span for unit in units for span in self.unit_scopes[unit["id"]])
+        studied = []
         for x in self.tasks:
             if x.row["subject_id"] != subject["id"] or x.row["task_type"] != "study":
                 continue
-            for r in x.done_ranges:
-                if r["unit_id"] in unit_ids and r["start_page"] is not None:
-                    studied[r["unit_id"]].update(range(r["start_page"], r["end_page"] + 1))
-        studied_pages = sum(len(v) for v in studied.values())
-        progress = studied_pages / scope if scope else 0
-        quizzed = [u for u in units if u["mastery_score"] is not None]
-        weight = sum(u["end_page"] - u["start_page"] + 1 for u in quizzed)
-        mastery = (sum(u["mastery_score"] * (u["end_page"] - u["start_page"] + 1) for u in quizzed) / weight / 100
-                   if weight else None)
+            _, completed = self._task_exam_ranges(x)
+            studied.extend(completed)
+        progress = PageProgress.from_ranges(scope, studied)
+        # Overlapping concepts within a unit are defined; overlapping current
+        # units in one PDF have no authoritative score weighting (legacy damage).
+        ambiguous = sum(page_count(self.unit_scopes[u["id"]]) for u in units) != progress.total_pages
+        quizzed = [u for u in units if u["quiz_enabled"] and u["mastery_score"] is not None]
+        weight = sum(page_count(self.unit_scopes[u["id"]]) for u in quizzed)
+        mastery = (sum(Fraction(str(u["mastery_score"])) * page_count(self.unit_scopes[u["id"]]) for u in quizzed)
+                   / weight / 100 if weight and not ambiguous else None)
         return {
             "subjectId": subject["id"],
-            "readiness": round(progress * mastery * 100) if mastery is not None else 0,
+            "readiness": rounded_percent(progress.ratio * mastery) if mastery is not None else 0,
             "target": subject["target_score"],
             "targetLabel": subject["target_grade"],
-            "progressRate": round(progress * 100, 1),
-            "mastery": round(mastery * 100, 1) if mastery is not None else None,
-            "studiedPages": studied_pages,
-            "totalPages": scope,
+            "progressRate": rounded_percent(progress.ratio, places=1),
+            "mastery": rounded_percent(mastery, places=1) if mastery is not None else None,
+            "studiedPages": progress.done_pages,
+            "totalPages": progress.total_pages,
         }
 
     def task_view(self, x: Task) -> dict:
