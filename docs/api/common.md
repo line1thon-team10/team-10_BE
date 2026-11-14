@@ -19,7 +19,7 @@
 - 페이지·개수·요일·인덱스는 정수. 점수·백분율·분당 속도는 유한 number. NaN/Infinity 금지. 페이지는 1부터 양끝 포함, 보기 choice는 0부터.
 - 날짜 `YYYY-MM-DD`, 월 `YYYY-MM`, 시각 `HH:mm`; 실제 존재하는 값만 허용. 사용자 시간대 Asia/Seoul. DB timestamp는 timezone 포함, 날짜 집계는 사용자 시간대 기준.
 - 일반 사용자의 today는 서버 현재 날짜, 데모는 users.demo_date. 자정 처리는 last_assessed_date 이후 미처리 날짜를 순서대로 한 번씩 처리한다.
-- 목록은 항상 배열(없으면 `[]`); null 배열 금지. 표에서 nullable인 scalar/object는 항상 키와 null을 반환한다. 기본값이 표시된 bool/array/number는 null 대신 그 기본값을 반환한다. 비nullable 키는 생략하지 않는다. mockFilled는 서버에서 생략 가능하며 FE 기본 []를 사용한다.
+- 목록은 항상 배열(없으면 `[]`); null 배열 금지. 표에서 nullable인 scalar/object는 항상 키와 null을 반환한다. 기본값이 표시된 bool/array/number는 null 대신 그 기본값을 반환한다. 비nullable 키는 생략하지 않는다. mockFilled는 서버에서 생략 가능하며 FE 기본 []를 사용한다. 단, review.md의 Note/question에 명시된 mockFilled의 null 허용은 해당 도메인의 예외로 유지한다.
 - 요청의 선택 필드는 생략 가능. null은 명시적으로 nullable인 필드만 허용. 알 수 없는 요청 키는 422 INVALID_INPUT. PATCH는 전송된 키만 변경한다.
 - 자유 text/제목/배열의 일률적인 제품 상한을 두지 않는다. 엔드포인트별 명시된 제한만 계약으로 적용한다. 배포 시 요청 크기 제한은 운영 설정으로 별도 공개한다. 공백만 있는 필수 text는 `400 EMPTY`. 도메인별 좁은 제한이 우선한다.
 - 숫자는 입력 문자열을 암묵 변환하지 않는다. bool을 정수로 받지 않는다. 선택 enum 밖의 값은 422 INVALID_INPUT.
