@@ -169,3 +169,17 @@ def test_changed_sample_on_get_marks_stale_and_does_not_issue_second_daily_offer
     assert w.conn.scalar(select(t.speed_calibrations.c.status).where(t.speed_calibrations.c.id==value['calibrationId']))=='stale'
     w.conn.execute(update(t.study_record_ranges).where(t.study_record_ranges.c.record_id==evidence[0]['record']).values(end_page=10))
     assert alert(api_client,w) is None
+
+
+@pytest.mark.parametrize('minutes,replan',[(10,True),(15,False),(60,False),(100,True)])
+def test_untimed_duration_limits_require_recovery(api_client,pace_case,minutes,replan):
+    w,_,evidence,future,_=pace_case
+    w.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id.in_([row['session'] for row in evidence])).values(measured_seconds=minutes*60))
+    value=alert(api_client,w)
+    assert value['rows'][0]['after']==minutes
+    response=decide(api_client,w,value)
+    assert response.status_code==200,response.text
+    assert response.json()['data']['replan'] is replan
+    pending=w.conn.execute(select(t.plan_change_requests).where(t.plan_change_requests.c.user_id==w.user,
+        t.plan_change_requests.c.kind=='recovery',t.plan_change_requests.c.status=='ready')).mappings().first()
+    assert (pending is not None) is replan
