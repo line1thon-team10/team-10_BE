@@ -29,3 +29,9 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 `claim(user_id, job_id, owner=..., now=..., lease_for=timedelta(...))`는 선점한 작업(새 lease_token 포함) 또는 None을 반환한다. 호출자는 claim을 commit하고 DB transaction 밖에서 AI를 호출한 뒤 새 transaction에서 `complete` 또는 `fail`을 호출한다. 이 연산은 owner/token/revision/now를 모두 받고 현재 답안과 만료 여부까지 조건부 갱신하여 성공 여부 bool을 반환한다. 같은 worker 이름으로 재선점해도 token이 바뀌므로 이전 결과는 반영되지 않는다. `renew`도 같은 자격을 확인하며 기존 lease를 줄이지 않는다.
 
 실패는 답안 원문을 유지하고 result=null로 남긴다. 저장된 채점 결과는 `is_correct`, `essay_score`, `feedback`, `got_points`, `missing_points`, `grading_status`를 가진다. 서술형 점수는 정수 0..100이며 85점 정오 경계를 검증한다. 이 연산은 quiz_attempts/숙달도/취약 문항을 확정하지 않는다. JSON 결과를 지울 때 SQL NULL을 사용하며 JSON 리터럴 null을 채점 성공으로 취급하지 않는다.
+
+## 답안 집합 봉인
+
+`QuizAnswerRepository.seal(user_id, quiz_id, expected_revisions={item_id: revision, ...}, now=...)`는 모든 현재 항목의 답안과 revision을 검증하고 정렬된 항목/revision/answerHash 집합을 봉인한다. 동일 집합 재호출은 최초 상태를 반환하며 다른 집합은 `QUIZ_FINALIZED`다. 봉인만으로 기존 quiz_sessions.status나 점수/이력을 확정하지 않는다.
+
+`submission`은 소유권을 검증한 내부 저장 상태를 반환한다.

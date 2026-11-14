@@ -118,6 +118,45 @@ class QuizAnswerRepository:
         by_item = {row["quiz_item_id"]: row_dict(row) for row in rows}
         return [by_item[item_id] for item_id in item_ids if item_id in by_item]
 
+    def submission(self, user_id, quiz_id) -> dict | None:
+        quiz = self.quiz(user_id, quiz_id)
+        return row_dict(self.connection.execute(select(t.quiz_submission_states).where(
+            t.quiz_submission_states.c.quiz_session_id == quiz["id"])).mappings().first())
+
+    def seal(self, user_id, quiz_id, *, expected_revisions: dict[str, int], now: datetime) -> dict:
+        now = aware_time(now)
+        if not isinstance(expected_revisions, dict) or any(type(value) is not int or value < 1
+                                                          for value in expected_revisions.values()):
+            raise ApiError("INVALID_INPUT", "모든 문항의 답안 revision이 필요해요", 422)
+        expected = {normalized_uuid(item_id): value for item_id, value in expected_revisions.items()}
+        if len(expected) != len(expected_revisions):
+            raise ApiError("INVALID_INPUT", "문항 식별자가 중복되었어요", 422)
+        quiz = self.lock_quiz(user_id, quiz_id)
+        with self.connection.begin_nested():
+            existing = self.submission(user_id, quiz["id"])
+            if existing:
+                previous = {answer["questionId"]: answer["revision"] for answer in existing["sealed_answers"]}
+                if expected != previous:
+                    raise ApiError("QUIZ_FINALIZED", "이미 다른 답안 집합으로 봉인한 퀴즈예요", 409)
+                return existing
+            if quiz["status"] in ("submitted", "carried_over") or quiz["finalized_at"] is not None:
+                raise ApiError("QUIZ_FINALIZED", "이미 완료한 퀴즈예요", 409)
+            items = self.items(user_id, quiz["id"])
+            current = self.list_current(user_id, quiz["id"])
+            if not items or set(expected) != {item["id"] for item in items} or len(current) != len(items):
+                raise ApiError("INVALID_INPUT", "모든 문항의 답안을 먼저 저장해 주세요", 422)
+            if any(answer["revision"] != expected[answer["quiz_item_id"]] or not answer["input_recovered"] for answer in current):
+                raise ApiError("ANSWER_CONFLICT", "현재 답안 revision을 다시 확인해 주세요", 409)
+            sealed = [{"questionId": answer["quiz_item_id"], "answerId": answer["id"],
+                       "revision": answer["revision"], "answerHash": answer["answer_hash"]}
+                      for answer in sorted(current, key=lambda answer: answer["quiz_item_id"])]
+            digest = canonical_hash([{key: answer[key] for key in ("questionId", "revision", "answerHash")}
+                                     for answer in sealed])
+            self.connection.execute(t.quiz_submission_states.insert().values(
+                quiz_session_id=quiz["id"], sealed_at=now, answer_set_hash=digest,
+                input_recovered=True, sealed_answers=sealed, legacy=False))
+            return self.submission(user_id, quiz["id"])
+
     def save(self, user_id, quiz_id, item_id, *, revision: int, choice: int | None = None,
              text: str | None = None, confidence: str, now: datetime, answered_date: date) -> AnswerSave:
         if type(revision) is not int or revision < 0 or type(answered_date) is not date:

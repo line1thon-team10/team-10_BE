@@ -312,3 +312,59 @@ def test_invalid_lease_settings_do_not_claim(domain_connection, storage_case, qu
     jobs = GradingJobRepository(domain_connection)
     error("INVALID_INPUT", lambda: claim(jobs, storage_case, queued_job, **change), 422)
     assert jobs.get(storage_case["user"], queued_job["id"])["status"] == "queued"
+
+
+def seal_answers(conn, case):
+    repo = QuizAnswerRepository(conn)
+    for kind in ("choice", "essay"):
+        save(repo, case, kind=kind)
+    return repo.seal(case["user"], case["quiz"], now=NOW + timedelta(seconds=1),
+                     expected_revisions={case["choice_item"]: 1, case["essay_item"]: 1})
+
+
+def test_seal_freezes_exact_revisions_and_replays_original_state(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    state = seal_answers(conn, case)
+    assert state["input_recovered"] and not state["legacy"] and len(state["answer_set_hash"]) == 64
+    assert state["result_snapshot"] is None
+    replay = repo.seal(case["user"], case["quiz"], now=NOW + timedelta(days=1),
+                       expected_revisions={case["essay_item"]: 1, case["choice_item"]: 1})
+    assert replay == state
+    assert not save(repo, case, revision=1).created
+    error("QUIZ_FINALIZED", lambda: save(repo, case, revision=1, text="봉인 뒤 변경"))
+    error("QUIZ_FINALIZED", lambda: repo.seal(case["user"], case["quiz"], now=NOW,
+          expected_revisions={case["essay_item"]: 2, case["choice_item"]: 1}))
+    conn.commit()
+    assert QuizAnswerRepository(conn).submission(case["user"], case["quiz"]) == state
+
+
+@pytest.mark.parametrize("kind", ["missing_answer", "missing_item", "foreign_item", "stale_revision", "duplicate_uuid"])
+def test_incomplete_or_stale_sets_cannot_be_sealed(domain_connection, storage_case, kind):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    save(repo, case)
+    expected = {case["essay_item"]: 1, case["choice_item"]: 1}
+    if kind != "missing_answer":
+        save(repo, case, kind="choice")
+    if kind == "missing_item":
+        del expected[case["choice_item"]]
+    elif kind == "foreign_item":
+        expected[str(uuid4())] = expected.pop(case["choice_item"])
+    elif kind == "stale_revision":
+        save(repo, case, revision=1, text="바뀜")
+    elif kind == "duplicate_uuid":
+        expected[case["essay_item"].replace("-", "").upper()] = 1
+    error("ANSWER_CONFLICT" if kind == "stale_revision" else "INVALID_INPUT",
+          lambda: repo.seal(case["user"], case["quiz"], expected_revisions=expected, now=NOW),
+          409 if kind == "stale_revision" else 422)
+    assert repo.submission(case["user"], case["quiz"]) is None
+
+
+def test_foreign_user_cannot_seal_a_quiz(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    other = make_case(conn)
+    repo = QuizAnswerRepository(conn)
+    seal_answers(conn, case)
+    error("NO_QUIZ", lambda: repo.seal(other["user"], case["quiz"], now=NOW, expected_revisions={}), 404)
+    error("NO_QUIZ", lambda: repo.submission(other["user"], case["quiz"]), 404)
