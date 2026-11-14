@@ -284,7 +284,7 @@
       "id": "AI-01",
       "title": "AI 호출·검증·저장 결과 공통 경로",
       "lane": "platform",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02",
@@ -312,9 +312,11 @@
       "optional": false,
       "branch": "feat/ai-result-gateway",
       "base_sha": "05106e0755f11f4efe3731e6e9986d4c58b80c62",
-      "head_sha": null,
+      "head_sha": "45b91d83e0413a6d94847bccec1c9264025dc1cf",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Originale9c7f9e149passed. Root reproduced NUL JSONB storage failure, fixed68b7314+docs45b91d8:161SQLite+PG passed. Astra independent final review running."
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
     },
@@ -409,8 +411,8 @@
       "id": "R-03",
       "title": "Task 응답 범위·자료 식별 통일",
       "lane": "study",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-01"
       ],
@@ -419,7 +421,9 @@
         "BE/app/services/study.py",
         "BE/app/routers/today.py",
         "BE/app/services/focus.py",
-        "BE/tests/test_task_views.py"
+        "BE/tests/test_task_views.py",
+        "BE/app/schemas/focus.py",
+        "BE/docs/task-views-handoff.md"
       ],
       "shared_resources": [
         "study-read-model",
@@ -440,15 +444,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/task-range-views",
+      "base_sha": "3af3c9796b7d0364c6deb6d664fbe21301443f64",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Shared TaskView+home/focus ca88fcd;282study+157focusSQLite/PG passed;handoff pending. FocusTask minimal field extension explicitly leased."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-task-views"
     },
     {
       "id": "R-04",
@@ -897,9 +904,10 @@
       "branch": "feat/quiz-answer-storage",
       "base_sha": "48e83b82906339049232b28b335f5069cdf03f25",
       "head_sha": "941e4fe858eb1dc30a4ea9d2f2cdd9e673f9605b",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/22",
       "validation_evidence": [
-        "941e4fe:248SQLite+PG storage/migration/seed/onboarding tests passed. Five tables include no-op save receipts; independent review pending."
+        "941e4fe:248SQLite+PG storage/migration/seed/onboarding tests passed. Five tables include no-op save receipts; independent review pending.",
+        "Astra941e4fe:192existing+10independent SQLite/PG checks passed; schema generator exact/head single; no findings. Actions43543602360 running."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -986,17 +994,22 @@
       "id": "S-01",
       "title": "숙달도 계산 규칙·자료별 식별 보정",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02"
       ],
       "write_scope": [
         "BE/app/domain/mastery.py",
         "BE/app/ai/metrics_adapter.py",
-        "BE/tests/test_mastery_rules.py"
+        "BE/tests/test_mastery_rules.py",
+        "BE/app/services/quiz.py",
+        "BE/docs/api/books.md",
+        "BE/docs/mastery-rules-handoff.md"
       ],
-      "shared_resources": [],
+      "shared_resources": [
+        "quiz-service"
+      ],
       "contract_files": [
         "books.md",
         "review.md"
@@ -1005,18 +1018,20 @@
       "acceptance": [
         "최근9/10/19/20건·49/50/79/80·99상한·HALF_UP",
         "날짜별+5/+15·한 단계 상승·같은 code의 다른 자료/단원 구분",
-        "Q-01에서 개념 없는 문항과 유개념 문항 오답이 섞이면 vendor learning_metrics sorted(wrong.items())의 None/str 비교 오류 확인; 혼합 fixture로 회귀 검증"
+        "Q-01에서 개념 없는 문항과 유개념 문항 오답이 섞이면 vendor learning_metrics sorted(wrong.items())의 None/str 비교 오류 확인; 혼합 fixture로 회귀 검증",
+        "RecoveryEntry preserves actual intraday first <80 history; first recovery date counts as day1; no previous day uses first observed entry score anchor, not zero; facts order independent."
       ],
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/mastery-rules",
+      "base_sha": "baed68a",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-mastery"
     },
     {
       "id": "Q-05",
@@ -1327,7 +1342,8 @@
       "deliverable": "동일 blockId에 이전 배치를 보존하고 실제 남은 범위만 다음 배치로 이동한다. 정정 후 불필요한 미시작 자동 배치만 취소한다.",
       "acceptance": [
         "중복/비연속 범위·여러 번 이월·이후 기록/세션 보존",
-        "보충 삭제 금지·시험일/다음 공부일 없음·동시 마감"
+        "보충 삭제 금지·시험일/다음 공부일 없음·동시 마감",
+        "R03handoff:carry notice.items must retain taskId/rangeId/materialId/unitId and real ranges/pages; do not infer missing legacy identity from page numbers."
       ],
       "operations": [],
       "external_gates": [],
@@ -1452,7 +1468,8 @@
       "deliverable": "유효 측정3일/실제 완료량으로20% 차이를 판정하고 calibrationId 기반 제안/승인으로 미래 예상시간을 바꾼다.",
       "acceptance": [
         "3일 미만·19.99/20%·0쪽·autoStopped/excluded 제외",
-        "일일중복·stale·시작한태스크고정·초과일 재계획/P2 우선"
+        "일일중복·stale·시작한태스크고정·초과일 재계획/P2 우선",
+        "R03handoff:paceAlert.rows must use common TaskView ranges/pages; current null alert does not count as implemented contract."
       ],
       "operations": [
         "POST /api/plan/pace",
@@ -1814,7 +1831,7 @@
       "id": "P-01",
       "title": "가용 시간 기반 계획 배치 엔진",
       "lane": "planning",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "POL-01",
@@ -1844,10 +1861,12 @@
       "validation_evidence": [
         "Worker222passed (68allocator+154ranges); 100 independent tiny oracle comparisons;90pages bench median130.49ms; Astra review pending",
         "Astra P2: day-local subject/ID ties lose later reservation optimum. Fix bd33d63 implements whole reservation L1 vector first; final handoff/re-review pending.",
-        "Finale3df828:227tests,43small objective oracles,500feasibility comparisons passed;Astra re-review running."
+        "Finale3df828:227tests,43small objective oracles,500feasibility comparisons passed;Astra re-review running.",
+        "Astra e3df828:229tests+1000objective oracles+500feasibility comparisons passed,no findings. Actions43543104127:1174passed1skipped. Integrated with QA01:238passed."
       ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "integration_sha": "b395057"
     },
     {
       "id": "P-02",
@@ -3055,7 +3074,7 @@
       "id": "QA-01",
       "title": "런타임 계약·소유권 회귀 검사",
       "lane": "quality",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -3081,11 +3100,13 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/21",
       "validation_evidence": [
         "5790058: importable runtime registry audit. SQLite+PG inventory/auth/owner/input boundaries11passed; domain-specific404 vs422 honored, broad response probes and review pending.",
-        "Final970a99b:11SQLite+PG tests passed after reviewed R02 merge;71FE+5derived docs check passed;Astra independent review queued."
+        "Final970a99b:11SQLite+PG tests passed after reviewed R02 merge;71FE+5derived docs check passed;Astra independent review queued.",
+        "Astra970a99b:11tests+nested/hidden/mount probes passed;actual require-complete exit1(51pending). Actions43543144344:1112passed1skipped. Integrated with P01:238passed."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-contract-tests"
+      "worktree": "BE-task-contract-tests",
+      "integration_sha": "c8f5e00"
     },
     {
       "id": "OPS-01",
