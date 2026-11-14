@@ -7,22 +7,23 @@ const { Parser } = require('@dbml/core');
 const root = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'schema', 'erd.dbml'), 'utf8');
 const schema = new Parser().parse(src, 'dbmlv2').schemas[0];
-const storageConstraints = { checks: [], foreignKeys: {}, serverDefaults: {} };
+const storageConstraints = { checks: [], foreignKeys: {}, serverDefaults: {}, indexes: [] };
 const checkNames = new Set();
-for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-constraints.json']) {
+for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-constraints.json', 'contract-invariants.json']) {
   const configPath = path.join(root, 'schema', filename);
   if (!fs.existsSync(configPath)) continue;
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  for (const check of config.checks) {
+  for (const check of config.checks || []) {
     const key = `${check.table}.${check.name}`;
     if (checkNames.has(key)) throw new Error(`Duplicate CHECK: ${key}`);
     checkNames.add(key);
     storageConstraints.checks.push(check);
   }
-  for (const [field, options] of Object.entries(config.foreignKeys)) {
+  for (const [field, options] of Object.entries(config.foreignKeys || {})) {
     if (Object.hasOwn(storageConstraints.foreignKeys, field)) throw new Error(`Duplicate foreign key: ${field}`);
     storageConstraints.foreignKeys[field] = options;
   }
+  storageConstraints.indexes.push(...(config.indexes || []));
   for (const [field, value] of Object.entries(config.serverDefaults || {})) {
     if (Object.hasOwn(storageConstraints.serverDefaults, field)) throw new Error(`Duplicate server default: ${field}`);
     if (typeof value !== 'string' || value.includes('\u0000')) throw new Error(`Unsupported server default: ${field}`);
@@ -146,7 +147,16 @@ for (const field of Object.keys(storageConstraints.serverDefaults)) {
 
 // DBML에서 표현할 수 없는 집중 부분 인덱스도 재생성 시 보존한다.
 const focusIndexes = JSON.parse(fs.readFileSync(path.join(root, 'schema', 'focus-indexes.json'), 'utf8'));
-for (const index of focusIndexes) {
+const indexNames = new Set();
+for (const index of [...focusIndexes, ...storageConstraints.indexes]) {
+  const table = schema.tables.find(table => table.name === index.table);
+  if (!table || !index.columns.length || index.columns.some(column => !table.fields.some(field => field.name === column))) {
+    throw new Error(`Unknown partial index columns: ${index.name}`);
+  }
+  if (indexNames.has(index.name) || typeof index.where !== 'string' || !index.where.trim()) {
+    throw new Error(`Invalid or duplicate partial index: ${index.name}`);
+  }
+  indexNames.add(index.name);
   const columns = index.columns.map(c => `${index.table}.c.${c}`).join(', ');
   out.push(`Index(${py(index.name)}, ${columns}, unique=True,`);
   out.push(`      postgresql_where=text(${py(index.where)}), sqlite_where=text(${py(index.where)}))`);

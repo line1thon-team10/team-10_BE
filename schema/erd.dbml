@@ -416,6 +416,26 @@ Table learning_passes [note: 'initial/remedial 자동, full_relearn만 명시적
   }
 }
 
+// S-02: 배정 실패에도 보존하는 채점별 보충 의무와 배정 책 연결
+Table remedial_obligations {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  unit_id uuid [not null, ref: > units.id]
+  quiz_session_id uuid [not null, ref: > quiz_sessions.id]
+  scope_revision varchar [not null]
+  required_ranges jsonb [not null, note: '생성 당시 틀린 개념 페이지 합집합 [[start,end]]. 배정/정정으로 축소하지 않음']
+  not_before date [not null, note: '첫 허용 공부일. 시험 전 배정 불가여도 의무를 삭제하지 않음']
+  created_at timestamptz [not null]
+  indexes { (unit_id, quiz_session_id) [unique] }
+}
+
+Table remedial_obligation_blocks {
+  obligation_id uuid [not null, ref: > remedial_obligations.id]
+  block_id uuid [not null, unique, ref: > study_blocks.id]
+  allocation_snapshot jsonb [note: 'remedial-allocation-v1: 생성시각/태스크ID/일자/정확한시간과범위별기준속도·난이도Fraction. legacy null은속도보정제외']
+  indexes { (obligation_id, block_id) [pk] }
+}
+
 // QZ / RV: 원본 문제, 구성, 확신·채점, 근거
 Table questions [note: '구조 교체 뒤 과거 문항을 새 단원/개념에 재연결하지 않음. 현재 출제 범위·실제 근거가 검증된 문항만 준비도에 포함.'] {
   id uuid [pk]

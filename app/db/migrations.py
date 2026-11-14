@@ -68,7 +68,9 @@ def adopt_baseline(connection: Connection) -> bool:
     validate_baseline(connection)
     if heads:
         return False
-    command.stamp(migration_config(connection), BASELINE)
+    config = migration_config(connection)
+    config.attributes["preserve_transaction"] = True
+    command.stamp(config, BASELINE)
     return True
 
 
