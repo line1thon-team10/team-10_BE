@@ -14,8 +14,10 @@ from tests.test_progress_contract import progress_world
 
 def set_local_clock(monkeypatch, zone, day, hour, minute, second=0):
     from app.routers import today
+    from app.services import day_rollover
     at = datetime(day.year, day.month, day.day, hour, minute, second, tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
     monkeypatch.setattr(today, 'now_utc', lambda: at)
+    monkeypatch.setattr(day_rollover, 'now_utc', lambda: at)
 
 
 def get_today(client, world):

@@ -44,7 +44,7 @@ def test_three_generation_book_keeps_holes_and_reopens_on_middle_correction(api_
 def test_same_pdf_other_unit_record_cannot_complete_block(api_client, progress_world):
     w = progress_world
     unit = w.unit(1, 10, mastery_level=None)
-    wrong = w.unit(1, 10, material_id=unit['material_id'])
+    wrong = w.unit(1, 10, material_id=unit['material_id'], sort_order=unit['sort_order'] + 1)
     task = w.task((unit, 1, 10), done=[(wrong, 1, 10)], status='completed')
     w.conn.commit()
     target = book(api_client, w, unit)
