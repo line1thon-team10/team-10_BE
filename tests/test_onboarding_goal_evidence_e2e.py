@@ -60,3 +60,17 @@ def test_short_absence_answer_only_confirms_the_single_questioned_group(api_clie
     if expected == 200:
         assert response.json()['data']['subjects'][0]['confirmedFields']['goalEtc']
         assert not response.json()['data']['done']
+
+
+@pytest.mark.parametrize('group,quote,text', [
+    ('examDate', '2026-11-20', '시험은 2026-11-20이 아니라 2026-11-21, 목표 A+, 총 목표 없음, 기타 없음'),
+    ('goal', 'A+', '시험은 2026-11-20, 목표 A+가 아니라 B+, 총 목표 없음, 기타 없음'),
+])
+def test_verbatim_but_negated_quote_cannot_confirm(api_client, dialogue_case, group, quote, text):
+    case = dialogue_case
+    def transform(value, context):
+        value['goals'][0]['confirmationEvidence'][group] = quote
+        return value
+    case['model'].transform = transform
+    response = message(api_client, case, text=text)
+    assert response.status_code == 503, response.text
