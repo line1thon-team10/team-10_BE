@@ -1,18 +1,16 @@
 """익명 사용자 (NF-01). 로그인 없이 서버가 발급한 ID를 헤더 X-Anonymous-Id로 받아요."""
 from uuid import UUID
 
-from fastapi import Depends, Header
-from sqlalchemy import Connection
+from fastapi import Header
 
 from app.config import ANON_HEADER
 from app.core.responses import ApiError
-from app.db.session import get_conn
+from app.db import session as db_session
 from app.repositories.users import UserRepository
 
 
 def current_user(
     anonymous_ids: list[str] | None = Header(default=None, alias=ANON_HEADER),
-    conn: Connection = Depends(get_conn),
 ) -> dict:
     if not anonymous_ids or anonymous_ids == [""]:
         raise ApiError("NO_SESSION", "익명 ID가 없어요. 먼저 /api/session을 호출해 주세요", 401)
@@ -23,9 +21,9 @@ def current_user(
     except ValueError:
         raise ApiError("UNKNOWN_SESSION", "익명 ID의 형식이 올바르지 않아요. 새로 발급받아 주세요", 401) from None
     # Authentication and missed-date settlement finish before the endpoint's
-    # transaction. AI routes may close that untouched connection before work.
+    # transaction. Release this connection before an endpoint acquires one.
     from app.services.day_rollover import DayRolloverService
-    with conn.engine.begin() as auth_conn:
+    with db_session.engine.begin() as auth_conn:
         user = UserRepository(auth_conn).get(anonymous_id)
         if user is None:
             raise ApiError("UNKNOWN_SESSION", "알 수 없는 익명 ID예요. 새로 발급받아 주세요", 401)
