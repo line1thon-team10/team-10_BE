@@ -131,7 +131,8 @@ class QuestionBankService(MaterialAnalysisService):
                     type={'multiple_choice': 'choice', 'short_answer': 'short', 'essay': 'essay'}[question['type']],
                     difficulty=context['difficulty'], prompt=question['question'],
                     choices=[{'text': option} for option in question['options']], correct_answer=question['answer'],
-                    explanation=question['explanation'], origin='pregenerated', generation_version=PROMPT_VERSION,
+                    explanation=question['explanation'], origin='pregenerated',
+                    generation_version=f"{SCHEMA_VERSION}:{job['id']}",
                     created_at=now))
                 source = sources[question['evidence_id']]
                 conn.execute(t.question_sources.insert().values(id=str(uuid4()), question_id=question_id,
