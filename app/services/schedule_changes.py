@@ -19,7 +19,7 @@ from app.services.calendar import occurrences
 from app.services.empty_time import EmptyTimeService
 from app.services.onboarding_events import _local, _local_time_to_utc, _minute
 from app.services.plan_draft import _basis, _json_value
-from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
+from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations, _without_elapsed_slots
 from app.services.allocator import allocate
 from app.services.study import StudyData
 from app.services.schedule_placements import apply_saved_placements, clock_minute, clock_text, move_task
@@ -339,6 +339,8 @@ def _allocation(conn,user_id,today,zone,overrides,exception_overrides,added):
     extra={'placements':[],'supersedeIds':[]}
     fixed=[task for task in request.fixed if task.id not in movable]
     fixed_by_id={task.id:task for task in request.fixed}
+    if movable:
+        request=_without_elapsed_slots(conn,user_id,replace(request,fixed=tuple(fixed)),zone,None)
     for identifier,task in sorted(movable.items()):
         duration=Fraction(task.row['estimated_minutes'])
         if not 15<=duration<=60:
@@ -456,7 +458,7 @@ def _edit_preview(self,user_id,key,command):
         changes['allocation']=_saved_allocation(request,result,supersede,data,zone)
     with self.engine.begin() as conn:
         service=ProposalService(conn)
-        response={'event':shown,'moves':(_move_view(data,changes['allocation']) if changes.get('allocation') else []) + _extra_move_view(data,extra),
+        response={'event':shown,'moves':(_move_view(data,changes['allocation']) if changes.get('allocation') else []) + _extra_move_view(data,extra,zone),
             'exceptionChanges':changes['exceptionChanges'],'note':None}
         return service.create(user_id,domain=EDIT_DOMAIN,target=target,snapshot=snapshot,
             normalized_input=command.model_dump(mode='json'),changes=changes,preview_response=response,
@@ -464,7 +466,7 @@ def _edit_preview(self,user_id,key,command):
 
 
 
-def _extra_move_view(data,extra):
+def _extra_move_view(data,extra,zone):
     result=[]
     by_id={task.id:task for task in data.tasks}
     for placement in extra.get('placements',[]):
@@ -474,5 +476,8 @@ def _extra_move_view(data,extra):
             'end':clock_text(Fraction(*placement['end'])),'minutes':placement['minutes'],
             'from':None,'to':None,'pages':0,'ranges':[]}
         result.append({'taskId':task.id,'block':{**data.task_view(task),'subjectName':subject['name'],'color':subject['color'],
-            'date':task.row['scheduled_date'].isoformat(),'start':'','end':'','moved':False},'pieces':[piece]})
+            'date':task.row['scheduled_date'].isoformat(),
+            'start':_local(task.row['starts_at'],ZoneInfo(zone)).strftime('%H:%M') if task.row['starts_at'] else '',
+            'end':_local(task.row['ends_at'],ZoneInfo(zone)).strftime('%H:%M') if task.row['ends_at'] else '',
+            'moved':task.row['origin_task_id'] is not None},'pieces':[piece]})
     return result
