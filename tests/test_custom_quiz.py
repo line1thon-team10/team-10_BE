@@ -109,3 +109,21 @@ def test_weak_tie_uses_unit_id_before_material_id(api_client,progress_world):
     selected=w.conn.scalar(select(t.questions.c.unit_id).join(t.quiz_items,t.quiz_items.c.question_id==t.questions.c.id)
         .where(t.quiz_items.c.quiz_session_id==response.json()['data']['quizId']))
     assert selected==first['id']
+
+
+def test_saved_ungraded_answer_is_not_prioritized_as_unplayed(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,10)
+    w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    played=add_question(w,unit,code='a');unplayed=add_question(w,unit,code='z')
+    initial=create(api_client,w,[scope(unit)],count=1).json()['data']
+    item=w.conn.scalar(select(t.quiz_items.c.id).where(t.quiz_items.c.quiz_session_id==initial['quizId']))
+    assert w.conn.scalar(select(t.quiz_items.c.question_id).where(t.quiz_items.c.id==item))==played
+    w.conn.commit()
+    saved=api_client.put(f"/api/quiz/{initial['quizId']}/answers/{item}",headers={'X-Anonymous-Id':w.user},
+        json={'choice':None,'text':'저장한 답변','confidence':'unsure','revision':0})
+    assert saved.status_code==200,saved.text
+    assert w.conn.scalar(select(func.count()).select_from(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id==item))==0
+    fresh=create(api_client,w,[scope(unit)],count=1)
+    assert fresh.status_code==200,fresh.text
+    selected=w.conn.scalar(select(t.quiz_items.c.question_id).where(t.quiz_items.c.quiz_session_id==fresh.json()['data']['quizId']))
+    assert selected==unplayed

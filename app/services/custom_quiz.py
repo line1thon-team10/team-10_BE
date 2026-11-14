@@ -55,6 +55,10 @@ class CustomQuizService:
         attempted=set(self.conn.scalars(select(t.quiz_items.c.question_id).join(t.quiz_attempts,t.quiz_attempts.c.quiz_item_id==t.quiz_items.c.id)
             .join(t.quiz_sessions,t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id)
             .where(t.quiz_sessions.c.user_id==self.user['id'],t.quiz_attempts.c.finalized_at.is_not(None))))
+        attempted.update(self.conn.scalars(select(t.quiz_items.c.question_id)
+            .join(t.quiz_answer_heads,t.quiz_answer_heads.c.quiz_item_id==t.quiz_items.c.id)
+            .join(t.quiz_sessions,t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id)
+            .where(t.quiz_sessions.c.user_id==self.user['id'])))
         buckets=defaultdict(list)
         for question in sorted(available.values(),key=lambda q:(q['id'] in attempted,q['code'] or '',q['id'])):
             buckets[question['unit_id']].append(question['id'])
