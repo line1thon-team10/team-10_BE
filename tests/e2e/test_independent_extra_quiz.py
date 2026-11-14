@@ -1,6 +1,6 @@
 """Independent Q-09 guards for result publication and immutable retries."""
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import null, select, update
 from app.db import schema as t
 from tests.test_progress_contract import progress_world
 from tests.test_quiz_selection import prior_seed_quizzes
@@ -14,8 +14,8 @@ def test_more_requires_published_final_parent_result(api_client, progress_world,
     if guard == 'unfinalized':
         w.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == parent).values(finalized_at=None))
     else:
-        w.conn.execute(t.quiz_submission_states.insert().values(quiz_session_id=parent,
-            sealed_at=w.now, input_recovered=False, sealed_answers=[], legacy=True))
+        w.conn.execute(update(t.quiz_submission_states).where(t.quiz_submission_states.c.quiz_session_id == parent).values(
+            result_snapshot=null(), result_provenance=None, result_schema_version=None, result_captured_at=None))
     before = w.conn.execute(select(t.quiz_sessions)).all()
     response = more(api_client, w, unit)
     assert response.status_code == 404, response.text
