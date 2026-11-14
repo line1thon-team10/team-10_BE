@@ -132,6 +132,8 @@ def test_voice_retry_after_calendar_response_failure_has_no_duplicate_event(api_
     ('매주 월요일 오전 10시부터 11시까지 수업', {**EVENT, 'days': [1], 'start': '22:00', 'end': '23:00'}),
     ('2026년 11월 20일 월요일 10시부터 11시까지 수업', {**EVENT, 'days': None, 'date': '2026-11-20', 'end': '11:00'}),
     ('매주 월요일 10시부터 11시까지, 수요일 13시부터 14시까지 수업', EVENT),
+    ('매주 월요일 100시부터 101시까지 수업', {**EVENT, 'days': [1], 'start': '00:00', 'end': '01:00'}),
+    ('매주 월요일 스물한 시부터 스물두 시까지 수업', {**EVENT, 'days': [1], 'start': '01:00', 'end': '02:00'}),
 ])
 def test_source_contradiction_or_missing_coordinates_never_writes(api_client, domain_connection, dialogue_case, text, event):
     case, conn = dialogue_case, domain_connection
