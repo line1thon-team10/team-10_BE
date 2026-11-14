@@ -10,6 +10,7 @@ from app.domain.progress import PageProgress
 from app.domain.ranges import PageSpan, page_count
 from app.services.records import lock_record_user, record_date
 from app.services.study import StudyData
+from app.services.archive_visibility import ArchiveVisibility
 
 
 class DailyTotalsService:
@@ -24,10 +25,12 @@ class DailyTotalsService:
             t.daily_plan_totals.c.user_id==self.user['id'],t.daily_plan_totals.c.study_date==day)).mappings()}
 
     @staticmethod
-    def _current(data,day):
+    def _current(data,day,visibility=None):
         grouped=defaultdict(lambda:{'planned_new_pages':0,'planned_total_pages':0,'planned_unpaged_minutes':0})
         new_spans=defaultdict(list)
         for task in data.tasks_on(day):
+            if visibility is not None and not visibility.task(task):
+                continue
             row=grouped[task.row['subject_id']]
             row['planned_total_pages']+=task.pages
             if task.row['task_type']=='study':
@@ -48,7 +51,7 @@ class DailyTotalsService:
         data=self._data()
         if data.plan is None:
             return {}
-        stored,current=self._stored(day),self._current(data,day)
+        stored,current=self._stored(day),self._current(data,day,ArchiveVisibility(self.conn,self.user,data.subjects))
         for sid in current.keys() | stored.keys():
             previous=stored.get(sid)
             if previous and previous['finalized_at'] is not None:
@@ -63,11 +66,12 @@ class DailyTotalsService:
                 self.conn.execute(t.daily_plan_totals.insert().values(**identity,**values))
         return self._stored(day)
 
-    def view(self,day,*,at=None):
+    def view(self,day,*,at=None,data=None,visibility=None):
         """Corrections change only numerators; future completion is never predicted."""
         at=at or now_utc()
-        data=self._data()
-        stored,current=self._stored(day),self._current(data,day)
+        data=data if data is not None else self._data()
+        visibility=visibility if visibility is not None else ArchiveVisibility(self.conn,self.user,data.subjects)
+        stored,current=self._stored(day),self._current(data,day,visibility)
         done=defaultdict(int)
         if day<=record_date(self.user,at):
             for task in data.tasks:
