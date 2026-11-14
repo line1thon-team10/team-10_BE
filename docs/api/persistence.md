@@ -41,3 +41,14 @@
 - 선택적 Idempotency-Key 중 next-day는 `0003_demo_day_requests`의 전용 테이블로 구현했다. 경로/메서드는 테이블 용도로 고정하고 완료된 200 data만 저장한다. 자동 만료는 하지 않는다. 다른 도메인의 요청/status/만료 지원은 별도 구현이 필요하다.
 
 API enum과 DB enum 변환은 [enums.md](enums.md). 필드가 단순히 이름만 다른 경우 DB를 FE 이름으로 바꾸지 않고 응답 조립에서 변환한다.
+
+### 기록 요청 응답 재생 (R-04)
+
+선택적 `Idempotency-Key`가 있는 POST records 및 PATCH task record의 성공 응답은
+`record_requests`에 `(user_id, method, path, idempotency_key)`와 정규화한 입력 해시로 저장한다.
+사용자 잠금 아래 기록·알림 변경과 응답 저장을 같은 트랜잭션으로 커밋한다.
+같은 키의 재전송은 최초 응답을 그대로 반환하며 이후 기록 정정을 덮어쓰지 않는다.
+본문이 다르면 `409 IDEMPOTENCY_CONFLICT`, 처리 중 사용자 잠금 경합은
+`409 REQUEST_IN_PROGRESS`다. 실패한 요청은 응답을 저장하지 않아 같은 키로 재시도할 수 있다.
+헤더가 없으면 기존 기록 동작을 유지한다. 현재 자동 만료는 없으며 명시적 데모 reset/seed는
+해당 사용자의 기록과 함께 응답 재생 자료도 비운다. 다른 사용자의 키는 유지한다.

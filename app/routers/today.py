@@ -10,6 +10,7 @@ from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
 from app.schemas.records import FixIn, RecordIn, UUIDString
+from app.repositories.record_requests import RecordRequestRepository, record_request_key
 from app.services.planner import Planner
 from app.services import records
 from app.services.study import OPEN_RATE, StudyData, unit_no
@@ -69,8 +70,18 @@ def _notice(conn: Connection, user: dict, today) -> dict | None:
 
 
 @router.post("/records")
-def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn),
+                key: str | None = Depends(record_request_key)):
     user = records.lock_record_user(conn, user)
+    request = RecordRequestRepository(conn, user["id"], "POST", "/api/records", key,
+                                      body.model_dump(mode="json", exclude_unset=True))
+    cached = request.replay()
+    if cached is not None:
+        return cached
+    return request.save(_post_record(body, user, conn))
+
+
+def _post_record(body, user, conn):
     at = now_utc()
     today = records.record_date(user, at)
     data = StudyData(conn, user["id"])
@@ -116,9 +127,19 @@ def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connec
 
 
 @router.patch("/tasks/{task_id}/record")
-def fix_record(task_id: UUIDString, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
-    """기록한 뒤 끝낸 페이지 고치기 (HM-03). 이월·진행률은 다시 계산돼요"""
+def fix_record(task_id: UUIDString, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn),
+               key: str | None = Depends(record_request_key)):
     user = records.lock_record_user(conn, user)
+    request = RecordRequestRepository(conn, user["id"], "PATCH", f"/api/tasks/{task_id}/record", key,
+                                      body.model_dump(mode="json", exclude_unset=True))
+    cached = request.replay()
+    if cached is not None:
+        return cached
+    return request.save(_fix_record(task_id, body, user, conn))
+
+
+def _fix_record(task_id, body, user, conn):
+    """기록한 뒤 끝낸 페이지 고치기 (HM-03). 이월·진행률은 다시 계산돼요"""
     at = now_utc()
     today = records.record_date(user, at)
     data = StudyData(conn, user["id"])

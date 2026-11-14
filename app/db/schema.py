@@ -30,6 +30,18 @@ demo_day_requests = Table(
     PrimaryKeyConstraint("user_id", "idempotency_key"),
 )
 
+record_requests = Table(
+    "record_requests", metadata,
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("method", String, nullable=False),
+    Column("path", String, nullable=False),
+    Column("idempotency_key", UUID, nullable=False),
+    Column("request_hash", String, nullable=False),
+    Column("response", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("user_id", "method", "path", "idempotency_key"),
+)
+
 subjects = Table(
     "subjects", metadata,
     Column("id", UUID, primary_key=True, nullable=False),

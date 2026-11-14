@@ -25,6 +25,18 @@ Table demo_day_requests {
   indexes { (user_id, idempotency_key) [pk] }
 }
 
+// Optional record request keys; response is committed with the record mutation.
+Table record_requests {
+  user_id uuid [not null, ref: > users.id]
+  method varchar [not null]
+  path varchar [not null]
+  idempotency_key uuid [not null]
+  request_hash varchar [not null]
+  response jsonb [not null]
+  created_at timestamptz [not null]
+  indexes { (user_id, method, path, idempotency_key) [pk] }
+}
+
 Table subjects {
   id uuid [pk]
   user_id uuid [not null, ref: > users.id]
