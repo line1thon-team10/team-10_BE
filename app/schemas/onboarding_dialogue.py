@@ -23,3 +23,11 @@ class DialogueCommand(BaseModel):
     def valid_subject(cls, value):
         return str(UUID(value)) if value is not None else None
 
+
+class VoiceCommand(DialogueCommand):
+    @field_validator('subjectId')
+    @classmethod
+    def no_subject(cls, value):
+        if value is not None:
+            raise ValueError('Calendar voice input is initial-onboarding only')
+        return value

@@ -14,7 +14,9 @@ from app.db import schema as t
 from app.domain.onboarding import ConversationMessage, GOAL_COLUMNS, GoalUpdate
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.proposals import canonical_hash
+from app.schemas.onboarding_events import EventCreate
 from app.services.onboarding import OnboardingService
+from app.services.onboarding_events import OnboardingEventsService
 
 ENVELOPE = 'onboarding-turn-v1'
 
@@ -25,7 +27,10 @@ def _aware(value):
 
 def _snapshot(conn, user, command, mode):
     onboarding = OnboardingService(conn, user)
-    if command.get('subjectId') is not None:
+    if mode == 'voice':
+        events = OnboardingEventsService(conn, user)
+        events._initial_draft()
+    elif command.get('subjectId') is not None:
         onboarding._draft(command['subjectId'])
     elif user['onboarding_status'] == 'completed' or conn.scalar(select(t.plans.c.id).where(t.plans.c.user_id == user['id'])):
         raise ApiError('ONBOARDING_COMPLETED', '추가할 draft 과목을 선택해 주세요', 409)
@@ -106,7 +111,7 @@ class OnboardingDialogueService:
                 status='failed', stage='failed', error_code=code, finished_at=self.clock()))
 
     def run(self, user_id, command, *, mode='message', idempotency_key=None):
-        if mode != 'message':
+        if mode not in ('message', 'voice'):
             raise ValueError('Invalid onboarding interpretation mode')
         if idempotency_key is not None and (not 1 <= len(idempotency_key) <= 128 or any(
                 not 33 <= ord(char) <= 126 for char in idempotency_key)):
@@ -132,17 +137,35 @@ class OnboardingDialogueService:
                     raise ApiError('INPUT_STALE', '해석하는 동안 온보딩 상태가 바뀌었어요. 다시 요청해 주세요', 409) from None
                 if current != claim['basis']:
                     raise ApiError('INPUT_STALE', '해석하는 동안 입력이 바뀌었어요. 다시 요청해 주세요', 409)
-                updates = []
-                for item in value['goals']:
-                    values = {field: item['values'][field] for field in item['providedFields']}
-                    if values.get('exam_date') is not None:
-                        values['exam_date'] = date.fromisoformat(values['exam_date'])
-                    # False means "not confirmed by this turn", not a command
-                    # to clear earlier confirmations in unrelated groups.
-                    updates.append(GoalUpdate(item['subjectId'], values,
-                        {group: True for group, confirmed in item['confirmedFields'].items() if confirmed}))
-                response = OnboardingService(conn, user).save_turn(subject_id=command.get('subjectId'), goals=updates,
-                    messages=[ConversationMessage('user', command['text']), ConversationMessage('ai', value['message'], tuple(value['chips']))])
+                if mode == 'voice':
+                    if not value['isConfirmed'] or value['event'] is None:
+                        raise ApiError('PARSE_FAILED', '날짜·요일과 시작·종료 시각을 정확히 알려 주세요', 400)
+                    calendar = OnboardingEventsService(conn, user)
+                    calendar._lock()
+                    calendar._initial_draft()
+                    event = EventCreate.model_validate(value['event'])
+                    try:
+                        values = calendar._values(event)
+                    except ApiError:
+                        raise ApiError('PARSE_FAILED', '시간대에서 확정할 수 있는 날짜와 시각을 알려 주세요', 400) from None
+                    added = calendar.repository.create(values, self.clock())
+                    response = calendar.calendar()
+                    response['addedId'] = added
+                    for item in response['events']:
+                        if item['id'] == added:
+                            item['added'] = True
+                else:
+                    updates = []
+                    for item in value['goals']:
+                        values = {field: item['values'][field] for field in item['providedFields']}
+                        if values.get('exam_date') is not None:
+                            values['exam_date'] = date.fromisoformat(values['exam_date'])
+                        # False means "not confirmed by this turn", not a command
+                        # to clear earlier confirmations in unrelated groups.
+                        updates.append(GoalUpdate(item['subjectId'], values,
+                            {group: True for group, confirmed in item['confirmedFields'].items() if confirmed}))
+                    response = OnboardingService(conn, user).save_turn(subject_id=command.get('subjectId'), goals=updates,
+                        messages=[ConversationMessage('user', command['text']), ConversationMessage('ai', value['message'], tuple(value['chips']))])
                 response = jsonable_encoder(response)
                 conn.execute(update(t.ai_jobs).where(t.ai_jobs.c.id == claim['id'], t.ai_jobs.c.retry_count == claim['generation']).values(
                     status='succeeded', stage='done', finished_at=self.clock(), saved_result_id=result.saved_result_id,
