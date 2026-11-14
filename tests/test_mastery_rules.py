@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError, replace
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from fractions import Fraction
 from uuid import UUID
@@ -9,6 +10,7 @@ from app.domain.mastery import (
     ConfirmedAttempt, DayEligibility, RecoveryEntry, UnitScope, calculate_mastery,
     grade, half_up, ordered_attempts, weighted_score,
 )
+from app.ai.metrics_adapter import calculate_learning_metrics, current_scope
 
 
 def uid(number):
@@ -239,3 +241,72 @@ def test_conceptless_and_real_concept_errors_stay_separate_per_material_and_unit
     assert len(result.units) == 2
     assert [(row.unit_id, row.concept_id, row.wrong_count, row.is_weak) for row in result.concept_errors] == [
         (uid(2), None, 1, False), (uid(2), uid(3), 2, True), (uid(5), None, 1, False)]
+
+
+def adapter_input():
+    units = [{"id": uid(n), "material_id": uid(n + 1), "code": "UNIT1", "material_sha256": "a" * 64,
+              "analysis_version": "v1", "quantity_basis": "page", "start_page": 1, "end_page": 10,
+              "in_scope": True, "updated_at": AT} for n in (10, 20)]
+    concepts = [{"id": uid(n + 2), "unit_id": uid(n), "code": "CONCEPT1", "start_page": 1, "end_page": 2,
+                 "in_scope": True, "retired_at": None} for n in (10, 20)]
+    questions = [{"id": uid(30), "unit_id": uid(10), "concept_id": None, "code": "Q1", "difficulty": "low"},
+                 {"id": uid(31), "unit_id": uid(10), "concept_id": uid(12), "code": "Q2", "difficulty": "low"},
+                 {"id": uid(32), "unit_id": uid(20), "concept_id": uid(22), "code": "Q1", "difficulty": "low"}]
+    attempts = [{"id": uid(100 + i), "quiz_item_id": uid(200 + i), "question_id": question["id"],
+                 "answered_date": DAY, "answered_at": AT, "finalized_at": AT, "graded_at": AT,
+                 "grading_status": "graded", "session_status": "submitted", "session_finalized_at": AT,
+                 "session_grading_status": "completed", "quiz_type": "practice", "confidence": "sure",
+                 "is_correct": i == 2} for i, question in enumerate(questions)]
+    return {"units": units, "concepts": concepts, "questions": questions, "attempts": attempts, "recovery_entries": []}
+
+
+def test_adapter_keeps_same_display_codes_in_different_materials_independent_and_handles_null_concepts():
+    result = calculate_learning_metrics(adapter_input())
+    assert [(row.unit_id, row.material_id, row.score) for row in result.units] == [(uid(10), uid(11), 0), (uid(20), uid(21), 99)]
+    assert [(row.concept_id, row.wrong_count) for row in result.concept_errors] == [(None, 1), (uid(12), 1)]
+
+
+@pytest.mark.parametrize("field,value", [("finalized_at", None), ("graded_at", None), ("grading_status", "pending"),
+    ("session_status", "ready"), ("session_finalized_at", None), ("session_grading_status", "pending"), ("is_correct", None)])
+def test_adapter_rejects_unfinalized_or_ungraded_rows(field, value):
+    data = adapter_input()
+    data["attempts"][0][field] = value
+    with pytest.raises(ValueError):
+        calculate_learning_metrics(data)
+
+
+def test_adapter_rejects_a_concept_from_another_unit_instead_of_merging_it_by_code():
+    data = adapter_input()
+    data["questions"][0]["concept_id"] = uid(22)
+    with pytest.raises(ValueError):
+        calculate_learning_metrics(data)
+
+
+def test_scope_identity_changes_with_actual_range_source_and_concepts_but_not_mastery_updates():
+    data = adapter_input()
+    original = current_scope(data["units"][0], data["concepts"])
+    unit = {**data["units"][0], "updated_at": AT + timedelta(days=1), "mastery_score": 99}
+    assert current_scope(unit, data["concepts"]) == original
+    for field, value in (("end_page", 9), ("in_scope", False), ("material_sha256", "b" * 64), ("analysis_version", "v2")):
+        assert current_scope({**unit, field: value}, data["concepts"]) != original
+    concepts = deepcopy(data["concepts"])
+    concepts[0]["retired_at"] = AT
+    assert current_scope(unit, concepts) != original
+
+
+def test_adapter_does_not_fabricate_recovery_entries_or_bonus_from_legacy_unit_flags():
+    data = adapter_input()
+    data["attempts"] = []
+    data["units"][0].update(mastery_score=70, recovery_mode=True, recovery_started_at=AT)
+    result = calculate_learning_metrics(data)
+    assert result.units == () and result.history == ()
+    assert data["recovery_entries"] == []
+
+
+def test_sqlite_naive_stored_timestamps_are_normalized_without_changing_stored_answer_date():
+    data = adapter_input()
+    expected = calculate_learning_metrics(data)
+    for row in data["attempts"]:
+        row["answered_at"] = row["answered_at"].replace(tzinfo=None)
+        row["finalized_at"] = row["finalized_at"].replace(tzinfo=None)
+    assert calculate_learning_metrics(data) == expected
