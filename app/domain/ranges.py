@@ -54,3 +54,34 @@ def normalize(spans: Iterable[PageSpan]) -> tuple[PageSpan, ...]:
 def page_count(spans: Iterable[PageSpan]) -> int:
     """Count unique inclusive pages, counting the same page in different PDFs twice."""
     return sum(span.end - span.start + 1 for span in normalize(spans))
+
+
+def subtract(spans: Iterable[PageSpan], removed: Iterable[PageSpan]) -> tuple[PageSpan, ...]:
+    """Return pages in spans but not removed, preserving holes and PDF identity."""
+    sources = normalize(spans)
+    removals = sources if spans is removed else normalize(removed)
+    remaining: list[PageSpan] = []
+    removal_index = 0
+
+    for source in sources:
+        cursor = source.start
+        while removal_index < len(removals):
+            removal = removals[removal_index]
+            if removal.material_id < source.material_id or (
+                removal.material_id == source.material_id and removal.end < cursor
+            ):
+                removal_index += 1
+                continue
+            if removal.material_id > source.material_id or removal.start > source.end:
+                break
+            if removal.start > cursor:
+                remaining.append(PageSpan(source.material_id, cursor, removal.start - 1))
+            cursor = max(cursor, removal.end + 1)
+            if cursor > source.end:
+                # This removal may also overlap the next source interval.
+                break
+            removal_index += 1
+        if cursor <= source.end:
+            remaining.append(PageSpan(source.material_id, cursor, source.end))
+
+    return tuple(remaining)

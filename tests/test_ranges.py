@@ -7,7 +7,7 @@ from itertools import combinations, permutations
 
 import pytest
 
-from app.domain.ranges import PageSpan, normalize, page_count
+from app.domain.ranges import PageSpan, normalize, page_count, subtract
 
 
 @pytest.mark.parametrize("material_id", ["pdf-a", "PDF-a", "강의자료", " pdf-a "])
@@ -193,3 +193,81 @@ def test_page_count_handles_huge_intervals_without_expanding_pages():
 def test_page_count_rejects_invalid_inputs(spans):
     with pytest.raises(ValueError):
         page_count(spans)
+
+
+@pytest.mark.parametrize(
+    "sources,removals,expected",
+    [
+        ([], [], []),
+        ([], [(1, 3)], []),
+        ([(1, 3)], [], [(1, 3)]),
+        ([(1, 3)], [(4, 5)], [(1, 3)]),
+        ([(4, 5)], [(1, 3)], [(4, 5)]),
+        ([(1, 3)], [(1, 3)], []),
+        ([(3, 5)], [(1, 9)], []),
+        ([(1, 5)], [(1, 1)], [(2, 5)]),
+        ([(1, 5)], [(5, 5)], [(1, 4)]),
+        ([(3, 7)], [(1, 4)], [(5, 7)]),
+        ([(3, 7)], [(6, 9)], [(3, 5)]),
+        ([(1, 5)], [(3, 3)], [(1, 2), (4, 5)]),
+        ([(1, 10)], [(2, 3), (7, 8)], [(1, 1), (4, 6), (9, 10)]),
+        ([(1, 3), (5, 7), (9, 11)], [(2, 10)], [(1, 1), (11, 11)]),
+        ([(1, 5), (3, 7)], [(2, 3), (3, 5)], [(1, 1), (6, 7)]),
+    ],
+)
+def test_subtract_handles_inclusive_boundaries_and_splits(sources, removals, expected):
+    source_spans = [PageSpan("pdf-a", start, end) for start, end in sources]
+    removed_spans = [PageSpan("pdf-a", start, end) for start, end in removals]
+
+    result = subtract(_SingleUseIterable(source_spans), _SingleUseIterable(removed_spans))
+
+    assert result == tuple(PageSpan("pdf-a", start, end) for start, end in expected)
+    _assert_canonical(result)
+
+
+def test_subtract_never_removes_matching_pages_of_another_pdf():
+    sources = [PageSpan("pdf-c", 1, 3), PageSpan("pdf-a", 1, 3)]
+    removals = [PageSpan("pdf-b", 1, 3), PageSpan("pdf-a", 2, 2), PageSpan("pdf-d", 1, 3)]
+
+    assert subtract(sources, removals) == (PageSpan("pdf-a", 1, 1), PageSpan("pdf-a", 3, 3), PageSpan("pdf-c", 1, 3))
+
+
+def test_subtract_is_empty_for_a_shared_single_use_iterable():
+    spans = _SingleUseIterable([PageSpan("pdf-a", 1, 3)])
+
+    assert subtract(spans, spans) == ()
+
+
+def _small_collections():
+    candidates = [PageSpan(material, start, end) for material in ["pdf-a", "pdf-b"] for start, end in [(1, 2), (2, 3), (5, 5)]]
+    return [spans for size in range(3) for spans in combinations(candidates, size)]
+
+
+def test_subtract_matches_set_difference_for_small_interval_combinations():
+    collections = _small_collections()
+    for sources in collections:
+        for removals in collections:
+            remaining = subtract(sources, removals)
+            _assert_canonical(remaining)
+            assert _pages(remaining) == _pages(sources) - _pages(removals)
+            assert subtract(remaining, removals) == remaining
+
+
+def test_subtract_handles_huge_intervals_without_expanding_pages():
+    end = 10**100
+    middle = end // 2
+
+    result = subtract(
+        [PageSpan("pdf-a", 1, end)],
+        [PageSpan("pdf-a", 1, 1), PageSpan("pdf-a", middle, middle), PageSpan("pdf-a", end, end)],
+    )
+
+    assert result == (PageSpan("pdf-a", 2, middle - 1), PageSpan("pdf-a", middle + 1, end - 1))
+    assert page_count(result) == end - 3
+
+
+@pytest.mark.parametrize("invalid", [None, "", [None], [PageSpan("pdf-a", 1, 1), ("pdf-a", 1, 2)]])
+@pytest.mark.parametrize("side", ["source", "removed"])
+def test_subtract_validates_both_inputs_even_if_the_other_is_empty(invalid, side):
+    with pytest.raises(ValueError):
+        subtract(invalid, []) if side == "source" else subtract([], invalid)
