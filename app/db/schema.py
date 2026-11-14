@@ -225,6 +225,38 @@ plan_proposals = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+plan_proposal_states = Table(
+    "plan_proposal_states", metadata,
+    Column("proposal_id", UUID, ForeignKey("plan_proposals.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("kind", String, nullable=False),
+    Column("target", JSONB, nullable=True),
+    Column("normalized_input", JSONB, nullable=True),
+    Column("input_hash", String, nullable=True),
+    Column("base_date", Date, nullable=True),
+    Column("base_plan_id", UUID, ForeignKey("plans.id"), nullable=True),
+    Column("base_plan_revision", Integer, nullable=True),
+    Column("base_structure_hash", String, nullable=True),
+    Column("dependency_versions", JSONB, nullable=True),
+    Column("status", String, nullable=False),
+    Column("state_revision", Integer, nullable=False),
+    Column("preview_response", JSONB, nullable=True),
+    Column("preview_schema_version", Integer, nullable=True),
+    Column("result_response", JSONB, nullable=True),
+    Column("result_schema_version", Integer, nullable=True),
+    Column("result_captured_at", DateTime(timezone=True), nullable=True),
+    Column("decided_at", DateTime(timezone=True), nullable=True),
+    Column("legacy", Boolean, nullable=False),
+    Column("legacy_snapshot", JSONB, nullable=True),
+    CheckConstraint("status IN ('ready', 'applied', 'cancelled', 'stale', 'legacy') AND state_revision >= 0", name="ck_proposal_state_status"),
+    CheckConstraint("(input_hash IS NULL OR length(input_hash) = 64) AND (base_structure_hash IS NULL OR length(base_structure_hash) = 64)", name="ck_proposal_state_hash"),
+    CheckConstraint("(legacy = true AND legacy_snapshot IS NOT NULL AND status IN ('legacy', 'applied')) OR (legacy = false AND legacy_snapshot IS NULL AND status <> 'legacy')", name="ck_proposal_state_origin"),
+    CheckConstraint("legacy = true OR (target IS NOT NULL AND normalized_input IS NOT NULL AND input_hash IS NOT NULL AND base_date IS NOT NULL AND dependency_versions IS NOT NULL AND preview_response IS NOT NULL AND preview_schema_version IS NOT NULL AND preview_schema_version > 0 AND ((base_plan_id IS NOT NULL AND base_plan_revision IS NOT NULL AND base_plan_revision > 0 AND base_structure_hash IS NULL) OR (base_plan_id IS NULL AND base_plan_revision IS NULL AND base_structure_hash IS NOT NULL)))", name="ck_proposal_state_basis"),
+    CheckConstraint("(result_response IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL AND (status <> 'applied' OR legacy = true)) OR (legacy = false AND status = 'applied' AND result_response IS NOT NULL AND result_schema_version IS NOT NULL AND result_schema_version > 0 AND result_captured_at IS NOT NULL AND decided_at IS NOT NULL AND result_captured_at = decided_at)", name="ck_proposal_state_result"),
+    CheckConstraint("legacy = true OR (status = 'ready' AND decided_at IS NULL) OR (status IN ('applied', 'cancelled', 'stale') AND decided_at IS NOT NULL)", name="ck_proposal_state_decision"),
+    Index("ix_plan_proposal_states_1", "user_id", "kind", "status"),
+)
+
 study_blocks = Table(
     "study_blocks", metadata,
     Column("id", UUID, primary_key=True, nullable=False),

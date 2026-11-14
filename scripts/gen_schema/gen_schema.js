@@ -7,10 +7,23 @@ const { Parser } = require('@dbml/core');
 const root = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'schema', 'erd.dbml'), 'utf8');
 const schema = new Parser().parse(src, 'dbmlv2').schemas[0];
-const storageConfigPath = path.join(root, 'schema', 'quiz-storage-constraints.json');
-const storageConstraints = fs.existsSync(storageConfigPath)
-  ? JSON.parse(fs.readFileSync(storageConfigPath, 'utf8'))
-  : { checks: [], foreignKeys: {} };
+const storageConstraints = { checks: [], foreignKeys: {} };
+const checkNames = new Set();
+for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-constraints.json']) {
+  const configPath = path.join(root, 'schema', filename);
+  if (!fs.existsSync(configPath)) continue;
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  for (const check of config.checks) {
+    const key = `${check.table}.${check.name}`;
+    if (checkNames.has(key)) throw new Error(`Duplicate CHECK: ${key}`);
+    checkNames.add(key);
+    storageConstraints.checks.push(check);
+  }
+  for (const [field, options] of Object.entries(config.foreignKeys)) {
+    if (Object.hasOwn(storageConstraints.foreignKeys, field)) throw new Error(`Duplicate foreign key: ${field}`);
+    storageConstraints.foreignKeys[field] = options;
+  }
+}
 
 const TYPE = {
   uuid: 'UUID',
