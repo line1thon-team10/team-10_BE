@@ -1075,7 +1075,8 @@
       "acceptance": [
         "동시 제출/동일 답 재전송/다른 답409·AI 실패503·프로세스 재시작",
         "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증",
-        "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction"
+        "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction",
+        "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt."
       ],
       "operations": [
         "POST /api/quiz/:subjectId/submit",
@@ -1981,7 +1982,8 @@
       "status": "planned",
       "assignee": null,
       "depends_on": [
-        "O-01"
+        "O-01",
+        "D-01"
       ],
       "write_scope": [
         "BE/app/routers/subjects.py",
@@ -1995,7 +1997,8 @@
       "deliverable": "과목 카드·자료 범위를 조회하고 신규 과목은 draft로만 생성한다.",
       "acceptance": [
         "빈목록/null시험일·다중자료 범위",
-        "이탈/재접속에도기존계획불변·ID/소유권"
+        "이탈/재접속에도기존계획불변·ID/소유권",
+        "Use D-01 aggregates for subject progress/readiness; do not add a separate page-sum formula."
       ],
       "operations": [
         "GET /api/subjects",
