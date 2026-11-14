@@ -124,7 +124,8 @@ class TodayPlanService:
         if day>=subject['exam_date']: raise ApiError('PLAN_INFEASIBLE','시험일 전으로 배치할 수 없어요',409)
         remaining=page_count(PageSpan(r['materialId'],r['from'],r['to']) for r in _remaining(task) if r['from'] is not None)
         minutes=Fraction(task.row['estimated_minutes'])*remaining/task.pages if task.pages else Fraction(task.row['estimated_minutes'])
-        minutes=max(Fraction(15),minutes)
+        if minutes<15:
+            raise ApiError('PLAN_INFEASIBLE','남은 실제 분량이 최소 학습 구간보다 짧아요',409)
         if minutes>60:
             raise ApiError('PLAN_INFEASIBLE','전체 태스크가 한 학습 구간에 들어가지 않아요',409)
         shifted=[]
