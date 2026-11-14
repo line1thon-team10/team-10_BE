@@ -12,12 +12,12 @@ from tests.test_progress_contract import progress_world
 def carry(w, origin, parts, *, day=1, reason='어제에서 이월', status='planned'):
     source = dict(w.conn.execute(select(t.study_tasks).where(t.study_tasks.c.id == origin)).mappings().one())
     tid = str(uuid4())
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == origin).values(status='carried_over'))
     w.conn.execute(t.study_tasks.insert().values(**{**source, 'id': tid, 'origin_task_id': origin,
         'placement_reason': reason, 'scheduled_date': w.day + timedelta(days=day), 'status': status}))
     for index, (unit, start, end) in enumerate(parts):
         w.conn.execute(t.study_task_ranges.insert().values(id=str(uuid4()), task_id=tid, unit_id=unit['id'],
             start_page=start, end_page=end, sort_order=index))
-    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == origin).values(status='carried_over'))
     return tid
 
 
@@ -154,24 +154,23 @@ def test_hook_failure_rolls_back_record_and_carry_changes(api_client, progress_w
     assert w.conn.scalar(select(t.study_record_ranges.c.end_page).where(t.study_record_ranges.c.record_id == rid)) == 5
 
 
-def test_duplicate_live_carries_are_cancelled_without_duplicating_required_pages(api_client, progress_world):
+def test_duplicate_live_carries_are_rejected_before_corrupting_required_pages(api_client, progress_world):
+    from sqlalchemy.exc import IntegrityError
     w = progress_world
     u = w.unit(1, 20)
     root = w.task((u, 1, 20), done=[(u, 1, 5)], status='partial')
     first = carry(w, root, [(u, 6, 20)])
-    second = carry(w, root, [(u, 6, 20)], day=2)
-    originals = {tid: rows(w, tid) for tid in (first, second)}
-    patch(api_client, w, root, toPage=10)
-    live = current(w, root)
-    assert len(live) == 1
-    assert [(r['start_page'], r['end_page']) for r in rows(w, live[0]['id'])] == [(11, 20)]
-    assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id == second)) == 'excluded'
-    assert all(rows(w, tid) == before for tid, before in originals.items())
+    original = rows(w, first)
+    with pytest.raises(IntegrityError), w.conn.begin_nested():
+        carry(w, root, [(u, 6, 20)], day=2)
+    assert [row['id'] for row in current(w, root)] == [first]
+    assert rows(w, first) == original
 
 
 def test_same_pdf_overlapping_units_share_completed_pages(api_client, progress_world):
     w = progress_world
     first = w.unit(1, 20)
+    w.conn.execute(update(t.units).where(t.units.c.id == first['id']).values(sort_order=2))
     second = w.unit(1, 20, material_id=first['material_id'])
     root = w.task((first, 1, 10), (second, 6, 20), done=[(first, 1, 5)], status='partial')
     child = carry(w, root, [(second, 6, 20)])
