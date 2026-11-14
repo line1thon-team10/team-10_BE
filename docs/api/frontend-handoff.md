@@ -1,8 +1,18 @@
-# FE 전달용 API 변경 안내 — 2026-11-13
+# FE 전달용 API 변경 안내 — 2026-11-14
 
-[PR #3](https://github.com/line1thon-team10/team-10_BE/pull/3)의 **FE 연동 계약**입니다. FE 기본 계약을 유지하되 요구사항/와이어 충돌은 기존 BE 명세로 보완하고, BE에도 오류/누락이 있으면 새로 정의했습니다. 아래 변경은 문서에 반영되었으며 **서버 구현·배포 완료를 의미하지 않습니다**. FE 런타임은 이 PR에서 수정하지 않았습니다.
+[PR #3](https://github.com/line1thon-team10/team-10_BE/pull/3)에서 시작한 **FE 연동 계약**입니다. FE 기본 계약을 유지하되 요구사항/와이어 충돌은 기존 BE 명세로 보완하고, BE에도 오류/누락이 있으면 새로 정의했습니다. 아래 C01~C22는 최종 계약의 변경 근거이며 **각 항목의 구현·배포 완료를 의미하지 않습니다**. FE 런타임 연결은 후속 FE task로 진행합니다.
 
-기준 FE: `c8e250d9484a03eac005e12c24d1b703fc105626`. 기준 BE: main `3475cf204ac726f9c96d44bbc687ea8253f8c48e` 및 저장된 `schema/openapi-0.7.0.json`. 아래 '기존 BE 초안'은 이 PR의 교정 전 Markdown을 뜻하며, 'BE 0.7'은 기존 OpenAPI를 뜻합니다. PDF 파일명 v3/본문 v2의 차이와 원문 확인 범위는 [출처 기록](source-audit.md)에 있습니다.
+기준 FE: `c8e250d9484a03eac005e12c24d1b703fc105626`(원격 main/dev 재확인). BE 통합 확인: `9d1ddd7a40e37f74823950038581b18e1134fc58`, 전체 SQLite+PostgreSQL **2123 passed, 4 skipped**. 운영 앱은 별도 고정 SHA `4c20454fef5382e7e97232f93e02e1637a235583`이며 [배포 기록](../releases/2026-11-14-checkpoint-01.md)을 따릅니다. AI pin은 `6d74ffb6c455a306e912252013d76f93e30a6210`입니다.
+
+아래 '기존 BE 초안'은 PR #3 교정 전 Markdown을, 'BE 0.7'은 main `3475cf2` 당시 저장된 `schema/openapi-0.7.0.json`을 뜻합니다. 과거 OpenAPI로 현재 client를 생성하지 않습니다. PDF 파일명 v3/본문 v2의 차이와 원문 확인 범위는 [출처 기록](source-audit.md)에 있습니다.
+
+## 구현·배포 상태의 구분
+
+- 통합 완료: 범위별 기록·홈/집중 응답(R-01~03), 세트 항목 ID(Q-01), 답안/채점 작업 저장 구조(Q-02), UUID 기반 숙달도(S-01), 온보딩 확인 상태와 일정 CRUD(O-01/02), 집계 분리(D-01), 배분/AI/후보 저장 공통 경계(P-01/AI-01/SYS-04).
+- 운영 앱4c20454에는 **O-02·D-01·SYS-04가 미포함**입니다. 새 DB 테이블이나 공통 엔진만 있다는 이유로 후속 공개 endpoint가 준비됐다고 표시하지 않습니다.
+- 문항 저장/worker/최종 제출(Q-03~06), 미리보기 승인(SYS-05), PDF 분석·첫 계획·관리·캘린더·복습·튜터 및 FE 연결은 [task registry](../development-tasks.json)의 실제 상태를 확인합니다. Q-03 단독 배포는 기존 submit 경쟁 때문에 금지하며 Q-05의 실제 HTTP 동시성 검증과 함께 출고합니다.
+- FE 전용 [변경 위치·기준 문서](https://github.com/line1thon-team10/team-10_FE/blob/docs/api-contract-handoff/docs/api-contract-handoff.md)와 [로컬 HTTP fixture](https://github.com/line1thon-team10/team-10_FE/tree/docs/api-contract-handoff/docs/api-fixtures)에 C01~C22를 화면/adapter/hook 및 후속 task와 연결했습니다. fixture는 임시 SQLite에서 얻은 응답이고 운영 검증 자료와 구분합니다.
+- 사용자가 기준을 확정한 사실을 G-2 근거로 기록했습니다. FE 담당자가 별도로 승인했다고 주장하지 않습니다. 실제 FE 연결 시 큰 API 수정 전 보관 브랜치를 만들고 G-1의 흑백 상태 구분을 유지합니다.
 
 ## 유지하는 계약
 
@@ -83,6 +93,6 @@
 
 ## 남은 연동 확인과 검증 범위
 
-OCR 품질 임계값, AI의 실제 위치 출력/중간 자료 처리, 시연 데이터와 운영 업로드 한도·AI 처리 예산은 별도 연동 확인 사항입니다. 필드 모양과 실패 처리는 정했지만 AI 품질이나 배포 가능 여부까지 검증한 것은 아닙니다. PPT는 현재 PDF 계약에 포함하지 않습니다. 계획 우선순위의 항별 상세 수치 함수도 BE/AI 계산 정책으로 남으며 외부 응답 형식을 바꾸지 않습니다.
+POL-01의 배분 계산, POL-02의 PDF25MiB·대화형 AI20초/외부 한도25초·PDF300초·JSON 문법 오류1회 재시도, POL-03의 OCR 품질 신호는 문서로 확정했습니다. 각 도메인에서 실제 강제하는 작업은 해당 구현 task를 따릅니다. 인공지능·데이터베이스·운영체제와 day9 집중42분은 [시드 값표](../demo-seed-handoff.md)를 따릅니다. 실제 키를 사용한 AI/OCR 품질·근거 위치 확인은 아직 하지 않았습니다. PPT는 현재 PDF 계약에 포함하지 않습니다.
 
-문서 검사 대상은 경로 누락/중복, 출처 메타데이터, 로컬 Markdown 링크입니다. 71 FE+5 추가 경로를 확인합니다. [수용 기준](acceptance.md)은 구현 후 실행할 목록이며, 이번 PR에서 FE 화면/BE 런타임/AI 통합 테스트를 통과했다는 뜻이 아닙니다. `schema/openapi-0.7.0.json`은 대조용 구버전이므로 현재 계약으로 코드 생성하지 마세요.
+문서 검사는 경로 누락/중복, 출처 메타데이터, 로컬 Markdown 링크와71 FE+5 추가 경로를 확인합니다. 별도 runtime 검사는 등록된 경로만 확인하며 [수용 기준](acceptance.md)의 실제 HTTP/화면/AI 품질 검증을 대체하지 않습니다. 위 통합 테스트 수와 전체 계약 완료를 혼동하지 않습니다.
