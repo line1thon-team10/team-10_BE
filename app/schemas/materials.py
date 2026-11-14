@@ -38,3 +38,22 @@ class MaterialAccepted(BaseModel):
 class MaterialUploadResponse(BaseModel):
     success: Literal[True] = True
     data: MaterialAccepted
+
+
+class MaterialJob(BaseModel):
+    jobId: UUID
+    materialId: UUID
+    subjectId: UUID
+    status: Literal['running', 'done', 'failed']
+    ocr: bool | None
+    steps: list[str]
+    current: int
+    failedStep: int | None
+    progress: int
+    reused: bool
+    reason: str | None
+
+
+class MaterialJobResponse(BaseModel):
+    success: Literal[True] = True
+    data: MaterialJob

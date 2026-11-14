@@ -10,7 +10,7 @@ from starlette.formparsers import MultiPartException
 from app.core.auth import current_user
 from app.core.responses import ApiError, ok
 from app.db.session import get_conn
-from app.schemas.materials import MaterialsResponse, MaterialUploadResponse
+from app.schemas.materials import MaterialsResponse, MaterialUploadResponse, MaterialJobResponse
 from app.services.material_storage import LimitedPdfParser, MaterialStorageService
 
 
@@ -65,3 +65,11 @@ async def upload_material(request: Request, user: dict = Depends(current_user), 
 def get_file(material_id: UUID, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     path, filename = _storage(conn).original_file(user["id"], str(material_id))
     return FileResponse(path, media_type="application/pdf", filename=filename, content_disposition_type="inline")
+
+
+@router.get("/jobs/{job_id}", response_model=MaterialJobResponse)
+def get_job(job_id: UUID, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    from app.services.material_analysis import MaterialAnalysisService
+    engine = conn.engine
+    conn.close()
+    return ok(MaterialAnalysisService(engine).view(user["id"], str(job_id)))
