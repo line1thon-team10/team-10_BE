@@ -10,9 +10,10 @@ def base(client,w,count=5):
     unit=w.unit(1,10);w.task((unit,1,10),done=[(unit,1,7)],status='partial')
     for _ in range(count):add_question(w,unit,page=7)
     response=get(client,w);assert response.status_code==200,response.text
-    quiz=response.json()['data']['quizId']
-    w.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==quiz).values(status='submitted',grading_status='completed',finalized_at=w.now))
-    w.conn.commit()
+    data=response.json()['data'];quiz=data['quizId']
+    submitted=client.post(f'/api/quiz/{quiz}/submit',headers={'X-Anonymous-Id':w.user},json={'quizId':quiz,
+        'answers':[{'questionId':q['id'],'choice':None,'text':'정답','confidence':'sure'} for q in data['questions']]})
+    assert submitted.status_code==200,submitted.text
     return unit,quiz
 
 
@@ -62,3 +63,18 @@ def test_extra_second_round_requires_choice_and_selects_that_difficulty(api_clie
         .where(t.quiz_items.c.quiz_session_id==quiz)))
     assert difficulties==['high']*5
     assert more(api_client,w,unit,difficulty='high').json()==response.json()
+
+
+@pytest.mark.parametrize('unpublished', [False, True])
+def test_parent_flags_without_a_published_final_snapshot_cannot_create_extra(api_client,progress_world,unpublished):
+    w=progress_world;unit,parent=base(api_client,w,10)
+    if unpublished:
+        from sqlalchemy import null
+        w.conn.execute(update(t.quiz_submission_states).where(t.quiz_submission_states.c.quiz_session_id==parent).values(
+            result_snapshot=null(),result_provenance=None,result_schema_version=None,result_captured_at=None))
+    else:
+        w.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==parent).values(finalized_at=None))
+    before=w.conn.execute(select(t.quiz_sessions)).all()
+    response=more(api_client,w,unit)
+    assert response.status_code==404 and response.json()['error']['code']=='NO_RESULT'
+    assert w.conn.execute(select(t.quiz_sessions)).all()==before

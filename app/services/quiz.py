@@ -268,7 +268,7 @@ class QuizService:
             .join(t.materials, t.units.c.material_id == t.materials.c.id)
             .where(t.questions.c.unit_id.in_(unit_ids), t.quiz_sessions.c.user_id == self.user["id"],
                    t.quiz_sessions.c.subject_id.is_(None) | (t.quiz_sessions.c.subject_id == t.materials.c.subject_id),
-                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
                    t.quiz_sessions.c.grading_status == "completed", t.quiz_attempts.c.finalized_at.is_not(None),
                    t.quiz_attempts.c.graded_at.is_not(None), t.quiz_attempts.c.grading_status.in_(("graded", "fallback")),
                    t.quiz_attempts.c.is_correct.is_not(None), t.quiz_attempts.c.answered_date <= self.today)
@@ -277,7 +277,7 @@ class QuizService:
             .join(t.quiz_sessions, t.mastery_history.c.quiz_session_id == t.quiz_sessions.c.id)
             .where(t.mastery_history.c.unit_id.in_(unit_ids), t.mastery_history.c.score < 80,
                    t.mastery_history.c.recorded_date <= self.today, t.quiz_sessions.c.user_id == self.user["id"],
-                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
                    t.quiz_sessions.c.grading_status == "completed")
             .order_by(t.mastery_history.c.recorded_date, t.mastery_history.c.created_at, t.mastery_history.c.id)).mappings().all()
         # S-03 will supply verified current-scope eligibility. Legacy unit flags,
@@ -287,7 +287,7 @@ class QuizService:
     def _recalc_mastery(self, quiz_session_id: str, unit_ids: set[str]) -> None:
         finalized = self.conn.scalar(select(t.quiz_sessions.c.id).where(
             t.quiz_sessions.c.id == quiz_session_id, t.quiz_sessions.c.user_id == self.user["id"],
-            t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+            t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
             t.quiz_sessions.c.grading_status == "completed"))
         if finalized is None:
             raise ValueError("Mastery requires a finalized owned quiz set")
@@ -333,6 +333,10 @@ class QuizService:
         repo = QuizAnswerRepository(self.conn)
         repo.items(self.user["id"], session["id"])
         state = repo.submission(self.user["id"], session["id"])
+        if session['status']=='carried_over' and state is not None and not state['legacy'] and state['result_snapshot'] is None:
+            from app.services.quiz_finalization import finish_carried
+            finish_carried(self.conn,self.user,session['id'])
+            state = repo.submission(self.user['id'],session['id'])
         if state is not None and state["result_snapshot"] is not None:
             result = deepcopy(state["result_snapshot"])
         else:
@@ -360,8 +364,8 @@ class QuizService:
         visited = seen | {session["id"]}
         return [self.result_view(dict(extra), seen=visited) for extra in extras if extra["id"] not in visited]
 
-    def _build_result_view(self, session: dict, *, before_blocks: dict | None = None, seen=frozenset()) -> dict:
-        if session["status"] != "submitted":
+    def _build_result_view(self, session: dict, *, before_blocks: dict | None = None, seen=frozenset(), item_ids=None) -> dict:
+        if session["status"] not in ("submitted", "carried_over"):
             raise ApiError("NO_RESULT", "아직 푼 퀴즈가 없어요", 404)
         data = StudyData(self.conn, self.user["id"])  # 채점 뒤 점수로 다시 읽어요
         # Archived/retired objects still identify historical result facts.
@@ -370,6 +374,8 @@ class QuizService:
             .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
             .where(t.subjects.c.user_id == self.user["id"])).mappings()}
         items = self.items(session["id"])
+        if item_ids is not None:
+            items = [item for item in items if item["item_id"] in item_ids]
         out_items = []
         for i, x in enumerate(items):
             src = x.get("source")

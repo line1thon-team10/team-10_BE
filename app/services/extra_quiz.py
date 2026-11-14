@@ -21,9 +21,12 @@ def create_extra(conn, user, today, subject_id, unit_id, requested=None):
         return {'quizId':existing['id'],'count':5}
     base=conn.execute(select(t.quiz_sessions).join(t.quiz_items,t.quiz_items.c.quiz_session_id==t.quiz_sessions.c.id)
         .join(t.questions,t.questions.c.id==t.quiz_items.c.question_id)
+        .join(t.quiz_submission_states,t.quiz_submission_states.c.quiz_session_id==t.quiz_sessions.c.id)
         .where(t.quiz_sessions.c.user_id==user['id'],t.quiz_sessions.c.subject_id==subject_id,
             t.quiz_sessions.c.type=='daily',t.quiz_sessions.c.quiz_date==today,
-            t.quiz_sessions.c.status=='submitted',t.quiz_sessions.c.grading_status=='completed',t.questions.c.unit_id==unit_id)
+            t.quiz_sessions.c.status=='submitted',t.quiz_sessions.c.grading_status=='completed',
+            t.quiz_sessions.c.finalized_at.is_not(None),t.quiz_submission_states.c.result_snapshot.is_not(None),
+            t.questions.c.unit_id==unit_id)
         .order_by(t.quiz_sessions.c.created_at.desc(),t.quiz_sessions.c.id.desc())).mappings().first()
     if base is None:
         raise ApiError('NO_RESULT','이 단원이 포함된 오늘 퀴즈 결과를 먼저 확인해 주세요',404)
