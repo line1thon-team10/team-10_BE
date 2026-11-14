@@ -167,3 +167,19 @@ def test_calendar_reallocation_links_pending_obligation_without_replacing_origin
     before=conn.execute(select(t.remedial_obligation_blocks)).all();conn.commit()
     assert apply(api_client,case['user'],key,candidate.json()['data']['previewId']).json()==response.json()
     assert conn.execute(select(t.remedial_obligation_blocks)).all()==before
+
+
+def test_edit_detects_overlap_with_fractional_minute_task_end(api_client,domain_connection,addition_case):
+    conn,case=domain_connection,addition_case
+    task=case['old_task']
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task['id']).values(scheduled_date=TODAY,
+        starts_at=at(TODAY,'09:00'),ends_at=at(TODAY,'09:50')+timedelta(seconds=30)))
+    owner=dict(conn.execute(select(t.users).where(t.users.c.id==case['user'])).mappings().one())
+    event=add_event(conn,owner,day=TODAY,start='15:00',end='16:00');conn.commit()
+    key=f"{event['id']}@{TODAY}"
+    candidate=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'09:50','end':'10:50'})
+    assert candidate.status_code==200,candidate.text
+    assert any(move['taskId']==task['id'] for move in candidate.json()['data']['moves'])
+    response=apply(api_client,case['user'],key,candidate.json()['data']['previewId'])
+    assert response.status_code==200,response.text
+    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==task['id']))=='carried_over'

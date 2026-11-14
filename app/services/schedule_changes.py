@@ -17,7 +17,7 @@ from app.repositories.events import EventRepository
 from app.repositories.proposals import ProposalRepository, ProposalNotFound, LegacyProposalUnavailable, LegacyResponseUnavailable
 from app.services.calendar import occurrences
 from app.services.empty_time import EmptyTimeService
-from app.services.onboarding_events import _local, _local_time_to_utc
+from app.services.onboarding_events import _local, _local_time_to_utc, _minute
 from app.services.plan_draft import _basis, _json_value
 from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
 from app.services.allocator import allocate
@@ -268,11 +268,16 @@ def _task_collisions(data,added,zone):
         row=task.row
         if row['status'] in ('carried_over','excluded') or row['subject_id'] not in data.subject_by_id: continue
         for event in added:
-            if row['scheduled_date'].isoformat()!=event['date']: continue
+            day=date.fromisoformat(event['date'])
             if row['starts_at'] is None or row['ends_at'] is None:
-                result.append(task.id);break
+                if row['scheduled_date']==day:
+                    result.append(task.id);break
+                continue
             left,right=_local(row['starts_at'],ZoneInfo(zone)),_local(row['ends_at'],ZoneInfo(zone))
-            if left.strftime('%H:%M')<event['end'] and event['start']<right.strftime('%H:%M'):
+            if not left.date()<=day<=right.date(): continue
+            start=_minute(left) if left.date()==day else Fraction(0)
+            end=_minute(right) if right.date()==day else Fraction(1440)
+            if start<clock_minute(event['end']) and clock_minute(event['start'])<end:
                 result.append(task.id);break
     return tuple(result)
 
