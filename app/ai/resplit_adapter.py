@@ -61,6 +61,7 @@ def _clause_window(text, context):
     today = date.fromisoformat(context['today'])
     subjects = context['subjects']
     selected = []
+    selector_positions = []
     # Longest names first prevents a short subject name from shadowing another.
     for subject in sorted(subjects, key=lambda item: -len(item['name'])):
         pattern = _subject_pattern(subject['name'])
@@ -68,9 +69,14 @@ def _clause_window(text, context):
             if any(item['name'] == subject['name'] for item in selected):
                 return None
             selected.append(subject)
-            text = pattern.sub(' ', text)
+            selector_positions.append(pattern.search(text).start())
+            text = pattern.sub(lambda match: ' ' * len(match.group()), text)
     if selected and any(sum(item['name'] == chosen['name'] for item in subjects) > 1 for chosen in selected):
         return None
+    first_constraint = re.search(_DATE.pattern + '|' + _CAP.pattern +
+                                 r'|오늘|내일|모레|[월화수목금토일]요일|평일|주말|이번\s*주|다음\s*주|(?<!\w)[월화수목금토일](?:[·/ ]?[월화수목금토일]){1,6}(?!\w)', text)
+    if len(selected) > 1 and first_constraint and first_constraint.start() < max(selector_positions):
+        return None  # A later subject cannot inherit an earlier subject's clause.
     scope = selected or subjects
     if not scope or _UNCERTAIN.search(text):
         return None
@@ -202,6 +208,11 @@ def explicit_intent(context):
         canonical_json(context)
         if _GENERIC.fullmatch(text.strip().rstrip('.!')):
             return []
+        # A comma before a named subject starts a new scope; commas between
+        # dates or weekdays remain inside the same scope.
+        subject_names = '|'.join(re.escape(item['name']) for item in context['subjects'])
+        if subject_names:
+            text = re.sub(r',(?=\s*(?:' + subject_names + r'))', ';', text)
         clauses = re.split(r'[;\n]|그리고', text)
         windows = []
         for clause in clauses:
