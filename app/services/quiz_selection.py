@@ -136,6 +136,47 @@ class QuizSelection:
             chosen.extend((q['id'],'new',None,None) for q in rows[:5])
         return chosen,remaining
 
+    def reviews(self, subject_id):
+        """Due weak questions and unanswered chain tips retain their source identity."""
+        scope = self.completed(subject_id, today_only=False)
+        eligible = {q['id'] for q in self.questions(subject_id, scope)}
+        chosen = {}
+        assigned_today = set(self.conn.scalars(select(t.quiz_items.c.question_id).join(t.quiz_sessions,
+            t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id).where(t.quiz_sessions.c.user_id==self.user['id'],
+            t.quiz_sessions.c.quiz_date==self.today, t.quiz_sessions.c.subject_id==subject_id)))
+        descendants = select(t.quiz_items.c.origin_quiz_item_id).join(t.quiz_sessions,
+            t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id).where(t.quiz_items.c.origin_quiz_item_id.is_not(None),
+            t.quiz_sessions.c.user_id==self.user['id'])
+        tips = self.conn.execute(select(t.quiz_items, t.quiz_sessions.c.quiz_date).join(t.quiz_sessions,
+            t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id).outerjoin(t.quiz_attempts,
+            t.quiz_attempts.c.quiz_item_id==t.quiz_items.c.id).outerjoin(t.quiz_answer_heads,
+            t.quiz_answer_heads.c.quiz_item_id==t.quiz_items.c.id).where(t.quiz_sessions.c.user_id==self.user['id'],
+            t.quiz_sessions.c.subject_id==subject_id,t.quiz_sessions.c.type=='daily',t.quiz_sessions.c.quiz_date<self.today,
+            t.quiz_sessions.c.status.in_(('carried_over','submitted')),t.quiz_items.c.id.not_in(descendants),
+            t.quiz_attempts.c.id.is_(None),t.quiz_answer_heads.c.answer_id.is_(None))
+            .order_by(t.quiz_sessions.c.quiz_date,t.quiz_items.c.sort_order,t.quiz_items.c.id)).mappings()
+        for row in tips:
+            qid=row['question_id']
+            if qid in eligible and qid not in assigned_today:
+                chosen[qid]=(qid,'carried_over',row['id'],row['original_quiz_date'] or row['quiz_date'])
+        weekend=set()
+        if self.today.weekday() in (5,6):
+            start=self.today-timedelta(days=5 if self.today.weekday()==5 else 1)
+            end=self.today-timedelta(days=1)
+            weekend=set(self.conn.scalars(select(t.quiz_items.c.question_id).join(t.quiz_sessions,
+                t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id).join(t.quiz_attempts,
+                t.quiz_attempts.c.quiz_item_id==t.quiz_items.c.id).where(t.quiz_sessions.c.user_id==self.user['id'],
+                t.quiz_sessions.c.subject_id==subject_id,t.quiz_attempts.c.finalized_at.is_not(None),
+                t.quiz_attempts.c.is_correct.is_(False),t.quiz_attempts.c.answered_date>=start,t.quiz_attempts.c.answered_date<=end)))
+        weak=self.conn.execute(select(t.weak_questions).where(t.weak_questions.c.question_id.in_(eligible),
+            t.weak_questions.c.status=='active').order_by(t.weak_questions.c.next_review_date,t.weak_questions.c.question_id)).mappings()
+        for row in weak:
+            qid=row['question_id']
+            due=row['next_review_date'] is not None and row['next_review_date']<=self.today
+            if qid not in assigned_today and (due or qid in weekend):
+                chosen.setdefault(qid,(qid,'weak',None,None))
+        return list(chosen.values())
+
     def create(self, subject_id, kind, chosen, difficulty, *, parent=None, scopes=None):
         identifier=str(uuid4())
         self.conn.execute(t.quiz_sessions.insert().values(id=identifier,user_id=self.user['id'],subject_id=subject_id,
@@ -177,6 +218,7 @@ class QuizSelection:
         except ApiError as error:
             if error.code!='NO_QUESTIONS' or current is None: raise
             return current
+        chosen = self.reviews(subject_id) + chosen
         if current:
             self.append(current['id'],chosen,new_scopes)
             return current

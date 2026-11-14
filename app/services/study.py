@@ -237,7 +237,7 @@ class StudyData:
                 scope = selection.completed(sid)
                 difficulty = selection.difficulty(scope, None)
                 chosen, _ = selection.fresh(sid, scope, difficulty, [])
-                counts[sid] = len(chosen)
+                counts[sid] = len(chosen) + len(selection.reviews(sid))
             except ApiError as error:
                 if error.code not in ('NO_QUESTIONS', 'INVALID_INPUT'):
                     raise
