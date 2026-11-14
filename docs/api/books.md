@@ -87,6 +87,10 @@ recentDays는 날짜별로 blockId를 한 번만 표시하고, 과거 이월 배
 포함된 오늘 퀴즈의 최종 확정이 있어야 열리며, 같은 과목의 다른 단원 확정이나 단순
 제출만으로 바뀌지 않는다. recentDays.blocks[].id는 영속 blockId다.
 
+계획 밖 직접 재학습의 review 기록도 books/recentDays에서 영속 책과 taskId를
+반환한다. 이 taskId로 기존 PATCH 기록 정정을 사용할 수 있다. 직접 재학습 책은
+오늘 계획 목록·계획 분모·자동 이월에는 포함하지 않는다.
+
 ### 보충 완료 회독 (B-02)
 
 보충 회독은 `remedial_obligations.id`를 evidence_key로 삼는다. 하나의 의무가 여러

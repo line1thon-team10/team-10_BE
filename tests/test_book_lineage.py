@@ -135,3 +135,23 @@ def test_same_number_and_pages_in_two_materials_remain_separate(api_client, demo
     assert {u["materialId"] for u in pair} == {old_material["id"], material_id}
     assert len({u["blocks"][0]["id"] for u in pair}) == 2
     assert all(u["blocks"][0]["task"]["pages"] == 9 for u in pair)
+
+
+def test_direct_review_book_is_discoverable_without_daily_plan_growth(api_client, demo_user, domain_connection):
+    from tests.test_planless_review_correction import direct_record
+    conn = domain_connection
+    before = api_client.get("/api/today", headers=headers(demo_user)).json()["data"]
+    template, task_id, _, _ = direct_record(conn, demo_user)
+    uid = template.ranges[0]["unit_id"]
+    conn.commit()
+    direct = next(b for b in unit(api_client, demo_user, uid)["blocks"] if b["task"]["id"] == task_id)
+    assert direct["state"] == "done" and direct["task"]["pages"] == 9
+    assert next(b for b in recent(api_client, demo_user)[-1]["blocks"] if b["id"] == direct["id"])["taskId"] == task_id
+    after = api_client.get("/api/today", headers=headers(demo_user)).json()["data"]
+    assert after["tasks"] == before["tasks"]
+    assert after["progress"] == before["progress"]
+    response = api_client.patch(f"/api/tasks/{task_id}/record", headers=headers(demo_user), json={"toPage": 13})
+    assert response.status_code == 200
+    fixed = next(b for b in unit(api_client, demo_user, uid)["blocks"] if b["id"] == direct["id"])
+    assert fixed["state"] == "doing"
+    assert fixed["task"]["donePages"] == 2
