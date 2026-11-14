@@ -60,3 +60,16 @@ def test_invalidated_direct_pass_can_restore_without_new_round_or_completion_dat
     revalidate_record_passes(w.conn,w.user,record,w.now+timedelta(days=1))
     actual=dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.id==row['id'])).mappings().one())
     assert actual==row
+
+
+def test_failed_receipt_rolls_back_direct_completion(api_client,progress_world,monkeypatch):
+    from app.repositories.record_requests import RecordRequestRepository
+    w=progress_world;unit=w.unit(1,5);key=str(uuid4())
+    before=w.conn.scalar(select(func.count()).select_from(t.study_tasks))
+    original=RecordRequestRepository.save
+    monkeypatch.setattr(RecordRequestRepository,'save',lambda *a,**k: (_ for _ in ()).throw(RuntimeError('receipt failed')))
+    assert request(api_client,w,unit,key).status_code==500
+    assert w.conn.scalar(select(func.count()).select_from(t.study_tasks))==before
+    assert w.conn.scalar(select(func.count()).select_from(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id']))==0
+    monkeypatch.setattr(RecordRequestRepository,'save',original)
+    assert request(api_client,w,unit,key).status_code==200
