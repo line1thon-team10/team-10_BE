@@ -1,4 +1,6 @@
 """Explicit resplit request, comparison, approval, cancellation and rebuild."""
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Connection
 from app.core.auth import current_user
@@ -28,7 +30,7 @@ def compare_resplit(previewId:UUIDString|None=None,user:dict=Depends(current_use
 
 
 @router.delete('/resplit')
-def cancel_resplit(previewId:UUIDString=Query(...),user:dict=Depends(current_user),conn:Connection=Depends(get_conn)):
+def cancel_resplit(previewId:Annotated[UUIDString, Query()],user:dict=Depends(current_user),conn:Connection=Depends(get_conn)):
     return ok(_service(conn).cancel(user['id'],previewId))
 
 
