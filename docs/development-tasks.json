@@ -25,7 +25,16 @@
     ],
     "note": "실행 상태와 검증 근거를 task별로 기록한다. 선행 integrated 및 자원 소유권 확인 후 배정한다.",
     "plan_branch": "docs/development-task-plan",
-    "integration_worktree": "BE-integration"
+    "integration_worktree": "BE-integration",
+    "active_deployment": {
+      "assignee": "/root/sol_checkpoint_deploy",
+      "app_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+      "workflow_sha": "76ed7188c511f475fde344a5b97f56de2a174efc",
+      "branch": "infra/deploy-checkpoint-01",
+      "run_id": 43550194880,
+      "state": "building",
+      "manifest": "docs/releases/2026-11-14-checkpoint-01.md"
+    }
   },
   "tasks": [
     {
@@ -136,7 +145,7 @@
       "id": "SYS-04",
       "title": "미리보기 저장 구조·기준 버전 추가",
       "lane": "platform",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02"
@@ -176,7 +185,8 @@
         "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress.",
         "Finalfa1a673:222SQLite+PG passed; generator regeneration exact and single0007head. Astra review queued after S-01 fix recheck.",
         "Review found JSONB number hash mismatch and mixed read snapshots. Fixed8a65750 and3e7abe6, documented13f1a82. Root185passed/3SQLiteonlyskip; independent recheck pending.",
-        "Astra13f1a82:30independent passed/6SQLite skip, original numeric and read-race findings fixed. Final PR CI pending."
+        "Astra13f1a82:30independent passed/6SQLite skip, original numeric and read-race findings fixed. Final PR CI pending.",
+        "Actions43548622122 final13f1a82 passed; merged7dd2d4. Exact integration proposal/migration/seed/AI406passed/3SQLite race skips; Alembic single0007head."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -560,7 +570,7 @@
       "id": "D-01",
       "title": "진도·달성률·출제가능 진행률 분리",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-03"
@@ -594,11 +604,12 @@
       "optional": false,
       "branch": "feat/progress-aggregates",
       "base_sha": "e11d9617e99f219764daf0d472f3b372fd7ece66",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "b9c76a55ea2359a69b88a6fa0b1257c9dbf9f69c",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/28",
       "validation_evidence": [
         "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives.",
-        "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement."
+        "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement.",
+        "Worker finalb9c76a5:745SQLite+PG tests passed across21files, no existing assertion changes. Astra independent review running."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -998,10 +1009,17 @@
         "BE/deploy/compose.yml",
         "BE/deploy/apply.sh",
         "BE/tests/test_deployment.py",
-        "BE/app/repositories/grading_jobs.py"
+        "BE/app/repositories/grading_jobs.py",
+        "BE/schema/erd.dbml",
+        "BE/app/db/schema.py",
+        "BE/schema/quiz-storage-constraints.json",
+        "BE/migrations/versions/0008_grading_execution_mode.py",
+        "BE/tests/test_grading_mode_migration.py",
+        "BE/docs/quiz-storage-handoff.md"
       ],
       "shared_resources": [
-        "ci-deploy"
+        "ci-deploy",
+        "schema"
       ],
       "contract_files": [
         "quiz.md",
@@ -1023,7 +1041,9 @@
       "base_sha": "bea6d7d19229f56741715f3cb74654360ad60519",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally."
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
       "worktree": "BE-task-grading-worker"
@@ -1611,11 +1631,12 @@
       "optional": false,
       "branch": "feat/onboarding-events",
       "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
-      "head_sha": "6a3608bf64ab16c453e17f3c8033c73c46c0dd35",
+      "head_sha": "7b13e11fe62949f0b289ce0cf7eaca8a923e75a0",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/27",
       "validation_evidence": [
         "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression.",
-        "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04."
+        "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04.",
+        "Independent P2: HH:mm PATCH lost stored seconds or rejected valid subminute metadata. Fixed7b13e11; root195passed, Astra original10+boundary10 and regression215SQLite/PG passed; no findings. FinalCI43549792768 pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
