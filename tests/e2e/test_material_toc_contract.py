@@ -22,6 +22,8 @@ def request(client, case, material, text):
     ('1. Intro 1~2쪽\n2. Overlap 2~2쪽', False),
     ('1. Intro 2~1쪽', False), ('1. Intro 0~2쪽', False),
     ('1. Intro 1~3쪽', False), ('1. Intro 1~1쪽\n1. Duplicate 2~2쪽', False),
+    ('-1. Intro 1~1쪽', False), ('1. Intro -1~1쪽', False),
+    ('1. Intro 1~-1쪽', False), ('1. Intro\x00 1~1쪽', False),
 ])
 def test_explicit_toc_never_saves_or_calls_provider(api_client, material_case, domain_connection, text, valid):
     case, conn = material_case, domain_connection
