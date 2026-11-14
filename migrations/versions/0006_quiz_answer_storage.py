@@ -92,6 +92,17 @@ def _create_tables():
         sa.Column("quiz_item_id", UUID, sa.ForeignKey("quiz_items.id", ondelete="CASCADE"), primary_key=True, nullable=False),
         sa.Column("answer_id", UUID, sa.ForeignKey("quiz_answers.id", ondelete="CASCADE"), unique=True, nullable=False),
     )
+    op.create_table(
+        "quiz_answer_receipts",
+        sa.Column("quiz_item_id", UUID, sa.ForeignKey("quiz_items.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("request_revision", sa.Integer(), nullable=False),
+        sa.Column("answer_hash", sa.String(), nullable=False),
+        sa.Column("response_answer_id", UUID, sa.ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("quiz_item_id", "request_revision", "answer_hash"),
+        sa.CheckConstraint("request_revision >= 0", name="ck_quiz_receipt_revision"),
+        sa.CheckConstraint("length(answer_hash) = 64", name="ck_quiz_receipt_hash"),
+    )
     jobs = op.create_table(
         "quiz_grading_jobs",
         sa.Column("id", UUID, primary_key=True, nullable=False),
@@ -200,5 +211,5 @@ def upgrade():
 
 
 def downgrade():
-    for name in ("quiz_submission_states", "quiz_grading_jobs", "quiz_answer_heads", "quiz_answers"):
+    for name in ("quiz_submission_states", "quiz_grading_jobs", "quiz_answer_receipts", "quiz_answer_heads", "quiz_answers"):
         op.drop_table(name)

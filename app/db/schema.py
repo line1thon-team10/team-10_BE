@@ -526,6 +526,18 @@ quiz_answer_heads = Table(
     Column("answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False, unique=True),
 )
 
+quiz_answer_receipts = Table(
+    "quiz_answer_receipts", metadata,
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), nullable=False),
+    Column("request_revision", Integer, nullable=False),
+    Column("answer_hash", String, nullable=False),
+    Column("response_answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False),
+    Column("received_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("quiz_item_id", "request_revision", "answer_hash"),
+    CheckConstraint("request_revision >= 0", name="ck_quiz_receipt_revision"),
+    CheckConstraint("length(answer_hash) = 64", name="ck_quiz_receipt_hash"),
+)
+
 quiz_grading_jobs = Table(
     "quiz_grading_jobs", metadata,
     Column("id", UUID, primary_key=True, nullable=False),

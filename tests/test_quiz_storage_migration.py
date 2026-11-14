@@ -38,6 +38,7 @@ def test_legacy_answers_and_completed_sets_survive_upgrade_roundtrip(migration_c
         for table in (t.quiz_attempts, t.quiz_sessions, t.mastery_history):
             assert rows(conn, table) == before[table.name]
         answers = rows(conn, t.quiz_answers)
+        assert rows(conn, t.quiz_answer_receipts) == []  # no legacy per-item request/revision receipt was stored
         assert len(answers) == len(before["quiz_attempts"]) == len(rows(conn, t.quiz_answer_heads))
         old_by_item = {row["quiz_item_id"]: row for row in before["quiz_attempts"]}
         for answer in answers:
@@ -130,6 +131,8 @@ def test_delete_item_cascades_storage_without_deleting_source_question(migration
     conn.commit()
     command.upgrade(config, "head")
     answer = conn.execute(select(t.quiz_answers)).mappings().first()
+    conn.execute(t.quiz_answer_receipts.insert().values(quiz_item_id=answer["quiz_item_id"], request_revision=0,
+        answer_hash=answer["answer_hash"], response_answer_id=answer["id"], received_at=answer["answered_at"]))
     question_id = conn.scalar(select(t.quiz_items.c.question_id).where(t.quiz_items.c.id == answer["quiz_item_id"]))
     source_ids = set(conn.scalars(select(t.question_sources.c.id).where(t.question_sources.c.question_id == question_id)))
     conn.execute(delete(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id == answer["quiz_item_id"]))
@@ -138,6 +141,8 @@ def test_delete_item_cascades_storage_without_deleting_source_question(migration
     assert conn.scalar(select(t.quiz_answers.c.id).where(t.quiz_answers.c.id == answer["id"])) is None
     assert conn.scalar(select(t.quiz_answer_heads.c.answer_id).where(t.quiz_answer_heads.c.answer_id == answer["id"])) is None
     assert conn.scalar(select(t.quiz_grading_jobs.c.id).where(t.quiz_grading_jobs.c.answer_id == answer["id"])) is None
+    assert conn.scalar(select(t.quiz_answer_receipts.c.response_answer_id).where(
+        t.quiz_answer_receipts.c.response_answer_id == answer["id"])) is None
     assert conn.scalar(select(t.questions.c.id).where(t.questions.c.id == question_id)) == question_id
     assert set(conn.scalars(select(t.question_sources.c.id).where(t.question_sources.c.question_id == question_id))) == source_ids
 
@@ -150,6 +155,12 @@ def test_revision_uniqueness_and_checks_are_enforced(migration_connection):
     conn.commit()
     command.upgrade(config, "head")
     answer = dict(conn.execute(select(t.quiz_answers)).mappings().first())
+    receipt = {"quiz_item_id": answer["quiz_item_id"], "request_revision": 0, "answer_hash": answer["answer_hash"],
+               "response_answer_id": answer["id"], "received_at": answer["answered_at"]}
+    conn.execute(t.quiz_answer_receipts.insert().values(**receipt))
+    for changes in ({}, {"request_revision": -1}, {"request_revision": 1, "answer_hash": "bad"}):
+        with pytest.raises(IntegrityError), conn.begin_nested():
+            conn.execute(t.quiz_answer_receipts.insert().values(**{**receipt, **changes}))
     for changes in ({}, {"revision": 0}, {"revision": 2, "confidence": "unknown"},
                     {"revision": 2, "choice": -1}, {"revision": 2, "answer_hash": "short"}):
         with pytest.raises(IntegrityError), conn.begin_nested():

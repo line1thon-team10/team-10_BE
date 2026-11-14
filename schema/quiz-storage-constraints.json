@@ -5,6 +5,8 @@
     {"table":"quiz_answers","name":"ck_quiz_answer_choice","sql":"choice IS NULL OR choice >= 0"},
     {"table":"quiz_answers","name":"ck_quiz_answer_payload","sql":"(input_recovered = true AND answer_hash IS NOT NULL AND ((choice IS NOT NULL AND text IS NULL) OR (choice IS NULL AND text IS NOT NULL))) OR (input_recovered = false AND legacy_answer IS NOT NULL AND choice IS NULL AND text IS NULL AND answer_hash IS NULL)"},
     {"table":"quiz_answers","name":"ck_quiz_answer_hash","sql":"answer_hash IS NULL OR length(answer_hash) = 64"},
+    {"table":"quiz_answer_receipts","name":"ck_quiz_receipt_revision","sql":"request_revision >= 0"},
+    {"table":"quiz_answer_receipts","name":"ck_quiz_receipt_hash","sql":"length(answer_hash) = 64"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_revision","sql":"answer_revision > 0 AND claim_count >= 0"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_status","sql":"status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_lease","sql":"(status = 'running' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND claimed_at IS NOT NULL AND lease_expires_at > claimed_at) OR (status <> 'running' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)"},
@@ -16,6 +18,8 @@
     "quiz_answers.quiz_item_id":{"ondelete":"CASCADE"},
     "quiz_answer_heads.quiz_item_id":{"ondelete":"CASCADE"},
     "quiz_answer_heads.answer_id":{"ondelete":"CASCADE"},
+    "quiz_answer_receipts.quiz_item_id":{"ondelete":"CASCADE"},
+    "quiz_answer_receipts.response_answer_id":{"ondelete":"CASCADE"},
     "quiz_grading_jobs.answer_id":{"ondelete":"CASCADE"},
     "quiz_submission_states.quiz_session_id":{"ondelete":"CASCADE"}
   }

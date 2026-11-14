@@ -504,6 +504,15 @@ Table quiz_answer_heads [note: '항목별 현재 불변 답안을 가리킨다. 
   answer_id uuid [not null, unique, ref: > quiz_answers.id]
 }
 
+Table quiz_answer_receipts [note: '실제 수신한 답 저장 요청의 최초 응답. 동일 답 no-op도 기록하므로 이후 revision 변경 뒤에 원 응답을 재생한다. 이전 revision의 같은 원문이라는 이유만으로 미수신 stale 요청을 재생하지 않는다.'] {
+  quiz_item_id uuid [not null, ref: > quiz_items.id]
+  request_revision int [not null]
+  answer_hash varchar [not null]
+  response_answer_id uuid [not null, ref: > quiz_answers.id]
+  received_at timestamptz [not null]
+  indexes { (quiz_item_id, request_revision, answer_hash) [pk] }
+}
+
 Table quiz_grading_jobs [note: '답안 revision당 하나. lease token은 매 선점마다 바뀌며 현재 answer/head/revision과 소유 token/만료를 모두 확인한 결과만 저장한다. 집계 확정은 별도 Q05.'] {
   id uuid [pk]
   answer_id uuid [not null, unique, ref: > quiz_answers.id]
@@ -701,6 +710,7 @@ TableGroup quizzes {
   quiz_attempts
   quiz_answers
   quiz_answer_heads
+  quiz_answer_receipts
   quiz_grading_jobs
   quiz_submission_states
   weak_questions
