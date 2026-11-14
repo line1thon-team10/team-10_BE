@@ -215,11 +215,6 @@ class QuizAnswerRepository:
         quiz = self.lock_quiz(user_id, quiz_id)
         with self.connection.begin_nested():
             item = self.item(user_id, quiz["id"], item_id)
-            if item["type"] in ("choice", "ox"):
-                if choice is None or choice >= len(item["choices"] or []):
-                    raise ApiError("INVALID_INPUT", "유효한 보기 번호가 필요해요", 422)
-            elif item["type"] not in ("short", "essay") or text is None:
-                raise ApiError("INVALID_INPUT", "문항 유형에 맞는 문자열 답안이 필요해요", 422)
             current = self._current(item["id"])
             current_revision = current["revision"] if current else 0
             received = self.connection.scalar(select(t.quiz_answer_receipts.c.response_answer_id).where(
@@ -233,6 +228,13 @@ class QuizAnswerRepository:
                 if replay is None:
                     raise ApiError("ANSWER_CONFLICT", "원래 저장 응답을 확인할 수 없어요", 409)
                 return AnswerSave(replay, False, bool(current and replay["id"] == current["id"]))
+            # A receipt proves the input was accepted with the old question
+            # metadata. Only unseen requests use the current type/options.
+            if item["type"] in ("choice", "ox"):
+                if choice is None or choice >= len(item["choices"] or []):
+                    raise ApiError("INVALID_INPUT", "유효한 보기 번호가 필요해요", 422)
+            elif item["type"] not in ("short", "essay") or text is None:
+                raise ApiError("INVALID_INPUT", "문항 유형에 맞는 문자열 답안이 필요해요", 422)
             sealed = self.connection.scalar(select(t.quiz_submission_states.c.quiz_session_id).where(
                 t.quiz_submission_states.c.quiz_session_id == quiz["id"]))
             if sealed or quiz["status"] in ("submitted", "carried_over") or quiz["finalized_at"] is not None:
