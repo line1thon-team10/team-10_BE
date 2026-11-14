@@ -1,5 +1,5 @@
 """Strict range snapshots through the real request transaction on SQLite and PG."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,8 +7,9 @@ from pydantic import ValidationError
 from sqlalchemy import select, update
 
 from app.db import schema as t
-from app.schemas.records import RecordIn
+from app.schemas.records import FixIn, RecordIn
 from app.routers import today
+from app.services import records
 from tests.test_record_transactions import headers, task_for
 
 TASK_ID = "2d4b385a-ec4a-4e95-b313-a98ce1641d42"
@@ -291,3 +292,174 @@ def test_post_uses_one_timestamp_for_record_and_timezone_date(api_client, demo_u
     assert record["study_date"].isoformat() == "2026-11-14"
     assert record["recorded_at"].replace(tzinfo=timezone.utc) == at
     assert calls == [True]
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"toPage": None}, {"toPage": 0}, {"toPage": True}, {"toPage": "13"}, {"toPage": 13.0},
+    {"completedRanges": None}, {"completedRanges": {}}, {"completedRanges": [None]},
+    {"completedRanges": [{"rangeId": RANGE_ID, "toPage": False}]},
+    {"toPage": 13, "completedRanges": []}, {"completedRanges": [], "sessionId": TASK_ID},
+    {"completedRanges": [], "result": "done"},
+])
+def test_patch_schema_requires_exactly_one_strict_range_snapshot(body):
+    with pytest.raises(ValidationError):
+        FixIn.model_validate(body)
+
+
+def test_patch_schema_accepts_an_explicit_empty_replacement():
+    assert FixIn.model_validate({"completedRanges": []}).completedRanges == []
+
+
+def patch(client, user, task, **fields):
+    return client.patch(f"/api/tasks/{task.id}/record", headers=headers(user), json=fields)
+
+
+def test_patch_transitions_partial_none_and_done_using_material_union(api_client, demo_user, domain_connection, mixed_task):
+    task, ranges = mixed_task
+    assert post(api_client, demo_user, task, "done").status_code == 200
+    initial = snapshot(domain_connection, task)
+    domain_connection.commit()
+    snapshots = [
+        ([{"rangeId": ranges[1]["id"], "toPage": 20}], "partial", 6, [None, 20, None]),
+        ([], "none", 0, [None, None, None]),
+        ([{"rangeId": row["id"], "toPage": row["end_page"]} for row in reversed(ranges)], "done", 14, [16, 20, 16]),
+    ]
+    for selected, status, pages, done_to in snapshots:
+        response = patch(api_client, demo_user, task, completedRanges=selected)
+        assert response.status_code == 200, response.text
+        result = response.json()["data"]
+        assert result["taskId"] == task.id and result["status"] == status
+        assert result["donePages"] == pages and result["doneTo"] is None
+        assert [item["id"] for item in result["ranges"]] == [item["id"] for item in ranges]
+        assert [item["doneTo"] for item in result["ranges"]] == done_to
+        assert result["ranges"][0]["materialId"] == result["ranges"][1]["materialId"]
+        assert result["ranges"][0]["materialId"] != result["ranges"][2]["materialId"]
+        assert all(set(item) == {"id", "materialId", "unitId", "conceptId", "from", "to", "doneTo"}
+                   for item in result["ranges"])
+        saved = snapshot(domain_connection, task)
+        assert saved["record"]["id"] == initial["record"]["id"]
+        assert saved["task"]["status"] == saved["record"]["result"] == records.RESULT_TO_DB[status]
+        domain_connection.commit()
+
+
+def test_patch_single_range_supports_zero_partial_full_and_normalized_path(api_client, demo_user, domain_connection):
+    task = task_for(domain_connection, demo_user, "AI2")
+    domain_connection.commit()
+    assert post(api_client, demo_user, task, "done").status_code == 200
+    for body, status, count, end in [({"completedRanges": []}, "none", 0, None),
+                                   ({"toPage": 12}, "partial", 1, 12),
+                                   ({"toPage": 20}, "done", 9, 20)]:
+        response = api_client.patch(f"/api/tasks/{task.id.upper().replace('-', '')}/record",
+                                    headers=headers(demo_user), json=body)
+        assert response.status_code == 200, response.text
+        result = response.json()["data"]
+        assert (result["taskId"], result["status"], result["donePages"], result["doneTo"]) == (task.id, status, count, end)
+        assert result["ranges"][0]["doneTo"] == end
+
+
+@pytest.mark.parametrize("fields", [
+    {}, {"toPage": 0}, {"toPage": 21}, {"toPage": "13"}, {"toPage": 13, "completedRanges": []},
+    {"sessionId": None, "completedRanges": []}, {"completedRanges": None}, {"completedRanges": [None]},
+])
+def test_patch_rejects_invalid_bodies_without_changing_records(api_client, demo_user, domain_connection, fields):
+    task = task_for(domain_connection, demo_user, "DB2")
+    before = snapshot(domain_connection, task)
+    domain_connection.commit()
+    assert_error(patch(api_client, demo_user, task, **fields))
+    assert snapshot(domain_connection, task) == before
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "foreign_range", "missing_range", "below", "above", "legacy_multi"])
+def test_patch_validates_actual_owned_ranges(api_client, demo_user, domain_connection, mixed_task, kind):
+    task, ranges = mixed_task
+    assert post(api_client, demo_user, task, "done").status_code == 200
+    selected = {"rangeId": ranges[0]["id"], "toPage": 13}
+    fields = {"completedRanges": [selected]}
+    if kind == "duplicate":
+        fields["completedRanges"].append({**selected, "rangeId": selected["rangeId"].upper()})
+    elif kind == "foreign_range":
+        other = api_client.post("/api/session").json()["data"]["anonymousId"]
+        selected["rangeId"] = task_for(domain_connection, other, "AI2").ranges[0]["id"]
+    elif kind == "missing_range":
+        selected["rangeId"] = str(uuid4())
+    elif kind in ("below", "above"):
+        selected["toPage"] = 11 if kind == "below" else 17
+    elif kind == "legacy_multi":
+        fields = {"toPage": 13}
+    before = snapshot(domain_connection, task)
+    domain_connection.commit()
+    assert_error(patch(api_client, demo_user, task, **fields))
+    assert snapshot(domain_connection, task) == before
+
+
+@pytest.mark.parametrize("kind", ["unrecorded", "foreign_task", "missing_task", "invalid_uuid"])
+def test_patch_requires_an_owned_existing_record(api_client, demo_user, domain_connection, kind):
+    user = demo_user
+    if kind == "foreign_task":
+        user = api_client.post("/api/session").json()["data"]["anonymousId"]
+    task = task_for(domain_connection, user, "DB2" if kind == "foreign_task" else "AI2")
+    task_id = "bad-id" if kind == "invalid_uuid" else str(uuid4()) if kind == "missing_task" else task.id
+    domain_connection.commit()
+    response = api_client.patch(f"/api/tasks/{task_id}/record", headers=headers(demo_user), json={"completedRanges": []})
+    status, code = (400, "NOT_RECORDED") if kind == "unrecorded" else (422, "INVALID_INPUT") if kind == "invalid_uuid" else (404, "TASK_NOT_FOUND")
+    assert_error(response, status, code)
+
+
+def test_patch_preserves_historical_record_date_time_and_linked_session(api_client, demo_user, domain_connection, end_focus):
+    session = api_client.get("/api/study/sessions/active", headers=headers(demo_user)).json()["data"]
+    end_focus(demo_user)
+    task = task_for(domain_connection, demo_user, "AI2")
+    domain_connection.commit()
+    response = post(api_client, demo_user, task, "partial", toPage=13, sessionId=session["id"])
+    assert response.status_code == 200, response.text
+    before = snapshot(domain_connection, task)["record"]
+    old_session = dict(domain_connection.execute(select(t.study_sessions).where(
+        t.study_sessions.c.id == session["id"])).mappings().one())
+    domain_connection.execute(update(t.users).where(t.users.c.id == demo_user)
+                              .values(demo_date=before["study_date"] + timedelta(days=2)))
+    domain_connection.commit()
+    for fields in [{"completedRanges": []}, {"toPage": 20}]:
+        response = patch(api_client, demo_user, task, **fields)
+        assert response.status_code == 200, response.text
+        after = snapshot(domain_connection, task)["record"]
+        for key in ("id", "task_id", "session_id", "recorded_at", "study_date"):
+            assert after[key] == before[key]
+        assert after["session_id"] == session["id"]
+        assert dict(domain_connection.execute(select(t.study_sessions).where(
+            t.study_sessions.c.id == session["id"])).mappings().one()) == old_session
+        domain_connection.commit()
+
+
+def test_range_snapshot_revalidates_only_existing_learning_pass(api_client, demo_user, domain_connection):
+    task = task_for(domain_connection, demo_user, "DB2")
+    before = dict(domain_connection.execute(select(t.learning_passes).where(
+        t.learning_passes.c.unit_id == task.ranges[0]["unit_id"])).mappings().one())
+    domain_connection.commit()
+    for page, valid in [(13, False), (20, True)]:
+        response = patch(api_client, demo_user, task, completedRanges=[{"rangeId": task.ranges[0]["id"], "toPage": page}])
+        assert response.status_code == 200, response.text
+        after = dict(domain_connection.execute(select(t.learning_passes).where(
+            t.learning_passes.c.unit_id == task.ranges[0]["unit_id"])).mappings().one())
+        assert (after["invalidated_at"] is None) is valid
+        assert {**after, "invalidated_at": None} == before
+        domain_connection.commit()
+
+
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_range_snapshot_rolls_back_all_writes_if_revalidation_fails(api_client, demo_user, domain_connection, monkeypatch, method):
+    task = task_for(domain_connection, demo_user, "DB2")
+    before = snapshot(domain_connection, task)
+    old_passes = [dict(row) for row in domain_connection.execute(select(t.learning_passes)).mappings()]
+    domain_connection.commit()
+    real = records.revalidate_record_passes
+
+    def fail(*args):
+        real(*args)
+        raise RuntimeError("failure after evidence mutation")
+
+    monkeypatch.setattr(records, "revalidate_record_passes", fail)
+    fields = {"completedRanges": [{"rangeId": task.ranges[0]["id"], "toPage": 13}]}
+    response = post(api_client, demo_user, task, "partial", **fields) if method == "post" else patch(api_client, demo_user, task, **fields)
+    assert_error(response, 500, "SERVER_ERROR")
+    assert snapshot(domain_connection, task) == before
+    assert [dict(row) for row in domain_connection.execute(select(t.learning_passes)).mappings()] == old_passes

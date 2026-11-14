@@ -1,10 +1,11 @@
 """Record mutations and existing learning-pass evidence use one transaction."""
+from collections import defaultdict
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.core.clock import now_utc
 from app.core.responses import ApiError
-from app.domain.ranges import PageSpan, page_count
+from app.domain.ranges import PageSpan, intersect, page_count
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.records import RecordRepository
 from app.services.learning_evidence import revalidate_record_passes
@@ -102,14 +103,33 @@ def post_ranges(task: Task, body) -> list[dict]:
     return ranges
 
 
-def ranges_until(task: Task, to_page: int) -> list[dict]:
-    ranges = []
+def patch_ranges(task: Task, body) -> tuple[str, list[dict]]:
+    if task.record is None:
+        raise ApiError("NOT_RECORDED", "아직 기록하지 않은 태스크예요")
+    ranges = requested_ranges(task, body)
+    total, completed = range_pages(task.paged), range_pages(ranges)
+    result = "none" if completed == 0 else "done" if completed == total else "partial"
+    return result, ranges
+
+
+def record_range_view(task: Task) -> dict:
+    """The correction response keeps unit evidence and PDF totals separate."""
+    by_unit = defaultdict(list)
+    for item in task.done_ranges:
+        if item["start_page"] is not None and item["end_page"] is not None:
+            by_unit[item["unit_id"]].append(PageSpan(item["unit_id"], item["start_page"], item["end_page"]))
+    ranges, completed_pages = [], []
     for item in task.paged:
-        if item["start_page"] > to_page:
-            break
-        ranges.append({"unit_id": item["unit_id"], "start_page": item["start_page"],
-                       "end_page": min(item["end_page"], to_page)})
-    return ranges
+        completed = intersect([PageSpan(item["unit_id"], item["start_page"], item["end_page"])],
+                              by_unit[item["unit_id"]])
+        # A later completed island cannot claim the uncompleted prefix is done.
+        done_to = completed[0].end if completed and completed[0].start == item["start_page"] else None
+        completed_pages.extend(PageSpan(item["material_id"], span.start, span.end) for span in completed)
+        ranges.append({"id": item["id"], "materialId": item["material_id"], "unitId": item["unit_id"],
+                       "conceptId": item["concept_id"], "from": item["start_page"], "to": item["end_page"],
+                       "doneTo": done_to})
+    return {"ranges": ranges, "donePages": page_count(completed_pages),
+            "doneTo": ranges[0]["doneTo"] if len(task.ranges) == 1 and ranges else None}
 
 
 def save_record(conn, task: Task, result: str, ranges: list[dict], study_date, session_id=None,

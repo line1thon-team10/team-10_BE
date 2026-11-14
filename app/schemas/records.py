@@ -52,3 +52,11 @@ class RecordIn(RangeCommand):
         if self.toPage is not None and self.result != "partial":
             raise ValueError("toPage is only a compatibility input for partial records")
         return self
+
+
+class FixIn(RangeCommand):
+    @model_validator(mode="after")
+    def require_range_input(self):
+        if self.toPage is None and self.completedRanges is None:
+            raise ValueError("A replacement range snapshot is required")
+        return self

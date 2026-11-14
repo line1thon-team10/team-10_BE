@@ -2,7 +2,6 @@
 import uuid
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy import Connection, select
 
 from app.core.auth import current_user
@@ -10,7 +9,7 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
-from app.schemas.records import RecordIn
+from app.schemas.records import FixIn, RecordIn, UUIDString
 from app.services.planner import Planner
 from app.services import records
 from app.services.study import OPEN_RATE, StudyData, unit_no
@@ -116,24 +115,17 @@ def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connec
     }})
 
 
-class FixIn(BaseModel):
-    toPage: int
-
-
 @router.patch("/tasks/{task_id}/record")
-def fix_record(task_id: str, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+def fix_record(task_id: UUIDString, body: FixIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """기록한 뒤 끝낸 페이지 고치기 (HM-03). 이월·진행률은 다시 계산돼요"""
     user = records.lock_record_user(conn, user)
-    today = today_for(user)
+    at = now_utc()
+    today = records.record_date(user, at)
     data = StudyData(conn, user["id"])
-    task = records.find_task(data, task_id)
-    if task.row["status"] not in ("completed", "partial"):
-        raise ApiError("NOT_RECORDED", "아직 기록하지 않은 태스크예요")
-    if task.first is None or not (task.first <= body.toPage <= task.last):
-        raise ApiError("BAD_PAGE", f"p.{task.first}부터 p.{task.last} 사이로 적어 주세요")
-    result = "done" if body.toPage >= task.last else "partial"
-    records.save_record(conn, task, result, records.ranges_until(task, body.toPage), task.record["study_date"], user_id=user["id"])
+    task = records.owned_task(data, task_id)
+    result, ranges = records.patch_ranges(task, body)
+    records.save_record(conn, task, result, ranges, task.record["study_date"], user_id=user["id"], at=at)
     after = StudyData(conn, user["id"])
-    fixed = records.find_task(after, task_id)
-    return ok({"taskId": task_id, "status": after.task_view(fixed)["status"], "doneTo": fixed.done_to,
+    fixed = records.owned_task(after, task_id)
+    return ok({"taskId": task_id, "status": result, **records.record_range_view(fixed),
                "rate": after.progress(today)["rate"]})
