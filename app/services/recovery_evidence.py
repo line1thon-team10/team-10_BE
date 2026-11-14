@@ -87,8 +87,12 @@ def verified_passes(conn, user_id, unit, concepts, *, require_current_scope=True
                 continue
             blocks = set(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(
                 t.remedial_obligation_blocks.c.obligation_id == obligation_id)))
+            claimed_blocks = snapshot.get('blockIds')
+            if (not isinstance(claimed_blocks, list) or not all(isinstance(value, str) for value in claimed_blocks)
+                    or len(claimed_blocks) != len(set(claimed_blocks))):
+                continue
             if (not blocks or snapshot.get('sourceQuizId') != obligation['quiz_session_id']
-                    or not isinstance(snapshot.get('blockIds'), list) or set(snapshot['blockIds']) != blocks
+                    or set(claimed_blocks) != blocks
                     or any(item['block_id'] not in blocks or item['task_type'] != 'remedial' for item in records)):
                 continue
             try:

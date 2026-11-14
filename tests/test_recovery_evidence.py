@@ -154,3 +154,17 @@ def test_verified_full_relearn_is_a_first_pass_even_after_retirement(api_client,
     metrics=QuizService(conn,c['user'].to_mapping(),DAY)._metrics_input();unit=dict(next(x for x in metrics['units'] if x['id']==row['unit_id']))
     unit['retired_at']=AT
     assert [x['id'] for x in first_passes(conn,c['user'].id,unit,metrics['concepts'])]==[row['id']]
+
+
+@pytest.mark.parametrize('damage', ['nested', 'null', 'duplicate'])
+def test_malformed_remedial_block_claim_never_raises_or_grants_recovery(api_client,domain_connection,mastery_case,damage):
+    c,conn=mastery_case,domain_connection
+    quiz,_=submit_quiz(api_client,conn,c,c['questions'][0][:10],7)
+    add_record_pass(conn,c,kind='initial',day=DAY)
+    day=DAY+timedelta(days=1)
+    ids=add_record_pass(conn,c,kind='remedial',day=day,source_quiz=quiz)
+    snapshot=dict(conn.scalar(select(t.learning_passes.c.evidence_snapshot).where(t.learning_passes.c.id==ids['pass'])))
+    snapshot['blockIds']=[{}] if damage=='nested' else [None] if damage=='null' else [ids['block'],ids['block']]
+    conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==ids['pass']).values(evidence_snapshot=snapshot))
+    metrics=QuizService(conn,c['user'].to_mapping(),day)._metrics_input()
+    assert not any(row.supplement_completed for row in recovery_eligibility(conn,c['user'].id,metrics))
