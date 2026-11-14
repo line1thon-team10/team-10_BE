@@ -133,3 +133,35 @@ def test_structure_and_tasks_rollback_together_on_apply_failure(api_client,domai
     assert facts(conn)==before;conn.commit()
     monkeypatch.setattr(plan_additions,'apply_placements',original)
     assert apply(api_client,case,key).status_code==200
+
+
+@pytest.mark.parametrize('existing',['learned','running','ended_unconsumed'])
+def test_selected_learning_or_started_facts_are_not_duplicated(api_client,domain_connection,range_case,existing):
+    case,conn=range_case,domain_connection
+    task=case['old_task']
+    if existing=='learned':
+        conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task['id']).values(
+            scheduled_date=TODAY-timedelta(days=1),starts_at=None,ends_at=None,status='partial'))
+        identifier=str(uuid4())
+        conn.execute(t.study_records.insert().values(id=identifier,task_id=task['id'],result='partial',
+            study_date=TODAY-timedelta(days=1),recorded_at=NOW,updated_at=NOW))
+        conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()),record_id=identifier,unit_id=case['unit'],start_page=1,end_page=5))
+    else:
+        conn.execute(t.study_sessions.insert().values(id=str(uuid4()),user_id=case['user'],task_id=task['id'],
+            status='running' if existing=='running' else 'ended',started_at=NOW,
+            ended_at=None if existing=='running' else NOW+timedelta(minutes=10),
+            measured_seconds=0 if existing=='running' else 600,study_date=TODAY,created_at=NOW))
+    before=facts(conn);conn.commit()
+    response=preview(api_client,case,**{'from':1,'to':6})
+    assert response.status_code==200,response.text
+    value=response.json()['data']
+    assert value['summary']['totalPages']==6 and value['leftPages']==value['conflicts']==0
+    selected_pages=sorted(p for row in value['placements'] for p in range(row['from'],row['to']+1))
+    assert selected_pages==([6] if existing=='learned' else [])
+    assert facts(conn)==before;conn.commit()
+    assert apply(api_client,case,value['previewId']).status_code==200
+    if existing!='learned':
+        assert dict(conn.execute(select(t.study_tasks).where(t.study_tasks.c.id==task['id'])).mappings().one())==task
+    assert conn.execute(select(t.study_records).order_by(*t.study_records.primary_key.columns)).all()==before['study_records']
+    assert conn.execute(select(t.study_record_ranges).order_by(*t.study_record_ranges.primary_key.columns)).all()==before['study_record_ranges']
+

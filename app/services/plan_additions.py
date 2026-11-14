@@ -129,7 +129,7 @@ class PlanAdditionsService:
             candidate = _expand_structure(conn,user_id,body,selected)
             timezone_name = conn.scalar(select(t.users.c.timezone).where(t.users.c.id==user_id))
             try:
-                request,supersede,_ = existing_allocation_input(conn,user_id,today=snapshot.base_date,
+                request,supersede,scope_request = existing_allocation_input(conn,user_id,today=snapshot.base_date,
                     timezone_name=timezone_name,subject_ids=(),affected_subject_ids=(body.subjectId,),
                     material_structure_overrides={body.materialId:{'units':candidate['units'],'concepts':candidate['concepts']}})
             except PendingObligations as exc:
@@ -140,17 +140,15 @@ class PlanAdditionsService:
             fixed = tuple(part.span for task in request.fixed if task.subject_id==body.subjectId and task.kind=='study'
                           for part in task.ranges)
             selected_pending = subtract(intersect(selected,available),fixed)
-            if page_count(selected_pending) != page_count(selected):
-                raise ApiError('INVALID_INPUT','이미 학습하거나 시작한 범위를 제외하고 추가할 페이지를 선택해 주세요',422)
             dates = tuple(body.startDate+timedelta(days=i) for i in range((body.endDate-body.startDate).days+1)
                           if (body.startDate+timedelta(days=i)).isoweekday() in body.days)
-            request = replace(request,study_windows=(StudyWindow('addition',selected,dates,body.minutesPerDay),))
+            request = replace(request,study_windows=(StudyWindow('addition',selected_pending,dates,body.minutesPerDay),))
             summary = {'subjectName':subject['name'], 'materialName':material['original_name'],
                 'from':body.from_, 'to':body.to, 'pages':page_count(selected), 'minutesPerDay':body.minutesPerDay,
                 'totalPages':page_count(selected), 'goalType':'time' if body.minutesPerDay else 'pages',
                 'totalMinutes':half_up(sum((part.end-part.start+1)*next(subject.minutes_per_page for subject in request.subjects
                     if subject.id==body.subjectId) * MULTIPLIERS[unit.difficulty]
-                    for unit in request.units for part in intersect(unit.ranges,selected))),
+                    for unit in scope_request.units for part in intersect(unit.ranges,selected))),
                 'days':body.days,'startDate':body.startDate.isoformat(),'endDate':body.endDate.isoformat()}
         try:
             result=allocate(request)
@@ -165,11 +163,13 @@ class PlanAdditionsService:
             if ready is not None:
                 return ready
             placements=_placements(request,result,candidate,conn) if result.feasible else []
-            pieces=_preview_pieces(result,selected) if result.feasible else []
+            pieces=_preview_pieces(result,selected_pending) if result.feasible else []
             conflicts=0 if result.feasible else max(1,len(result.reasons))
             response={'summary':summary,'placements':pieces,'conflicts':conflicts,
-                'leftPages':0 if result.feasible else page_count(selected),
-                'note':' '.join(reason.message for reason in result.reasons) or None}
+                'leftPages':0 if result.feasible else page_count(selected_pending),
+                'note':' '.join([*[reason.message for reason in result.reasons],
+                    *(['이미 학습했거나 시작한 범위는 기존 기록과 고정 배치로 충족하고 남은 부분만 추가 배분해요']
+                      if page_count(selected_pending)<page_count(selected) else [])]) or None}
             return service.create(user_id,domain=DOMAIN,target=target,snapshot=snapshot,normalized_input=normalized,
                 changes={'feasible':result.feasible,'structure':candidate,'allocation':{'schemaVersion':'plan-placements-v1',
                     'policy':POLICY_VERSION,'timezone':timezone_name,'activateSubjectIds':[],
