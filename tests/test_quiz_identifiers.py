@@ -85,3 +85,24 @@ def test_repeated_original_question_has_distinct_public_ids(api_client, quiz_cas
     assert [q["id"] for q in repeated["questions"]] == [item["id"] for item in repeated_items]
     assert {q["id"] for q in original["questions"]}.isdisjoint(q["id"] for q in repeated["questions"])
     assert [q["prompt"] for q in original["questions"]] == [q["prompt"] for q in repeated["questions"]]
+
+
+def test_question_set_keeps_solutions_private_even_after_submission(api_client, quiz_case):
+    case = quiz_case
+    url = f"/api/quiz/{case['quiz_id']}"
+    forbidden = {"answer", "correct_answer", "correct", "is_correct", "explanation", "page", "source",
+                 "evidence", "quote", "feedback", "score", "essay_score", "grading_status", "gradingStatus"}
+    for submitted in (False, True):
+        if submitted:
+            result = api_client.post(url + "/submit", headers=case["headers"],
+                                     json={"answers": case["answers"]})
+            assert result.status_code == 200, result.text
+            for item in result.json()["data"]["items"]:
+                assert item["answer"] and item["explanation"] == "채점 후 해설"
+                assert item["evidence"]["page"] == case["unit"]["start_page"]
+                assert item["evidence"]["quote"] == "정답의 원문 근거"
+        response = api_client.get(url, headers=case["headers"])
+        assert response.status_code == 200, response.text
+        assert forbidden.isdisjoint(response.json()["data"])
+        assert all(forbidden.isdisjoint(question) for question in response.json()["data"]["questions"])
+        assert "정답의 원문 근거" not in response.text and "채점 후 해설" not in response.text

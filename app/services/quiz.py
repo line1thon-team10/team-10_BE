@@ -183,10 +183,9 @@ class QuizService:
     def question_view(self, x: dict) -> dict:
         qtype = "choice" if x["type"] in ("choice", "ox") else x["type"]  # 화면은 OX도 객관식 모양
         u = self.data.units.get(x["unit_id"])
-        src = x.get("source")
         return {"id": x["item_id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
                 "unitNo": unit_no(u["code"]) if u else None,
-                "page": f"p.{src['start_page']}" if src else None, "prompt": x["prompt"],
+                "prompt": x["prompt"],
                 "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
 
     def set_view(self, session: dict, saved: bool = False) -> dict:
