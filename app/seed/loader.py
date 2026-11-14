@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Connection, delete, select, update
+from sqlalchemy import Connection, delete, inspect, select, update
 
 from app.core.clock import now_utc
 from app.db import schema as t
@@ -42,6 +42,7 @@ def wipe_user(conn: Connection, user_id: str) -> None:
     job_ids = select(t.ai_jobs.c.id).where(t.ai_jobs.c.user_id == user_id)
 
     steps = [
+        delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
         delete(t.ai_usage_logs).where(t.ai_usage_logs.c.user_id == user_id),
         delete(t.ai_jobs).where(t.ai_jobs.c.id.in_(job_ids)),
         delete(t.ai_saved_results).where(t.ai_saved_results.c.user_id == user_id),
@@ -49,7 +50,6 @@ def wipe_user(conn: Connection, user_id: str) -> None:
         delete(t.tutor_sources).where(t.tutor_sources.c.message_id.in_(msg_ids)),
         update(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id).values(parent_message_id=None),
         delete(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id),
-        delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
         delete(t.user_notices).where(t.user_notices.c.user_id == user_id),
         delete(t.weak_questions).where(t.weak_questions.c.question_id.in_(q_ids)),
         delete(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id.in_(item_ids)),
@@ -87,7 +87,12 @@ def wipe_user(conn: Connection, user_id: str) -> None:
         delete(t.calendar_events).where(t.calendar_events.c.user_id == user_id),
         delete(t.subjects).where(t.subjects.c.user_id == user_id),
     ]
+    # Historical migration fixtures seed before these additive sidecars exist.
+    optional = {'record_requests', 'remedial_obligations', 'remedial_obligation_blocks'}
+    available = set(inspect(conn).get_table_names())
     for stmt in steps:
+        if stmt.table.name in optional and stmt.table.name not in available:
+            continue
         conn.execute(stmt)
 
 
