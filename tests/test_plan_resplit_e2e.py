@@ -118,7 +118,8 @@ def test_ambiguous_get_requires_preview_id_and_blank_text_is_empty(api_client,ad
     assert prepare(api_client,case,request='내일부터 다시 나눠줘').status_code==200
     response=call(api_client,case,'get','/api/plan/resplit')
     assert response.status_code==409 and response.json()['error']['code']=='PREVIEW_REQUIRED'
-    assert call(api_client,case,'delete','/api/plan/resplit').status_code==422
+    response=call(api_client,case,'delete','/api/plan/resplit')
+    assert response.status_code==409 and response.json()['error']['code']=='PREVIEW_REQUIRED'
 
 
 def test_concurrent_identical_requests_publish_only_one_ready_candidate(api_client,domain_connection,addition_case,monkeypatch):
