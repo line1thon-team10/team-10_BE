@@ -155,6 +155,9 @@ class TodayPlanService:
                     preview_response=response,proposal_type='today',description='오늘 학습 계획 조정')
             movable=[task for task in data.tasks_on(today) if _movable(task,sessions)]
             if not movable: raise ApiError('NO_TASK','옮길 오늘의 미완료 범위가 없어요',400)
+            if any(data.subject_by_id.get(task.row['subject_id'],{}).get('exam_date') is None
+                    or data.subject_by_id[task.row['subject_id']]['exam_date']<=today+timedelta(days=1) for task in movable):
+                raise ApiError('PLAN_INFEASIBLE','시험일 전에 오늘 범위를 옮길 날짜가 없어요',409)
             try:
                 request,supersede,_=existing_allocation_input(conn,user_id,today=today,timezone_name=user['timezone'],
                     subject_ids=(),affected_subject_ids=tuple(sorted({x.row['subject_id'] for x in movable})),

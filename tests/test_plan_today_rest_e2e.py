@@ -63,9 +63,10 @@ def test_rest_allocation_runs_without_user_lock_and_rejects_changed_input(api_cl
     assert domain_connection.scalar(select(t.plans.c.revision))==1
 
 
-def test_rest_no_remaining_task_and_exam_tomorrow_boundaries(api_client,domain_connection,today_case):
+@pytest.mark.parametrize('exam_offset',[0,1])
+def test_rest_no_remaining_task_and_exam_tomorrow_boundaries(api_client,domain_connection,today_case,exam_offset):
     conn,case=domain_connection,today_case
-    conn.execute(update(t.subjects).where(t.subjects.c.id==case['subject']).values(exam_date=TODAY+timedelta(days=1)));conn.commit()
+    conn.execute(update(t.subjects).where(t.subjects.c.id==case['subject']).values(exam_date=TODAY+timedelta(days=exam_offset)));conn.commit()
     response=preview(api_client,case,'rest')
     assert response.status_code==409 and response.json()['error']['code']=='PLAN_INFEASIBLE',response.text
     conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==case['task']['id']).values(status='completed'));conn.commit()
