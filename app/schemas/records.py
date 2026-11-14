@@ -1,4 +1,4 @@
-"""Strict record commands; omitted optional fields are distinct from null."""
+"""Strict ranges, with legacy sessionId null meaning no new session link."""
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -30,7 +30,7 @@ class RangeCommand(BaseModel):
 
     @model_validator(mode="after")
     def validate_range_inputs(self):
-        for name in self.model_fields_set:
+        for name in self.model_fields_set & {"toPage", "completedRanges"}:
             if getattr(self, name) is None:
                 raise ValueError("Optional fields must be omitted rather than null")
         if self.toPage is not None and self.completedRanges is not None:
@@ -45,7 +45,7 @@ class RangeCommand(BaseModel):
 class RecordIn(RangeCommand):
     taskId: UUIDString
     result: Literal["done", "partial", "none"]
-    sessionId: UUIDString | None = None
+    sessionId: UUIDString | None = None  # Existing S7 manual requests send null.
 
     @model_validator(mode="after")
     def validate_legacy_page(self):

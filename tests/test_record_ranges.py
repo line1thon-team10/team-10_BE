@@ -65,10 +65,17 @@ def assert_error(response, status=422, code="INVALID_INPUT"):
 
 
 @pytest.mark.parametrize("field", ["taskId", "sessionId"])
-@pytest.mark.parametrize("invalid", [None, "", "task-a", 1, True, [], {}, UUID(TASK_ID)])
+@pytest.mark.parametrize("invalid", ["", "task-a", 1, True, [], {}, UUID(TASK_ID)])
 def test_record_schema_requires_uuid_strings(field, invalid):
     with pytest.raises(ValidationError):
         RecordIn.model_validate({"taskId": TASK_ID, "result": "done", field: invalid})
+
+
+def test_record_schema_accepts_only_session_null_as_legacy_optional_input():
+    base = {"taskId": TASK_ID, "result": "done"}
+    assert RecordIn.model_validate({**base, "sessionId": None}).model_dump() == RecordIn.model_validate(base).model_dump()
+    with pytest.raises(ValidationError):
+        RecordIn.model_validate({**base, "taskId": None})
 
 
 @pytest.mark.parametrize("page", [None, 0, -1, True, False, "13", 13.0, 13.5, float("nan"), float("inf")])
@@ -183,13 +190,14 @@ def test_post_rejects_ranges_outside_the_owned_task(api_client, demo_user, domai
     assert snapshot(domain_connection, task) == before
 
 
-@pytest.mark.parametrize("fields", [{"sessionId": None}, {"toPage": "13"}, {"extra": True}, {"taskId": "bad"}])
+@pytest.mark.parametrize("fields", [{"sessionId": 0}, {"toPage": "13"}, {"toPage": None},
+                                    {"completedRanges": None}, {"extra": True}, {"taskId": "bad"}])
 def test_post_applies_strict_schema_before_database_queries(api_client, demo_user, domain_connection, fields):
     task = task_for(domain_connection, demo_user, "AI2")
     before = snapshot(domain_connection, task)
     domain_connection.commit()
     assert_error(api_client.post("/api/records", headers=headers(demo_user),
-                 json={"taskId": task.id, "result": "partial", "toPage": 13, **fields}))
+                 json={"taskId": task.id, "result": "partial", "toPage": 13, "sessionId": None, **fields}))
     assert snapshot(domain_connection, task) == before
 
 

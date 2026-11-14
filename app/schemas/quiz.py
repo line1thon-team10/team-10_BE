@@ -2,6 +2,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from app.core.responses import ApiError
 
@@ -26,6 +27,13 @@ class Answer(QuizCommand):
 
 
 class SubmitIn(QuizCommand):
-    quizId: UUID
+    quizId: UUID | SkipJsonSchema[None] = None
     answers: list[Answer]
     savedGrading: StrictBool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def optional_quiz_id_must_be_valid_when_present(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "quizId" in data and data["quizId"] is None:
+            raise ApiError("INVALID_INPUT", "퀴즈 ID는 생략하거나 유효한 ID로 보내 주세요", 422)
+        return data
