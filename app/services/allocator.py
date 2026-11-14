@@ -30,6 +30,7 @@ class _Pool:
     baseline: Fraction
     multiplier: Fraction
     window_id: str | None = None
+    indivisible: bool = False
 
     @property
     def cost(self):
@@ -162,7 +163,7 @@ class _Allocator:
                     unit, subject = self.units[unit_id], self.subjects[work.subject_id]
                     pools.append(_Pool(work.id, work.subject_id, work.kind, unit_id, remaining,
                                        max(work.not_before or self.request.start_date, self.request.start_date),
-                                       subject.minutes_per_page, MULTIPLIERS[unit.difficulty]))
+                                       subject.minutes_per_page, MULTIPLIERS[unit.difficulty], indivisible=work.indivisible))
         return tuple(sorted(pools, key=self._key))
 
     def _duration(self, counts):
@@ -198,6 +199,8 @@ class _Allocator:
                 self.budget.tick()
                 if position == len(indices):
                     if MIN_TASK <= duration <= capacity:
+                        if any(self.pools[i].indivisible and counts[i] != self.initial[i] for i in indices):
+                            return
                         vector = tuple(counts)
                         choices.append(((-scores[subject_id], self._key(self.pools[indices[0]]),
                                          -duration, tuple(-count for count in vector)), vector, duration))
