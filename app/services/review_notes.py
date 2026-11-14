@@ -78,7 +78,7 @@ class ReviewNotesService:
     def note(self, question_id):
         for q,note in self._notes():
             if q['id']==question_id: return q,note
-        raise ApiError('NO_NOTE','복습 문항을 찾지 못했어요',404)
+        raise ApiError('NO_QUESTION','복습 문항을 찾지 못했어요',404)
 
     def question(self, question_id):
         q,_=self.note(question_id)

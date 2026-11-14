@@ -52,7 +52,8 @@ def test_question_never_leaks_solution_and_foreign_note_is_hidden(api_client,dom
     assert response.status_code==200,response.text
     assert response.json()['data']=={'noteId':case['choice'],'type':'choice','prompt':'choice','options':['맞음','틀림'],'mockFilled':None}
     assert 'secret raw' not in response.text and '해설' not in response.text and '근거' not in response.text
-    assert api_client.get(f"/api/review/notes/{other['choice']}/question",headers={'X-Anonymous-Id':case['user']}).status_code==404
+    missing=api_client.get(f"/api/review/notes/{other['choice']}/question",headers={'X-Anonymous-Id':case['user']})
+    assert missing.status_code==404 and missing.json()['error']['code']=='NO_QUESTION'
     assert notes(api_client,case).json()['data']['total']==1
 
 
