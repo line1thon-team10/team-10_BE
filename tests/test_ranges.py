@@ -7,7 +7,7 @@ from itertools import combinations, permutations
 
 import pytest
 
-from app.domain.ranges import PageSpan, intersect, normalize, page_count, subtract
+from app.domain.ranges import PageSpan, covers, intersect, normalize, page_count, subtract
 
 
 @pytest.mark.parametrize("material_id", ["pdf-a", "PDF-a", "강의자료", " pdf-a "])
@@ -339,3 +339,70 @@ def test_intersect_handles_huge_intervals_without_expanding_pages():
 def test_intersect_validates_both_inputs_even_if_the_other_is_empty(invalid, side):
     with pytest.raises(ValueError):
         intersect(invalid, []) if side == "left" else intersect([], invalid)
+
+
+@pytest.mark.parametrize(
+    "required,completed,expected",
+    [
+        ([], [], True),
+        ([], [(1, 3)], True),
+        ([(1, 3)], [], False),
+        ([(1, 1)], [(1, 1)], True),
+        ([(1, 5)], [(1, 5)], True),
+        ([(1, 5)], [(1, 2), (3, 5)], True),
+        ([(1, 5)], [(1, 2), (4, 5)], False),
+        ([(1, 5)], [(1, 4)], False),
+        ([(1, 5)], [(5, 5)], False),
+        ([(1, 5)], [(2, 6)], False),
+        ([(1, 2), (4, 5)], [(1, 5)], True),
+        ([(1, 3), (2, 5)], [(1, 5)], True),
+    ],
+)
+def test_covers_requires_every_page_not_just_the_last_page_or_equal_counts(required, completed, expected):
+    requirements = (PageSpan("pdf-a", start, end) for start, end in required)
+    completions = (PageSpan("pdf-a", start, end) for start, end in completed)
+
+    assert covers(requirements, completions) is expected
+
+
+def test_covers_requires_matching_pdf_identity_for_every_material():
+    requirements = [PageSpan("pdf-a", 1, 3), PageSpan("pdf-b", 1, 3)]
+    wrong_pdf = [PageSpan("pdf-a", 1, 3), PageSpan("pdf-c", 1, 3)]
+
+    assert page_count(requirements) == page_count(wrong_pdf)
+    assert covers(requirements, wrong_pdf) is False
+    assert covers(requirements, wrong_pdf + [PageSpan("pdf-b", 1, 3)]) is True
+
+
+def test_covers_handles_a_shared_single_use_iterable():
+    spans = _SingleUseIterable([PageSpan("pdf-a", 1, 3)])
+
+    assert covers(spans, spans) is True
+
+
+def test_covers_matches_set_inclusion_and_is_monotone_in_completed_pages():
+    collections = _small_collections()
+    extra = (PageSpan("pdf-a", 1, 5),)
+    for required in collections:
+        for completed in collections:
+            covered = covers(required, completed)
+            assert covered is (_pages(required) <= _pages(completed))
+            if covered:
+                assert covers(required, completed + extra) is True
+
+
+def test_covers_detects_a_single_missing_page_inside_a_huge_interval():
+    end = 10**100
+    middle = end // 2
+    required = [PageSpan("pdf-a", 1, end)]
+    incomplete = [PageSpan("pdf-a", 1, middle - 1), PageSpan("pdf-a", middle + 1, end)]
+
+    assert covers(required, incomplete) is False
+    assert covers(required, incomplete + [PageSpan("pdf-a", middle, middle)]) is True
+
+
+@pytest.mark.parametrize("invalid", [None, "", [None], [PageSpan("pdf-a", 1, 1), ("pdf-a", 1, 2)]])
+@pytest.mark.parametrize("side", ["required", "completed"])
+def test_covers_validates_both_inputs_even_if_the_other_is_empty(invalid, side):
+    with pytest.raises(ValueError):
+        covers(invalid, []) if side == "required" else covers([], invalid)

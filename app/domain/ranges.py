@@ -114,3 +114,12 @@ def intersect(left: Iterable[PageSpan], right: Iterable[PageSpan]) -> tuple[Page
             right_index += 1
 
     return tuple(common)
+
+
+def covers(required: Iterable[PageSpan], completed: Iterable[PageSpan]) -> bool:
+    """Whether every required page is completed, including all gaps and materials.
+
+    Empty requirements are covered. Completion of an unpaged task remains a
+    separate service decision based on its recorded result.
+    """
+    return not subtract(required, completed)
