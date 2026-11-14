@@ -209,10 +209,8 @@ class Planner:
         return result
 
     def _close_quizzes(self, day: date) -> None:
-        """안 푼 오늘의 퀴즈는 닫고(carried_over) 다음 퀴즈에 합쳐져요 (4-4)"""
-        self.conn.execute(update(t.quiz_sessions).where(
-            t.quiz_sessions.c.user_id == self.user["id"], t.quiz_sessions.c.quiz_date == day,
-            t.quiz_sessions.c.status.in_(["ready", "in_progress"])).values(status="carried_over", finalized_at=self._at or _now()))
+        from app.services.quiz_finalization import close_daily_quizzes
+        close_daily_quizzes(self.conn, self.user, day, at=self._at or _now())
 
     def _notice(self, day: date, ntype: str, dedupe: str, payload: dict) -> None:
         exists = self.conn.execute(select(t.user_notices.c.id).where(
