@@ -120,3 +120,22 @@ def test_postpone_skips_other_subject_day_and_precedes_fixed_next_day_task(api_c
     assert moved['scheduled_date']==TODAY+timedelta(days=2)
     assert moved['ends_at']<=original['starts_at']
     assert dict(conn.execute(select(t.study_tasks).where(t.study_tasks.c.id==future)).mappings().one())==original
+
+
+def test_foreign_real_task_cannot_be_previewed_or_moved(api_client,domain_connection,today_case):
+    conn,case=domain_connection,today_case
+    foreign=copy_task(conn,case,day=TODAY,hour=12)
+    foreign_unit=second_pdf(conn,case)
+    foreign_material=conn.scalar(select(t.units.c.material_id).where(t.units.c.id==foreign_unit))
+    conn.execute(update(t.materials).where(t.materials.c.id==foreign_material).values(subject_id=case['foreign']))
+    conn.execute(update(t.study_task_ranges).where(t.study_task_ranges.c.task_id==foreign).values(unit_id=foreign_unit,end_page=10))
+    block=conn.scalar(select(t.study_tasks.c.block_id).where(t.study_tasks.c.id==foreign))
+    conn.execute(update(t.study_blocks).where(t.study_blocks.c.id==block).values(subject_id=case['foreign'],unit_id=foreign_unit))
+    plan=str(uuid4())
+    conn.execute(t.plans.insert().values(id=plan,user_id=case['other_user'],revision=1,created_at=NOW,approved_at=NOW))
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==foreign).values(plan_id=plan,subject_id=case['foreign']))
+    before=rows(conn,t.study_tasks);conn.commit()
+    response=preview(api_client,case,'postpone',taskId=foreign)
+    assert response.status_code==404 and response.json()['error']['code']=='NO_TASK',response.text
+    assert rows(conn,t.study_tasks)==before
+    assert conn.scalar(select(t.plans.c.revision).where(t.plans.c.id==plan))==1
