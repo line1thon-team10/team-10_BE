@@ -97,3 +97,12 @@ summary의 minutesPerDay는 총 페이지 모드에서 null, totalPages는 실�
 more30은 기존 경로/enum을 유지하되 **다음 예정 태스크를 오늘로 이동**한다. 후보 선택은 미래 날짜→시작 시각→taskId 순서이며 기록된 범위는 제외한다. 원래 태스크 전체를 옮길 자리가 없으면 계획 불가를 반환한다. 화면은 실제 이동 분량/시간을 보여 주며 '정확히30분 증가'라고 단정하지 않는다. rest는 오늘 미완료 범위를 남은 일정에 재배분, postpone은 해당 task를 다음 과목 공부일의 첫 순서로 이동한다. 모두 미리보기 후 승인한다.
 
 과목 goal/target 변경은 다음 날부터 배분 가중치에 반영한다. examDate 변경은 남은 일정 후보를 재계산한다. 과목 삭제는 archive이며 기록을 지우지 않는다. 날짜·목표 동시 변경도 하나의 후보로 검증한다.
+
+
+## 과목 제거의 이력·의무 보존
+
+draft 과목은 승인 계획 없이도 제거 후보를 확인하고 보관할 수 있다. 승인된 계획의 제거는 계획 revision을 갱신한다. running/paused 또는 종료했지만 기록하지 않은 집중 세션이 있으면409 ACTIVE_SESSION이며 먼저 세션 기록을 마쳐야 한다.
+
+제거 승인 후 status=archived/archive_reason=user_removed로 계획 소속을 끝낸다. 미시작 미래 study/review 배치는 excluded로 남기고, 보충 태스크는 원래 상태·범위를 그대로 보존한다. 보충을 완료한 것으로 바꾸거나 회독·회복 보너스를 주지 않는다. 이후 today/calendar/allocator에서는 보관 과목의 예정 작업을 제외하지만 과거 기록·점수·책과 월간 완료 사실은 유지한다.
+
+빈 시간 선택 후보는 제거와 같은 트랜잭션에서 새 계획 revision을 기준으로 만든다. 후속 후보 생성 실패는 제거 전체를 되돌린다. 같은 삭제 previewId 재요청은 최초 빈 시간 응답을 재생한다. 빈 슬롯이 없으면 `{emptyTime:null,slots:[],options:[],previewId:null}`이다. 데모의 보관 기준일은 적용된 subject_archive 후보의 base_date에 고정되어 날짜 이동 후에도 변하지 않는다.
