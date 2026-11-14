@@ -113,9 +113,11 @@ class OnboardingDialogueService:
     def run(self, user_id, command, *, mode='message', idempotency_key=None):
         if mode not in ('message', 'voice'):
             raise ValueError('Invalid onboarding interpretation mode')
-        if idempotency_key is not None and (not 1 <= len(idempotency_key) <= 128 or any(
-                not 33 <= ord(char) <= 126 for char in idempotency_key)):
-            raise ApiError('INVALID_INPUT', '요청 키는 공백 없는 ASCII 1~128자로 보내 주세요', 422)
+        if idempotency_key is not None:
+            try:
+                idempotency_key = str(UUID(idempotency_key))
+            except (ValueError, TypeError, AttributeError):
+                raise ApiError('INVALID_INPUT', '요청 키는 UUID로 보내 주세요', 422) from None
         key = f'onboarding:{mode}:' + (idempotency_key or str(uuid4()))
         claim, replay = self._claim(user_id, command, mode, key)
         if claim is None:

@@ -67,7 +67,7 @@ def dialogue_case(api_client, domain_connection, monkeypatch):
     return {'user': user, 'subject': subject, 'headers': headers, 'model': model}
 
 
-def message(client, case, *, text=TEXT, key='turn-1', subject=None):
+def message(client, case, *, text=TEXT, key='11111111-1111-4111-8111-111111111111', subject=None):
     body = {'text': text}
     if subject is not None:
         body['subjectId'] = subject
@@ -105,7 +105,7 @@ def test_tentative_values_do_not_confirm_four_fields(api_client, dialogue_case):
     assert subject['examDate'] == '2026-11-20' and subject['goal'] == 'A+'
     assert not response.json()['data']['done'] and not any(subject['confirmedFields'].values())
     case['model'].transform = None
-    confirmed = message(api_client, case, key='turn-2')
+    confirmed = message(api_client, case, key='22222222-2222-4222-8222-222222222222')
     assert confirmed.status_code == 200 and confirmed.json()['data']['done']
 
 
@@ -214,3 +214,31 @@ def test_message_write_failure_rolls_back_goals_and_retry_is_atomic(api_client, 
     monkeypatch.setattr(OnboardingRepository, 'append_messages', original)
     retried = message(api_client, case)
     assert retried.status_code == 200 and len(retried.json()['data']['messages']) == 2
+
+
+@pytest.mark.parametrize('path', ['/api/onboarding/message', '/api/onboarding/events/voice'])
+@pytest.mark.parametrize('key', ['', 'not-a-uuid', '11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222'])
+def test_invalid_request_key_is_rejected_before_ai(api_client, dialogue_case, path, key):
+    case = dialogue_case
+    response = api_client.post(path, headers={**case['headers'], 'Idempotency-Key': key}, json={'text': TEXT})
+    assert response.status_code == 422
+    assert case['model'].calls == 0
+
+
+def test_uuid_spellings_replay_the_same_turn(api_client, dialogue_case):
+    case = dialogue_case
+    key = 'abcdefab-cdef-4abc-8def-abcdefabcdef'
+    first = message(api_client, case, key=key)
+    assert first.status_code == 200
+    assert message(api_client, case, key=key.upper().replace('-', '')).json() == first.json()
+    assert case['model'].calls == 1
+
+
+@pytest.mark.parametrize('path', ['/api/onboarding/message', '/api/onboarding/events/voice'])
+def test_duplicate_request_key_headers_do_not_start_ai(api_client, dialogue_case, path):
+    case = dialogue_case
+    key = 'abcdefab-cdef-4abc-8def-abcdefabcdef'
+    response = api_client.post(path, headers=[*case['headers'].items(), ('Idempotency-Key', key),
+        ('Idempotency-Key', key)], json={'text': TEXT})
+    assert response.status_code == 422
+    assert case['model'].calls == 0

@@ -13,7 +13,7 @@ TEXT = '매주 월요일과 수요일 10:00부터 11:30까지 자료구조 수�
 EVENT = {'kind': 'class', 'title': '자료구조 수업', 'days': [1, 3], 'date': None, 'start': '10:00', 'end': '11:30'}
 
 
-def voice(client, case, *, text=TEXT, key='voice-1'):
+def voice(client, case, *, text=TEXT, key='11111111-1111-4111-8111-111111111111'):
     return client.post('/api/onboarding/events/voice', headers={**case['headers'], 'Idempotency-Key': key}, json={'text': text})
 
 
@@ -87,7 +87,7 @@ def test_plan_approval_while_parsing_prevents_late_schedule_write(api_client, do
     assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
     conn.commit()
     case['model'].callback = None
-    refused = voice(api_client, case, key='voice-2')
+    refused = voice(api_client, case, key='22222222-2222-4222-8222-222222222222')
     assert refused.status_code == 409 and refused.json()['error']['code'] == 'ONBOARDING_COMPLETED'
     assert case['model'].calls == 1
 
