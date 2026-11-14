@@ -65,8 +65,10 @@ class MaterialTocService:
         pages = material['page_count']
         if type(pages) is not int or pages < 1:
             raise ApiError('INVALID_INPUT', 'PDF 페이지 수를 먼저 확인해 주세요', 422)
-        if type(text) is not str or not text.strip() or '\x00' in text:
-            raise ApiError('INVALID_INPUT', '목차 내용을 입력해 주세요', 422)
+        if type(text) is not str or '\x00' in text:
+            raise ApiError('INVALID_INPUT', '목차 문자열을 확인해 주세요', 422)
+        if not text.strip():
+            raise ApiError('EMPTY', '목차 내용을 입력해 주세요', 400)
         try:
             text.encode('utf-8')
         except UnicodeError:
