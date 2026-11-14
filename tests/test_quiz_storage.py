@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.repositories.quiz_answers import QuizAnswerRepository, canonical_hash
+from app.repositories.grading_jobs import GradingJobRepository
 
 NOW = datetime(2026, 11, 14, 3, tzinfo=timezone.utc)
 DAY = date(2026, 11, 14)
@@ -155,3 +156,159 @@ def test_real_lock_conflict_does_not_create_an_answer(api_client, domain_connect
     finally:
         conn.rollback()
     assert conn.execute(select(t.quiz_answers)).first() is None
+
+
+@pytest.fixture
+def queued_job(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    save(QuizAnswerRepository(conn), case)
+    job = GradingJobRepository(conn).enqueue(case["user"], case["quiz"], case["essay_item"], revision=1, now=NOW)
+    conn.commit()
+    return job
+
+
+def claim(repo, case, job, **changes):
+    return repo.claim(case["user"], job["id"], **{"owner": "worker-a", "now": NOW,
+                      "lease_for": timedelta(minutes=1), **changes})
+
+
+def complete(repo, case, lease, **changes):
+    return repo.complete(case["user"], lease["id"], **{
+        "owner": lease["lease_owner"], "token": lease["lease_token"], "revision": lease["answer_revision"],
+        "now": NOW + timedelta(seconds=10), "result": {"is_correct": True, "essay_score": 85}, **changes})
+
+
+def test_enqueue_is_unique_per_revision_and_rollback_is_atomic(domain_connection, storage_case, queued_job):
+    conn, case = domain_connection, storage_case
+    jobs = GradingJobRepository(conn)
+    assert jobs.enqueue(case["user"], case["quiz"], case["essay_item"], revision=1, now=NOW) == queued_job
+    assert len(conn.execute(select(t.quiz_grading_jobs)).all()) == 1
+    save(QuizAnswerRepository(conn), case, revision=1, text="수정")
+    jobs.enqueue(case["user"], case["quiz"], case["essay_item"], revision=2, now=NOW)
+    conn.rollback()
+    assert jobs.get(case["user"], queued_job["id"])["status"] == "queued"
+    assert QuizAnswerRepository(conn).current(case["user"], case["quiz"], case["essay_item"])["revision"] == 1
+
+
+def test_live_lease_blocks_duplicate_worker_and_one_completion_wins(domain_connection, storage_case, queued_job):
+    conn, case = domain_connection, storage_case
+    jobs = GradingJobRepository(conn)
+    lease = claim(jobs, case, queued_job)
+    assert lease["status"] == "running" and lease["claim_count"] == 1
+    assert claim(jobs, case, queued_job, owner="worker-b") is None
+    assert jobs.available(case["user"], now=NOW) == []
+    assert complete(jobs, case, lease)
+    assert not complete(jobs, case, lease, result={"is_correct": False, "essay_score": 0})
+    finished = jobs.get(case["user"], lease["id"])
+    assert finished["result"]["essay_score"] == 85 and finished["status"] == "succeeded"
+    assert finished["lease_owner"] is finished["lease_token"] is finished["lease_expires_at"] is None
+    assert conn.execute(select(t.quiz_attempts)).first() is None
+    assert conn.execute(select(t.mastery_history)).first() is None
+
+
+def test_new_connection_reclaims_expired_lease_and_rejects_late_worker(api_client, domain_connection, storage_case, queued_job):
+    from app.db import session
+    conn, case = domain_connection, storage_case
+    jobs = GradingJobRepository(conn)
+    first = claim(jobs, case, queued_job)
+    conn.commit()
+    expired = NOW + timedelta(minutes=1)
+    with session.engine.begin() as restarted:
+        recovered = GradingJobRepository(restarted)
+        assert [job["id"] for job in recovered.available(case["user"], now=expired)] == [queued_job["id"]]
+        second = claim(recovered, case, queued_job, owner="worker-b", now=expired)
+    assert second["lease_token"] != first["lease_token"] and second["claim_count"] == 2
+    assert not complete(jobs, case, first, now=expired + timedelta(seconds=1))
+    assert complete(jobs, case, second, now=expired + timedelta(seconds=2))
+
+
+@pytest.mark.parametrize("change", [{"owner": "worker-b"}, {"token": str(uuid4())}, {"revision": 2},
+                                    {"revision": True}, {"now": NOW + timedelta(minutes=1)},
+                                    {"now": NOW - timedelta(seconds=1)}])
+def test_lease_owner_token_revision_and_time_are_all_required(domain_connection, storage_case, queued_job, change):
+    jobs = GradingJobRepository(domain_connection)
+    lease = claim(jobs, storage_case, queued_job)
+    assert not complete(jobs, storage_case, lease, **change)
+    assert jobs.get(storage_case["user"], lease["id"])["status"] == "running"
+
+
+def test_answer_edit_invalidates_running_worker_and_previous_revision_enqueue(domain_connection, storage_case, queued_job):
+    conn, case = domain_connection, storage_case
+    jobs = GradingJobRepository(conn)
+    lease = claim(jobs, case, queued_job)
+    save(QuizAnswerRepository(conn), case, revision=1, text="바뀐 원문")
+    assert not complete(jobs, case, lease)
+    assert claim(jobs, case, queued_job, now=NOW + timedelta(minutes=2)) is None
+    error("ANSWER_CONFLICT", lambda: jobs.enqueue(case["user"], case["quiz"], case["essay_item"], revision=1, now=NOW))
+    next_job = jobs.enqueue(case["user"], case["quiz"], case["essay_item"], revision=2, now=NOW)
+    assert next_job["id"] != queued_job["id"]
+    assert [job["id"] for job in jobs.available(case["user"], now=NOW)] == [next_job["id"]]
+
+
+def test_failure_keeps_answer_and_retry_uses_new_token(domain_connection, storage_case, queued_job):
+    conn, case = domain_connection, storage_case
+    jobs = GradingJobRepository(conn)
+    lease = claim(jobs, case, queued_job)
+    assert jobs.fail(case["user"], lease["id"], owner="worker-a", token=lease["lease_token"], revision=1,
+                     now=NOW + timedelta(seconds=1), error_code="AI_FAILED")
+    failed = jobs.get(case["user"], lease["id"])
+    assert failed["status"] == "failed" and failed["result"] is None
+    assert QuizAnswerRepository(conn).current(case["user"], case["quiz"], case["essay_item"])["text"] == "  원문  답안\n"
+    retried = claim(jobs, case, queued_job, now=NOW + timedelta(seconds=2))
+    assert retried["claim_count"] == 2 and retried["lease_token"] != lease["lease_token"]
+    assert not complete(jobs, case, lease)
+    assert complete(jobs, case, retried)
+
+
+def test_renew_requires_current_live_lease_and_never_shortens_it(domain_connection, storage_case, queued_job):
+    jobs = GradingJobRepository(domain_connection)
+    lease = claim(jobs, storage_case, queued_job)
+    args = {"owner": "worker-a", "token": lease["lease_token"], "revision": 1,
+            "now": NOW + timedelta(seconds=10), "lease_for": timedelta(seconds=1)}
+    assert jobs.renew(storage_case["user"], lease["id"], **args)
+    assert jobs.get(storage_case["user"], lease["id"])["lease_expires_at"] == NOW + timedelta(minutes=1)
+    args["lease_for"] = timedelta(minutes=2)
+    assert jobs.renew(storage_case["user"], lease["id"], **args)
+    assert jobs.get(storage_case["user"], lease["id"])["lease_expires_at"] == NOW + timedelta(minutes=2, seconds=10)
+    assert not jobs.renew(storage_case["user"], lease["id"], **{**args, "owner": "other"})
+    assert not jobs.renew(storage_case["user"], lease["id"], **{**args, "now": NOW + timedelta(minutes=3)})
+
+
+@pytest.mark.parametrize("result", [{"is_correct": True, "essay_score": score} for score in (-1, 101, True, 85.0, "85", None, float("nan"))]
+    + [{"is_correct": True, "essay_score": 84}, {"is_correct": 1, "essay_score": 85},
+       {"is_correct": True, "essay_score": 85, "got_points": "bad"},
+       {"is_correct": True, "essay_score": 85, "missing_points": [1]},
+       {"is_correct": True, "essay_score": 85, "grading_status": "failed"},
+       {"is_correct": True, "essay_score": 85, "extra": 1}])
+def test_invalid_grading_result_never_finishes_job(domain_connection, storage_case, queued_job, result):
+    jobs = GradingJobRepository(domain_connection)
+    lease = claim(jobs, storage_case, queued_job)
+    error("INVALID_INPUT", lambda: complete(jobs, storage_case, lease, result=result), 422)
+    current = jobs.get(storage_case["user"], lease["id"])
+    assert current["status"] == "running" and current["result"] is None
+
+
+@pytest.mark.parametrize("score", [0, 84, 85, 100])
+def test_grading_score_boundaries_are_stored(domain_connection, storage_case, queued_job, score):
+    jobs = GradingJobRepository(domain_connection)
+    lease = claim(jobs, storage_case, queued_job)
+    assert complete(jobs, storage_case, lease, result={"is_correct": score >= 85, "essay_score": score})
+
+
+def test_foreign_user_cannot_read_claim_or_finish_a_job(domain_connection, storage_case, queued_job):
+    conn, case = domain_connection, storage_case
+    other = make_case(conn)
+    jobs = GradingJobRepository(conn)
+    assert jobs.available(other["user"], now=NOW) == []
+    error("NO_QUIZ", lambda: jobs.get(other["user"], queued_job["id"]), 404)
+    error("NO_QUIZ", lambda: claim(jobs, other, queued_job), 404)
+    lease = claim(jobs, case, queued_job)
+    error("NO_QUIZ", lambda: complete(jobs, other, lease), 404)
+
+
+@pytest.mark.parametrize("change", [{"lease_for": timedelta(0)}, {"lease_for": timedelta(seconds=-1)},
+                                    {"lease_for": 60}, {"owner": " "}, {"owner": None}])
+def test_invalid_lease_settings_do_not_claim(domain_connection, storage_case, queued_job, change):
+    jobs = GradingJobRepository(domain_connection)
+    error("INVALID_INPUT", lambda: claim(jobs, storage_case, queued_job, **change), 422)
+    assert jobs.get(storage_case["user"], queued_job["id"])["status"] == "queued"

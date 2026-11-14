@@ -21,3 +21,11 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 같은 입력은 revision/답변 시각을 늘리지 않는다. 예전 요청 revision과 같은 입력을 다시 보내면 그 요청이 처음 만든 답안 revision을 반환하며 현재 head를 되돌리지 않는다. 이 경우 `is_current=false`일 수 있으므로 Q-03은 예전 답안으로 새 채점 작업을 접수하면 안 된다. 다른 입력의 오래된 revision은 `ANSWER_CONFLICT`, 봉인 뒤 변경은 `QUIZ_FINALIZED`다. 봉인 뒤에도 이미 저장된 동일 요청의 응답 재생은 가능하다.
 
 현재 답안 교체는 user lock 아래에서 head의 기존 answer_id를 조건으로 갱신한다. 이전 revision의 미완료 작업은 같은 트랜잭션에서 취소한다. 과거 답안과 성공한 채점 결과는 이력으로 남긴다. 호출자가 바깥 transaction을 commit/rollback하며 저장소는 commit하지 않는다. Q-03은 답안 저장과 작업 접수를 한 transaction에서 수행한 뒤 외부 호출 전에 commit해야 한다.
+
+## 채점 작업 연산
+
+`GradingJobRepository.enqueue(user_id, quiz_id, item_id, revision=..., now=...)`는 현재 답안에 대한 유일 작업을 반환한다. `available(user_id, now=..., limit=100)`은 queued/failed 또는 lease가 만료된 현재 revision 작업을 찾는다. limit는 작업자 batch 크기이며 사용자 답안 개수 제한이 아니다.
+
+`claim(user_id, job_id, owner=..., now=..., lease_for=timedelta(...))`는 선점한 작업(새 lease_token 포함) 또는 None을 반환한다. 호출자는 claim을 commit하고 DB transaction 밖에서 AI를 호출한 뒤 새 transaction에서 `complete` 또는 `fail`을 호출한다. 이 연산은 owner/token/revision/now를 모두 받고 현재 답안과 만료 여부까지 조건부 갱신하여 성공 여부 bool을 반환한다. 같은 worker 이름으로 재선점해도 token이 바뀌므로 이전 결과는 반영되지 않는다. `renew`도 같은 자격을 확인하며 기존 lease를 줄이지 않는다.
+
+실패는 답안 원문을 유지하고 result=null로 남긴다. 저장된 채점 결과는 `is_correct`, `essay_score`, `feedback`, `got_points`, `missing_points`, `grading_status`를 가진다. 서술형 점수는 정수 0..100이며 85점 정오 경계를 검증한다. 이 연산은 quiz_attempts/숙달도/취약 문항을 확정하지 않는다. JSON 결과를 지울 때 SQL NULL을 사용하며 JSON 리터럴 null을 채점 성공으로 취급하지 않는다.
