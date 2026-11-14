@@ -53,10 +53,14 @@ class ReviewRetryService:
     def admit(self,conn,user_id):
         user=lock_quiz_user(conn,{'id':user_id});today=today_for(user)
         q,note=ReviewNotesService(conn,user,today).note(self.question_id)
-        pending=conn.execute(select(t.quiz_sessions)
+        candidates=conn.execute(select(t.quiz_sessions)
             .join(t.quiz_items,t.quiz_sessions.c.id==t.quiz_items.c.quiz_session_id)
             .where(t.quiz_sessions.c.user_id==user_id,t.quiz_sessions.c.type=='review',t.quiz_items.c.question_id==self.question_id)
-            .order_by(t.quiz_sessions.c.quiz_date.desc(),t.quiz_sessions.c.created_at.desc())).mappings().first()
+            .order_by(t.quiz_sessions.c.quiz_date.desc(),t.quiz_sessions.c.created_at.desc())).mappings().all()
+        # A historical/general review set is not a receipt for this endpoint.
+        pending=next((row for row in candidates if conn.scalar(select(t.record_requests.c.created_at).where(
+            t.record_requests.c.user_id==user_id,t.record_requests.c.method=='POST',
+            t.record_requests.c.path==self.path+'/admission',t.record_requests.c.idempotency_key==row['id'])) is not None),None)
         if pending and (pending['status'] in ('ready','in_progress') or not note['canRetry']):
             quiz_id=pending['id']
             try:

@@ -123,3 +123,17 @@ def test_competing_retry_uses_one_sealed_answer(api_client,domain_connection,ans
     assert conn.scalar(select(func.count()).select_from(t.mastery_history))==1
     assert conn.scalar(select(func.count()).select_from(t.quiz_attempts))==2
     assert final.json()['data']['note']['streak']==1
+
+
+def test_unrelated_review_set_does_not_hijack_retry_identity(api_client,domain_connection,answer_case):
+    conn,case=domain_connection,answer_case;weak(conn,case,due=DAY)
+    other_quiz,item=str(uuid4()),str(uuid4())
+    conn.execute(t.quiz_sessions.insert().values(id=other_quiz,user_id=case['user'],subject_id=case['subject'],type='review',
+        quiz_date=DAY,status='ready',created_at=NOW))
+    conn.execute(t.quiz_items.insert().values(id=item,quiz_session_id=other_quiz,question_id=case['choice'],sort_order=1,inclusion_reason='weak'))
+    conn.commit()
+    response=retry(api_client,case)
+    assert response.status_code==200,response.text
+    assert response.json()['data']['note']['streak']==1
+    assert conn.scalar(select(t.quiz_sessions.c.status).where(t.quiz_sessions.c.id==other_quiz))=='ready'
+    assert conn.scalar(select(func.count()).select_from(t.quiz_answers).where(t.quiz_answers.c.quiz_item_id==item))==0
