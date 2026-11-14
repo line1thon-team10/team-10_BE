@@ -101,6 +101,9 @@ class Planner:
         if today is None:
             raise ApiError("NOT_DEMO_USER", "데모 날짜가 없는 사용자예요", 400)
         nxt = today + timedelta(days=1)
+        # Freeze the final daily plan before any carry/exclusion changes its placements.
+        from app.services.daily_totals import DailyTotalsService
+        DailyTotalsService(self.conn, self.user).snapshot(today, finalize=True, at=_now())
 
         # 시험 당일부터는 새 공부 배치를 만들지 않는다. 기록/완료 태스크는 보존한다.
         for subject in self.data.subjects:
@@ -151,9 +154,6 @@ class Planner:
             carried_items.append(self._carry(x, rest, reason="어제에서 이월"))
 
         self._close_quizzes(today)
-        self.conn.execute(update(t.daily_plan_totals).where(
-            t.daily_plan_totals.c.user_id == self.user["id"], t.daily_plan_totals.c.study_date == today)
-            .values(finalized_at=_now()))
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
             demo_date=nxt, last_assessed_date=today, updated_at=_now()))
 
