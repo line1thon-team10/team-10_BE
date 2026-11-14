@@ -7,6 +7,10 @@ const { Parser } = require('@dbml/core');
 const root = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'schema', 'erd.dbml'), 'utf8');
 const schema = new Parser().parse(src, 'dbmlv2').schemas[0];
+const storageConfigPath = path.join(root, 'schema', 'quiz-storage-constraints.json');
+const storageConstraints = fs.existsSync(storageConfigPath)
+  ? JSON.parse(fs.readFileSync(storageConfigPath, 'utf8'))
+  : { checks: [], foreignKeys: {} };
 
 const TYPE = {
   uuid: 'UUID',
@@ -61,7 +65,7 @@ function defaultOf(f) {
 const out = [];
 out.push('# 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.');
 out.push('# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.');
-out.push('from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,');
+out.push(`from sqlalchemy import (Boolean, ${storageConstraints.checks.length ? 'CheckConstraint, ' : ''}Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,`);
 out.push('                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)');
 out.push('from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB');
 out.push('');
@@ -79,7 +83,9 @@ for (const t of schema.tables) {
     const fk = fks[`${t.name}.${f.name}`];
     if (fk) {
       const alter = useAlter.has(`${t.name}.${f.name}`);
-      args.push(`ForeignKey(${py(fk)}${alter ? `, use_alter=True, name=${py(`fk_${t.name}_${f.name}`)}` : ''})`);
+      const ondelete = storageConstraints.foreignKeys[`${t.name}.${f.name}`]?.ondelete;
+      if (ondelete && ondelete !== 'CASCADE') throw new Error(`Unsupported ondelete: ${ondelete}`);
+      args.push(`ForeignKey(${py(fk)}${alter ? `, use_alter=True, name=${py(`fk_${t.name}_${f.name}`)}` : ''}${ondelete ? `, ondelete=${py(ondelete)}` : ''})`);
     }
     if (f.pk) args.push('primary_key=True');
     args.push(`nullable=${f.pk || f.not_null ? 'False' : 'True'}`);
@@ -91,6 +97,9 @@ for (const t of schema.tables) {
   if (compositePk) {
     out.push(`    PrimaryKeyConstraint(${compositePk.columns.map((c) => py(c.value)).join(', ')}),`);
   }
+  for (const check of storageConstraints.checks.filter(check => check.table === t.name)) {
+    out.push(`    CheckConstraint(${py(check.sql)}, name=${py(check.name)}),`);
+  }
   t.indexes
     .filter((i) => !i.pk)
     .forEach((i, n) => {
@@ -99,6 +108,13 @@ for (const t of schema.tables) {
     });
   out.push(')');
   out.push('');
+}
+
+for (const check of storageConstraints.checks) {
+  if (!schema.tables.some(table => table.name === check.table)) throw new Error(`Unknown CHECK table: ${check.table}`);
+}
+for (const field of Object.keys(storageConstraints.foreignKeys)) {
+  if (!fks[field]) throw new Error(`Unknown foreign key: ${field}`);
 }
 
 // DBML에서 표현할 수 없는 집중 부분 인덱스도 재생성 시 보존한다.
