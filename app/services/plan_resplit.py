@@ -98,11 +98,26 @@ class PlanResplitService:
         return outcome.data
 
     def _initial(self, user_id):
-        with self.engine.connect() as conn:
-            existing=conn.scalar(select(t.plans.c.id).where(t.plans.c.user_id==user_id))
-        if existing:
-            return None
-        return PlanDraftService(self.engine).draft(user_id)
+        selected = None
+        with self.engine.begin() as conn:
+            service = ProposalService(conn)
+            if conn.scalar(select(t.plans.c.id).where(t.plans.c.user_id==user_id)):
+                return None
+            candidates = service.repository.ready(user_id, kind=INITIAL_DOMAIN.kind)
+            for candidate in reversed(candidates):
+                if selected is None:
+                    selected = candidate['target']
+                snapshot = service.capture(user_id, domain=INITIAL_DOMAIN, target=candidate['target'])
+                try:
+                    service._require_fresh(candidate, snapshot)
+                except ApiError:
+                    continue
+                return candidate['preview_response']
+        # A stale draft still identifies the user's selected subjects. Never
+        # broaden it to every draft subject while regenerating its basis.
+        identifiers = None if selected is None else selected.get('draftSubjectIds')
+        return PlanDraftService(self.engine).draft(user_id,
+            draft_subject_ids=None if identifiers is None else tuple(identifiers))
 
     def _candidate(self, conn, user_id, identifier=None):
         repo=ProposalRepository(conn)
@@ -204,7 +219,7 @@ class PlanResplitService:
                                 t.study_tasks.c.status.not_in(('carried_over','excluded')),t.study_tasks.c.scheduled_date>=snapshot.base_date)).mappings()]
                 else:
                     allocation=initial_allocation_input(conn,user_id,today=snapshot.base_date,timezone_name=timezone_name,
-                        subject_ids=source['target'].get('draftSubjectIds'))
+                        subject_ids=None if source['target'].get('draftSubjectIds') is None else tuple(source['target']['draftSubjectIds']))
                     supersede=[]; display=allocation; before=source['changes']['placements']
             except PendingObligations as exc:
                 raise ApiError('OVERDUE_OBLIGATIONS',str(exc),409) from None

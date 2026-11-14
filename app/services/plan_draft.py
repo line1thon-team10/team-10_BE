@@ -221,6 +221,10 @@ class PlanDraftService:
             service = ProposalService(conn)
             existing = conn.scalar(select(t.plans.c.id).where(t.plans.c.user_id == user_id)) is not None
             domain = ADDITION_DOMAIN if existing else INITIAL_DOMAIN
+            if not existing and draft_subject_ids is None:
+                selected = service.repository.ready(user_id, kind=INITIAL_DOMAIN.kind)
+                if selected:
+                    target = selected[-1]['target']
             snapshot = service.capture(user_id, domain=domain, target=target)
             ready = _fresh_ready(service, user_id, snapshot)
             if ready is not None:
