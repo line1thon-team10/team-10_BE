@@ -98,3 +98,34 @@ def test_failed_apply_rolls_back_and_can_retry(api_client,domain_connection,addi
     assert response.status_code==500,response.text
     assert state(conn)==before;conn.commit()
     assert call(api_client,case,'post','/api/plan/resplit/apply',json={'previewId':identifier}).status_code==200
+
+
+def test_rebuild_keeps_pending_remedial_book_identity_and_existing_score(api_client,domain_connection,addition_case):
+    from tests.e2e.test_pending_obligation_allocation import pending
+    conn,case=domain_connection,addition_case
+    conn.execute(update(t.units).where(t.units.c.id==case['unit']).values(mastery_score=72,mastery_level='shaky'))
+    obligation=pending(conn,case)
+    response=call(api_client,case,'post','/api/plan/rebuild',json={});assert response.status_code==200,response.text
+    identifier=response.json()['data']['previewId']
+    assert conn.execute(select(t.remedial_obligation_blocks)).first() is None;conn.commit()
+    response=call(api_client,case,'post','/api/plan/resplit/apply',json={'previewId':identifier})
+    assert response.status_code==200,response.text
+    blocks=list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(t.remedial_obligation_blocks.c.obligation_id==obligation)))
+    assert blocks and conn.scalar(select(t.units.c.mastery_score).where(t.units.c.id==case['unit']))==72
+    tasks=conn.execute(select(t.study_tasks).where(t.study_tasks.c.block_id.in_(blocks))).all()
+    conn.commit()
+    response=call(api_client,case,'post','/api/plan/rebuild',json={});assert response.status_code==200,response.text
+    assert call(api_client,case,'post','/api/plan/resplit/apply',json={'previewId':response.json()['data']['previewId']}).status_code==200
+    assert conn.execute(select(t.study_tasks).where(t.study_tasks.c.block_id.in_(blocks))).all()==tasks
+    assert list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(t.remedial_obligation_blocks.c.obligation_id==obligation)))==blocks
+
+
+def test_rebuild_infeasible_calendar_and_empty_request_leave_current_plan(api_client,domain_connection,addition_case):
+    conn,case=domain_connection,addition_case
+    assert call(api_client,case,'post','/api/plan/rebuild',json={'request':' '}).status_code==400
+    conn.execute(t.calendar_events.insert().values(id=str(uuid4()),user_id=case['user'],event_type='other',title='빈 시간 없음',
+        starts_at=NOW-timedelta(hours=9),ends_at=NOW+timedelta(days=3),created_at=NOW,updated_at=NOW))
+    conn.commit();before=state(conn);conn.commit()
+    response=call(api_client,case,'post','/api/plan/rebuild',json={})
+    assert response.status_code==409 and response.json()['error']['code']=='PLAN_INFEASIBLE',response.text
+    assert state(conn)==before
