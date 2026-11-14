@@ -190,3 +190,28 @@ def test_previous_day_study_interval_still_blocks_its_overlap_with_next_study_da
     submit(api_client,conn,c)
     rows=conn.execute(select(t.study_tasks).where(t.study_tasks.c.task_type=='remedial')).mappings().all()
     assert rows and all(row['starts_at']>=at(c['nextday'],'09:30').replace(tzinfo=row['starts_at'].tzinfo) for row in rows)
+
+
+def test_generated_remedial_records_create_one_verified_recovery_pass(api_client,domain_connection,remedial_case):
+    from app.services.recovery_evidence import recovery_eligibility
+    c,conn=remedial_case,domain_connection
+    quiz,_,_=submit(api_client,conn,c)
+    obligation=conn.execute(select(t.remedial_obligations)).mappings().one()
+    tasks=list(conn.scalars(select(t.study_tasks.c.id).where(t.study_tasks.c.task_type=='remedial')))
+    assert tasks
+    conn.execute(update(t.users).where(t.users.c.id==c['user'].id).values(demo_date=c['nextday']));conn.commit()
+    for task_id in tasks:
+        response=api_client.post('/api/records',headers=c['headers'],json={'taskId':task_id,'result':'done'})
+        assert response.status_code==200,response.text
+    passes=conn.execute(select(t.learning_passes).where(t.learning_passes.c.completion_kind=='remedial')).mappings().all()
+    assert len(passes)==1
+    assert passes[0]['evidence_key']==obligation['id']
+    assert passes[0]['evidence_snapshot']['sourceQuizId']==quiz
+    metrics=QuizService(conn,c['user'].to_mapping(),c['nextday'])._metrics_input()
+    eligible=recovery_eligibility(conn,c['user'].id,metrics)
+    assert sum(row.supplement_completed for row in eligible)==1
+    conn.commit()
+    replay=api_client.post('/api/records',headers=c['headers'],json={'taskId':tasks[-1],'result':'done'})
+    assert replay.status_code==200,replay.text
+    assert conn.scalar(select(func.count()).select_from(t.learning_passes).where(t.learning_passes.c.completion_kind=='remedial'))==1
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==1
