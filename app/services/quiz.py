@@ -385,13 +385,31 @@ class QuizService:
         repo.items(self.user["id"], session["id"])
         state = repo.submission(self.user["id"], session["id"])
         if state is not None and state["result_snapshot"] is not None:
-            return deepcopy(state["result_snapshot"])
-        if state is not None and not state["legacy"]:
-            raise ApiError("AI_FAILED", "채점이 아직 끝나지 않았어요", 503)
-        if session["status"] != "submitted":
-            raise ApiError("NO_RESULT", "아직 제출한 퀴즈가 없어요", 404)
-        from app.services.quiz_finalization import legacy_result
-        return legacy_result(self.conn, self.user["id"], session["id"], seen=seen)
+            result = deepcopy(state["result_snapshot"])
+        else:
+            if state is not None and not state["legacy"]:
+                raise ApiError("AI_FAILED", "채점이 아직 끝나지 않았어요", 503)
+            if session["status"] != "submitted":
+                raise ApiError("NO_RESULT", "아직 제출한 퀴즈가 없어요", 404)
+            from app.services.quiz_finalization import legacy_result
+            result = legacy_result(self.conn, self.user["id"], session["id"], seen=seen)
+        if session["type"] != "extra":
+            result["more"] = self._completed_more(session, seen=seen)
+        return result
+
+    def _completed_more(self, session: dict, *, seen=frozenset()) -> list[dict]:
+        # Compose only published child snapshots on a copy. POST retries keep
+        # replaying the original snapshot even when GET later has more results.
+        extras = self.conn.execute(select(t.quiz_sessions).join(t.quiz_submission_states,
+            t.quiz_submission_states.c.quiz_session_id == t.quiz_sessions.c.id).where(
+            t.quiz_sessions.c.parent_quiz_session_id == session["id"],
+            t.quiz_sessions.c.user_id == self.user["id"],
+            t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.grading_status == "completed",
+            t.quiz_sessions.c.finalized_at.is_not(None),
+            t.quiz_submission_states.c.result_snapshot.is_not(None)).order_by(
+                t.quiz_sessions.c.created_at, t.quiz_sessions.c.id)).mappings().all()
+        visited = seen | {session["id"]}
+        return [self.result_view(dict(extra), seen=visited) for extra in extras if extra["id"] not in visited]
 
     def _build_result_view(self, session: dict, *, before_blocks: dict | None = None, seen=frozenset()) -> dict:
         if session["status"] != "submitted":
@@ -471,11 +489,5 @@ class QuizService:
                                          "unitNo": result["unitNo"], "before": unit_changes[0]["before"],
                                          "after": unit_changes[0]["after"]} if unit_changes else None)
         else:
-            extras = self.conn.execute(select(t.quiz_sessions).where(
-                t.quiz_sessions.c.parent_quiz_session_id == session["id"],
-                t.quiz_sessions.c.user_id == self.user["id"],
-                t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.grading_status == "completed",
-                t.quiz_sessions.c.finalized_at.is_not(None))).mappings().all()
-            visited = seen | {session["id"]}
-            result["more"] = [self.result_view(dict(e), seen=visited) for e in extras if e["id"] not in visited]
+            result["more"] = self._completed_more(session, seen=seen)
         return result
