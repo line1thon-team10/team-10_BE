@@ -864,7 +864,7 @@
       "id": "Q-02",
       "title": "답안 revision·채점 작업·결과 저장 스키마",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-01"
@@ -896,9 +896,11 @@
       "optional": false,
       "branch": "feat/quiz-answer-storage",
       "base_sha": "48e83b82906339049232b28b335f5069cdf03f25",
-      "head_sha": null,
+      "head_sha": "941e4fe858eb1dc30a4ea9d2f2cdd9e673f9605b",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "941e4fe:248SQLite+PG storage/migration/seed/onboarding tests passed. Five tables include no-op save receipts; independent review pending."
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
     },
@@ -1812,7 +1814,7 @@
       "id": "P-01",
       "title": "가용 시간 기반 계획 배치 엔진",
       "lane": "planning",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "POL-01",
@@ -1837,11 +1839,12 @@
       "optional": false,
       "branch": "feat/plan-allocator",
       "base_sha": "1e7144c",
-      "head_sha": "19718b844529288f92e8c7500563319749b4f8cc",
+      "head_sha": "e3df828c611292b46ef13396e0b62a9b794f0da2",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/20",
       "validation_evidence": [
         "Worker222passed (68allocator+154ranges); 100 independent tiny oracle comparisons;90pages bench median130.49ms; Astra review pending",
-        "Astra P2: day-local subject/ID ties lose later reservation optimum. Fix bd33d63 implements whole reservation L1 vector first; final handoff/re-review pending."
+        "Astra P2: day-local subject/ID ties lose later reservation optimum. Fix bd33d63 implements whole reservation L1 vector first; final handoff/re-review pending.",
+        "Finale3df828:227tests,43small objective oracles,500feasibility comparisons passed;Astra re-review running."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -3052,7 +3055,7 @@
       "id": "QA-01",
       "title": "런타임 계약·소유권 회귀 검사",
       "lane": "quality",
-      "status": "running",
+      "status": "review",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -3074,10 +3077,11 @@
       "optional": false,
       "branch": "test/runtime-contract-inventory",
       "base_sha": "75eae091916ce3b116bf1137ddf3b294a626f673",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "970a99bf1a3a149380043000ccdca7a697851fc7",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/21",
       "validation_evidence": [
-        "5790058: importable runtime registry audit. SQLite+PG inventory/auth/owner/input boundaries11passed; domain-specific404 vs422 honored, broad response probes and review pending."
+        "5790058: importable runtime registry audit. SQLite+PG inventory/auth/owner/input boundaries11passed; domain-specific404 vs422 honored, broad response probes and review pending.",
+        "Final970a99b:11SQLite+PG tests passed after reviewed R02 merge;71FE+5derived docs check passed;Astra independent review queued."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -3126,8 +3130,8 @@
       "id": "OPS-02",
       "title": "기존 PR 스택 리뷰·병합·중복 정리",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root",
       "depends_on": [
         "SYS-01"
       ],
@@ -3150,7 +3154,9 @@
       "base_sha": null,
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "legacy-stack-review.md:PR3-13 ancestry confirmed;PR2 genuinely separate, unused generic repositories differ from current domain repositories. Main promotion/PR cleanup remains."
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     },
