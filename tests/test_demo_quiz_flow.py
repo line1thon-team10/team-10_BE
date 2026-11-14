@@ -14,6 +14,7 @@ def test_keyless_demo_grading_returns_saved_feedback_and_book_changes(api_client
     subject = active["subjectId"]
     response = api_client.get(f"/api/quiz/{subject}",headers=headers)
     assert response.status_code == 200
+    quiz_id = response.json()["data"]["quizId"]
     ids = [q["id"] for q in response.json()["data"]["questions"]]
     rows = domain_connection.execute(
         select(t.questions, t.quiz_items.c.id.label("item_id"))
@@ -35,7 +36,8 @@ def test_keyless_demo_grading_returns_saved_feedback_and_book_changes(api_client
             raise RuntimeError("no demo API key")
         return real(name)
     monkeypatch.setattr(quiz.ai,"module",offline)
-    response = api_client.post(f"/api/quiz/{subject}/submit",headers=headers,json={"answers":answers})
+    response = api_client.post(f"/api/quiz/{subject}/submit",headers=headers,
+                              json={"quizId":quiz_id,"answers":answers})
     assert response.status_code == 200,response.text
     result = response.json()["data"]
     assert result["essayGrading"] == "saved" and result["bookChanges"]

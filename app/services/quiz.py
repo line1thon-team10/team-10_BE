@@ -41,13 +41,19 @@ class QuizService:
         self.data = StudyData(conn, user["id"])
 
     # ---------- 조회 ----------
-    def session(self, key: str) -> dict:
-        """key = 퀴즈 ID(더 풀기 등) 또는 과목 ID(그 과목의 오늘 퀴즈)"""
+    def session(self, key: str, quiz_id: str | None = None) -> dict:
+        """명시한 quiz_id는 새 세트를 만들지 않고 경로·소유 과목까지 검증한다."""
+        owned_subjects = select(t.subjects.c.id).where(t.subjects.c.user_id == self.user["id"])
         s = self.conn.execute(select(t.quiz_sessions).where(
-            t.quiz_sessions.c.id == key, t.quiz_sessions.c.user_id == self.user["id"])).mappings().first()
+            t.quiz_sessions.c.id == (quiz_id if quiz_id is not None else key),
+            t.quiz_sessions.c.user_id == self.user["id"],
+            t.quiz_sessions.c.subject_id.is_(None) | t.quiz_sessions.c.subject_id.in_(owned_subjects)
+        )).mappings().first()
         if s:
+            if quiz_id is not None and key not in (s["id"], s["subject_id"]):
+                raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
             return dict(s)
-        if key not in self.data.subject_by_id:
+        if quiz_id is not None or key not in self.data.subject_by_id:
             raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
         return self.ensure_daily(key)
 
@@ -193,6 +199,7 @@ class QuizService:
         subject = self.data.subject_by_id.get(session["subject_id"], {})
         comp, _ = self.composition(items)
         return {
+            "quizId": session["id"],
             "saved": saved or session["is_fallback"], "subjectId": session["subject_id"] if session["type"] == "daily"
             else session["id"], "custom": session["type"] != "daily",
             "resultFor": session["subject_id"] if session["type"] != "daily" else session["subject_id"],
