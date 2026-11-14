@@ -205,3 +205,16 @@ def test_unpaged_completed_review_is_study_day_with_zero_page_rate(api_client,wo
     assert value['achievement']=={'done':0,'plan':0,'rate':0}
     assert value['time']['plannedMinutes']==25
     assert value['subjects']==[]
+
+
+def test_closing_a_day_does_not_restore_excluded_planned_minutes(api_client,world):
+    from app.services.daily_totals import DailyTotalsService
+    w=world;unit=w.unit(1,10)
+    w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    w.task((unit,1,10),status='excluded')
+    before=report(api_client,w)
+    user=dict(w.conn.execute(select(t.users).where(t.users.c.id==w.user)).mappings().one())
+    DailyTotalsService(w.conn,user).snapshot(w.day,finalize=True,at=w.now)
+    after=report(api_client,w)
+    assert before['time']==after['time']=={'measuredMinutes':0,'plannedMinutes':25}
+    assert before['achievement']==after['achievement']=={'plan':10,'done':10,'rate':100}

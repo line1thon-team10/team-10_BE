@@ -42,7 +42,7 @@ class MonthlyReportService(MonthlyService):
             if first <= day <= until:
                 frozen = any(row['subjectId'] == task.row['subject_id'] and row['finalized']
                     for row in totals[day]['subjects'])
-                if frozen or task.row['status'] not in ('excluded', 'carried_over'):
+                if task.row['status'] != 'excluded' and (frozen or task.row['status'] != 'carried_over'):
                     planned_minutes += task.row['estimated_minutes'] or 0
                     planned_days.add(day)
             if task.record and task.record['result'] in ('completed', 'partial'):
