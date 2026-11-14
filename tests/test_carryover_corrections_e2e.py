@@ -50,6 +50,7 @@ def test_correction_shrinks_append_only_and_repeated_patch_adds_nothing(api_clie
     assert len(live) == 1 and live[0]['origin_task_id'] == child
     assert [(r['start_page'], r['end_page']) for r in rows(w, live[0]['id'])] == [(11, 20)]
     assert live[0]['estimated_minutes'] == 17
+    assert live[0]['starts_at'] is not None and live[0]['ends_at'] - live[0]['starts_at'] == timedelta(minutes=17)
     assert rows(w, root) == original and rows(w, child) == child_ranges
     assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id == child)) == 'carried_over'
     patch(api_client, w, root, toPage=10)
