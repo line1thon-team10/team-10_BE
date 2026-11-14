@@ -16,7 +16,7 @@ from app.core.clock import now_utc
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.repositories.grading_jobs import ExecutionModeConflict, GradingJobRepository, execution_mode
-from app.repositories.quiz_answers import canonical_hash, normalized_uuid
+from app.repositories.quiz_answers import QuizAnswerRepository, canonical_hash, normalized_uuid
 
 
 RULE_VERSION = "deterministic-grade-v1"
@@ -229,6 +229,7 @@ class GradingService:
         self.engine, self.owner, self.clock = engine, owner, clock
         self.settings = settings or AiSettings.from_environment()
         self.gateway_factory, self.provider = gateway_factory, provider
+        self._pending_cursor = None
 
     def prepare(self, connection, user_id, job_id, *, retry_failed=False, mode=None, budget=None):
         """Caller commits this transaction before execute(); mode is durable even after a crash."""
@@ -334,17 +335,58 @@ class GradingService:
             return GradingRun(str(job_id), "succeeded" if changed else "stale", result=result if changed else None)
 
     def run_next(self, *, stop_requested=lambda: False):
-        with self.engine.connect() as conn:
-            candidates = GradingJobRepository(conn).pending(now=self.clock())
-        for candidate in candidates:
+        budget = GradingBudget.start(self.settings.request_budget_seconds)
+        checked_quizzes = {}
+        wrapped = self._pending_cursor is None
+        while True:
             if stop_requested():
                 return GradingRun(None, "idle")
-            try:
-                outcome = self.run_job(candidate["user_id"], candidate["id"])
-            except ApiError as exc:
-                if exc.code in ("REQUEST_IN_PROGRESS", "NO_QUIZ"):
+            if not budget.remaining:
+                return GradingRun(None, "budget_exhausted", error_code="AI_FAILED")
+            with self.engine.connect() as conn:
+                candidates = GradingJobRepository(conn).pending(now=self.clock(), after=self._pending_cursor)
+            if not candidates:
+                self._pending_cursor = None
+                if wrapped:
+                    return GradingRun(None, "idle")
+                wrapped = True
+                continue
+            for candidate in candidates:
+                if stop_requested():
+                    return GradingRun(None, "idle")
+                if not budget.remaining:
+                    return GradingRun(None, "budget_exhausted", error_code="AI_FAILED")
+                cursor = (candidate["created_at"], candidate["id"])
+                key = (candidate["user_id"], candidate["quiz_session_id"])
+                if key not in checked_quizzes:
+                    try:
+                        with self.engine.connect() as conn:
+                            # Share claim's ownership rules, including future concept
+                            # checks. One damaged sibling invalidates the whole quiz.
+                            QuizAnswerRepository(conn).items(*key)
+                    except ApiError as exc:
+                        if exc.code != "NO_QUIZ":
+                            raise
+                        checked_quizzes[key] = False
+                    else:
+                        checked_quizzes[key] = True
+                if not checked_quizzes[key]:
+                    self._pending_cursor = cursor
                     continue
-                raise
-            if outcome.state != "not_claimed":
-                return outcome
-        return GradingRun(None, "idle")
+                if stop_requested():
+                    return GradingRun(None, "idle")
+                if not budget.remaining:
+                    # Leave an unclaimed healthy job ahead of the saved cursor.
+                    return GradingRun(None, "budget_exhausted", error_code="AI_FAILED")
+                try:
+                    outcome = self.run_job(candidate["user_id"], candidate["id"], budget=budget)
+                except ApiError as exc:
+                    if exc.code not in ("REQUEST_IN_PROGRESS", "NO_QUIZ"):
+                        raise
+                    self._pending_cursor = cursor
+                    continue
+                if outcome.state == "budget_exhausted":
+                    return outcome
+                self._pending_cursor = cursor
+                if outcome.state != "not_claimed":
+                    return outcome

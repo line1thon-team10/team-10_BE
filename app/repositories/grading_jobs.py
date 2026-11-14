@@ -117,13 +117,13 @@ class GradingJobRepository:
             .order_by(t.quiz_grading_jobs.c.created_at, t.quiz_grading_jobs.c.id).limit(limit)).all()
         return [self.get(user_id, job_id) for job_id in ids]
 
-    def pending(self, *, now: datetime, limit: int = 100) -> list[dict]:
-        """Automatic workers never retry failed jobs, even after a key is added."""
+    def pending(self, *, now: datetime, limit: int = 100, after=None) -> list[dict]:
+        """Read one raw candidate page; the worker validates each whole quiz."""
         now = aware_time(now)
         if type(limit) is not int or limit < 1:
             raise ApiError("INVALID_INPUT", "작업 조회 개수가 올바르지 않아요", 422)
-        return [dict(row) for row in self.connection.execute(select(
-            t.quiz_grading_jobs.c.id, t.quiz_sessions.c.user_id)
+        query = (select(t.quiz_grading_jobs.c.id, t.quiz_grading_jobs.c.created_at,
+            t.quiz_items.c.quiz_session_id, t.quiz_sessions.c.user_id)
             .join(t.quiz_answers, t.quiz_grading_jobs.c.answer_id == t.quiz_answers.c.id)
             .join(t.quiz_answer_heads, t.quiz_answer_heads.c.answer_id == t.quiz_answers.c.id)
             .join(t.quiz_items, t.quiz_answers.c.quiz_item_id == t.quiz_items.c.id)
@@ -137,7 +137,12 @@ class GradingJobRepository:
                 t.subjects.c.user_id == t.quiz_sessions.c.user_id,
                 or_(t.quiz_sessions.c.subject_id.is_(None), t.quiz_sessions.c.subject_id == t.subjects.c.id),
                 or_(t.quiz_grading_jobs.c.status == "queued",
-                    and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now)))
+                    and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now))))
+        if after is not None:
+            instant, job_id = after
+            query = query.where(or_(t.quiz_grading_jobs.c.created_at > aware_time(instant), and_(
+                t.quiz_grading_jobs.c.created_at == aware_time(instant), t.quiz_grading_jobs.c.id > normalized_uuid(job_id))))
+        return [row_dict(row) for row in self.connection.execute(query
             .order_by(t.quiz_grading_jobs.c.created_at, t.quiz_grading_jobs.c.id).limit(limit)).mappings()]
 
     def claim(self, user_id, job_id, *, owner: str, now: datetime, lease_for: timedelta,
