@@ -43,7 +43,7 @@ def quiz_today(user: dict = Depends(current_user), conn: Connection = Depends(ge
                 scopes = selection.completed(sid)
                 difficulty = selection.difficulty(scopes, None)
                 chosen, _ = selection.fresh(sid, scopes, difficulty, [])
-                counts[sid] = len(chosen)
+                counts[sid] = len(chosen) + len(selection.reviews(sid))
             except ApiError as error:
                 if error.code not in ('NO_QUESTIONS', 'INVALID_INPUT'): raise
                 counts[sid] = 0

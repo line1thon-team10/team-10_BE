@@ -198,7 +198,10 @@ class QuizFinalizationService:
             conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == quiz["id"]).values(
                 grading_status="processing" if any(status in ("queued", "running") for status in statuses) else "failed"))
             return None
+        carried = quiz['status']=='carried_over' and quiz['submitted_at'] is None
         items = view.items(quiz["id"])
+        if carried:
+            items = [item for item in items if item['item_id'] in current]
         if any(item["attempt_id"] is not None for item in items):
             raise _pending()  # never overwrite unexplained legacy/partial finalized facts
         before_blocks = {uid: [view.data.block_state(task, view.today) for task in view.data.tasks
@@ -216,10 +219,12 @@ class QuizFinalizationService:
                 finalized_at=now, graded_at=now, mastery_applied_at=now))
             view._update_weak(item["question_id"], result["is_correct"] and answer["confidence"] == "sure", now)
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == quiz["id"]).values(
-            status="submitted", grading_status="completed", current_position=len(items), finalized_at=now, graded_at=now,
+            status="carried_over" if carried else "submitted", grading_status="completed", current_position=len(items),
+            finalized_at=quiz["finalized_at"] or now, graded_at=now,
             is_fallback=any(result["grading_status"] == "fallback" for result in results.values())))
         view._recalc_mastery(quiz["id"], {item["unit_id"] for item in items})
-        result = view._build_result_view(answers.quiz(user_id, quiz["id"]), before_blocks=before_blocks)
+        result = view._build_result_view(answers.quiz(user_id, quiz["id"]), before_blocks=before_blocks,
+            item_ids=set(current) if carried else None)
         stored = answers.store_result_snapshot(user_id, quiz["id"], expected_hash=state["answer_set_hash"],
             snapshot=result, provenance="submitted", schema_version="quiz-result-v1", now=now)
         if (stored["result_snapshot"] != result or stored["result_provenance"] != "submitted"
@@ -228,3 +233,40 @@ class QuizFinalizationService:
             # attempts/mastery/weak writes, not return a competing response.
             raise ApiError("ANSWER_CONFLICT", "결과 확정 상태가 바뀌었어요", 409)
         return deepcopy(stored["result_snapshot"])
+
+
+def finish_carried(connection, user, quiz_id, *, at=None):
+    """Publish already graded saved answers; this function never invokes a provider."""
+    now = at or now_utc()
+    user = lock_quiz_user(connection, user)
+    answers = QuizAnswerRepository(connection)
+    quiz = answers.quiz(user['id'], quiz_id)
+    state = answers.submission(user['id'], quiz_id)
+    if quiz['status']!='carried_over' or state is None or state['legacy']:
+        return None
+    if state['result_snapshot'] is not None:
+        return deepcopy(state['result_snapshot'])
+    today = user.get('demo_date') or now.astimezone(ZoneInfo(user['timezone'])).date()
+    view = QuizService(connection,user,today)
+    service = QuizFinalizationService(connection.engine,clock=lambda:now)
+    with answers.checked_items(user['id'],quiz_id):
+        return service._finalize_locked(connection,user['id'],
+            SealedSubmission(quiz_id,state['answer_set_hash'],()),now,view)
+
+
+def close_daily_quizzes(connection, user, day, *, at=None):
+    """Atomic date-close hook: freeze answered heads and preserve all original items."""
+    now=at or now_utc()
+    user=lock_quiz_user(connection,user)
+    ids=list(connection.scalars(select(t.quiz_sessions.c.id).where(t.quiz_sessions.c.user_id==user['id'],
+        t.quiz_sessions.c.type=='daily',t.quiz_sessions.c.quiz_date<=day,
+        t.quiz_sessions.c.status.in_(('ready','in_progress','carried_over')))))
+    for identifier in ids:
+        state=QuizAnswerRepository(connection).seal_carried(user['id'],identifier,now=now)
+        if state is not None:
+            try:
+                finish_carried(connection,user,identifier,at=now)
+            except ApiError as error:
+                if error.code != 'AI_FAILED':
+                    raise
+    return ids
