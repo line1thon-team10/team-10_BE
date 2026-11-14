@@ -88,3 +88,38 @@ def test_stale_owner_and_empty_slots(api_client,progress_world):
     assert apply(api_client,w,candidate,'rest').status_code==409
     empty=offer(w,slots=[{'date':(w.day-timedelta(days=1)).isoformat(),'start':'09:00','end':'10:00'}])
     assert empty=={'emptyTime':None,'slots':[],'options':[],'previewId':None}
+
+
+
+def test_unplaceable_legacy_task_never_exposes_fake_free_time(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,10)
+    task=w.task((unit,1,10))
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task).values(estimated_minutes=901))
+    response=offer(w)
+    assert response=={'emptyTime':None,'slots':[],'options':[],'previewId':None}
+
+
+
+@pytest.mark.parametrize('clock,expected',[('08:00',('08:00','10:00')),('09:30',('09:30','10:00')),('23:00',None),('23:30',None)])
+def test_real_today_free_time_starts_at_server_clock(progress_world,monkeypatch,clock,expected):
+    from app.services import schedule_placements
+    from tests.test_onboarding_events import at
+    w=progress_world
+    current=dict(w.conn.execute(select(t.users).where(t.users.c.id==w.user)).mappings().one())
+    current['demo_date']=None
+    w.conn.execute(update(t.calendar_events).where(t.calendar_events.c.user_id==w.user).values(deleted_at=w.now))
+    monkeypatch.setattr(schedule_placements,'now_utc',lambda:at(w.day,clock))
+    slots=schedule_placements.free_calendar_slots(w.conn,current,[{'date':w.day.isoformat(),'start':'08:00','end':'10:00'}])
+    if expected is None: assert slots==()
+    else: assert (schedule_placements.clock_text(slots[0].start),schedule_placements.clock_text(slots[0].end))==expected
+
+
+def test_demo_date_has_no_invented_wall_clock_cutoff(progress_world,monkeypatch):
+    from app.services import schedule_placements
+    from tests.test_onboarding_events import at
+    w=progress_world
+    current=dict(w.conn.execute(select(t.users).where(t.users.c.id==w.user)).mappings().one())
+    w.conn.execute(update(t.calendar_events).where(t.calendar_events.c.user_id==w.user).values(deleted_at=w.now))
+    monkeypatch.setattr(schedule_placements,'now_utc',lambda:at(w.day,'23:30'))
+    slots=schedule_placements.free_calendar_slots(w.conn,current,[{'date':w.day.isoformat(),'start':'08:00','end':'10:00'}])
+    assert slots and schedule_placements.clock_text(slots[0].start)=='08:00'
