@@ -85,6 +85,13 @@ def verified_passes(conn, user_id, unit, concepts, *, require_current_scope=True
                 t.remedial_obligations.c.unit_id == unit['id'])).mappings().first()
             if obligation is None or row['evidence_key'] != obligation_id or obligation['scope_revision'] != revision:
                 continue
+            source_quiz = conn.execute(select(t.quiz_sessions.c.id).where(
+                t.quiz_sessions.c.id == obligation['quiz_session_id'], t.quiz_sessions.c.user_id == user_id,
+                (t.quiz_sessions.c.subject_id.is_(None) | (t.quiz_sessions.c.subject_id == unit['subject_id'])),
+                t.quiz_sessions.c.status.in_(('submitted', 'carried_over')),
+                t.quiz_sessions.c.finalized_at.is_not(None), t.quiz_sessions.c.grading_status == 'completed')).first()
+            if source_quiz is None or any(item['study_date'] < obligation['not_before'] for item in records):
+                continue
             blocks = set(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(
                 t.remedial_obligation_blocks.c.obligation_id == obligation_id)))
             claimed_blocks = snapshot.get('blockIds')
