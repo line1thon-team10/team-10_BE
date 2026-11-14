@@ -23,7 +23,7 @@
       "POST /api/study/sessions/:id/resume",
       "GET /api/study/sessions/active"
     ],
-    "note": "선행 task가 integrated가 된 뒤에만 구현을 배정한다. 최초 상태는 모두 planned이며 작업 착수를 뜻하지 않는다.",
+    "note": "실행 상태와 검증 근거를 task별로 기록한다. 선행 integrated 및 자원 소유권 확인 후 배정한다.",
     "plan_branch": "docs/development-task-plan",
     "integration_worktree": "BE-integration"
   },
@@ -209,14 +209,15 @@
       "id": "POL-01",
       "title": "계획 배분 수치 정책 확정",
       "lane": "orchestrator",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
       "write_scope": [
         "BE/docs/api/plan.md",
-        "BE/docs/api/decisions.md"
+        "BE/docs/api/decisions.md",
+        "BE/docs/api/study.md"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -228,15 +229,16 @@
         "근거 없는 제품 선택은 제안과 결정 필요 항목으로 분리"
       ],
       "operations": [],
-      "external_gates": [
-        "근거에 없는 제품 정책은 실행 시 결정 필요"
-      ],
+      "external_gates": [],
       "optional": false,
       "branch": "integration/contract-v1",
       "base_sha": "a4cc838",
-      "head_sha": "8f0bac8",
+      "head_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
-      "validation_evidence": [],
+      "validation_evidence": [
+        "API spec checker 71 FE + 5 derived operations passes",
+        "Astra-max independent review a05ebf0: pace normalization and reservation conflicts resolved; no unresolved blocking findings; native/synthetic quality only, no live OCR"
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     },
@@ -244,7 +246,7 @@
       "id": "POL-02",
       "title": "업로드 한도·AI 처리 시간 예산 확정",
       "lane": "orchestrator",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -265,15 +267,16 @@
         "기존 미확정50MiB/25초를 기정사실로 사용하지 않음"
       ],
       "operations": [],
-      "external_gates": [
-        "근거가 없는 운영 한도는 실행 시 확인"
-      ],
+      "external_gates": [],
       "optional": false,
       "branch": "integration/contract-v1",
       "base_sha": "a4cc838",
-      "head_sha": "8f0bac8",
+      "head_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
-      "validation_evidence": [],
+      "validation_evidence": [
+        "API spec checker 71 FE + 5 derived operations passes",
+        "Astra-max independent review a05ebf0: pace normalization and reservation conflicts resolved; no unresolved blocking findings; native/synthetic quality only, no live OCR"
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     },
@@ -354,8 +357,8 @@
       "id": "R-02",
       "title": "범위별 기록 저장·정정 API",
       "lane": "study",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "R-01"
       ],
@@ -384,8 +387,8 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/study-record-ranges",
+      "base_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
@@ -806,7 +809,7 @@
       "id": "Q-01",
       "title": "퀴즈 항목 ID·입출력 계약 정리",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02"
@@ -838,9 +841,11 @@
       "optional": false,
       "branch": "fix/quiz-item-identity",
       "base_sha": "e0c71053c1769ba70bb8e8926a0421b7b294779d",
-      "head_sha": null,
+      "head_sha": "b2565def0b3173d35feffea0df5f3d6206aab494",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Worker SQLite+PostgreSQL: 230 passed in 60.13s; independent review pending"
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
@@ -3330,7 +3335,7 @@
       "id": "POL-03",
       "title": "OCR 품질 출력·quizless 판정 기준 확정",
       "lane": "orchestrator",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -3349,15 +3354,16 @@
         "실측이나 외부 출력 확인이 필요하면 PDF 분석 task만 대기하고 다른 AI 기능을 막지 않음"
       ],
       "operations": [],
-      "external_gates": [
-        "AI 품질 신호와 판정 기준이 불명확하면 해당 부분만 결정 필요"
-      ],
+      "external_gates": [],
       "optional": false,
       "branch": "integration/contract-v1",
       "base_sha": "a4cc838",
-      "head_sha": "8f0bac8",
+      "head_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
-      "validation_evidence": [],
+      "validation_evidence": [
+        "API spec checker 71 FE + 5 derived operations passes",
+        "Astra-max independent review a05ebf0: pace normalization and reservation conflicts resolved; no unresolved blocking findings; native/synthetic quality only, no live OCR"
+      ],
       "integration_only_paths": [],
       "validation_mode": "document-review"
     }

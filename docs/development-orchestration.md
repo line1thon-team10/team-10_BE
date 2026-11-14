@@ -1,6 +1,6 @@
 # Team10 병렬 개발 운영 계획
 
-2026-11-14. 이번 변경은 **계획만 수립**한다. 구현 에이전트 배정·통합 브랜치 생성·기존 PR 병합·추가 배포를 실행했다는 뜻이 아니다.
+2026-11-14 계획 수립 후 사용자 승인으로 실행 중이다. 실제 배정·검토·통합 상태는 task registry와 [실행 기록](execution-log.md)을 따른다. 이 운영 계획의 목록 자체가 구현/배포 완료를 뜻하지 않는다.
 
 - 사람이 읽는 전체 task: [development-task-plan.md](development-task-plan.md)
 - 배정·의존성·수정 범위·완료 조건의 기준: [development-tasks.json](development-tasks.json)
