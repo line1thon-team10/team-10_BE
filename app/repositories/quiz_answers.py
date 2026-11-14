@@ -1,5 +1,7 @@
 """Durable quiz storage primitives. The caller owns the outer transaction."""
 from dataclasses import dataclass
+from contextlib import contextmanager
+from copy import deepcopy
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -55,11 +57,51 @@ class AnswerSave:
 
 
 class QuizAnswerRepository:
+    _CHECKED_ITEMS_KEY = "quiz_submission_checked_items"
+
     def __init__(self, connection: Connection):
         self.connection = connection
 
+    @contextmanager
+    def checked_items(self, user_id, quiz_id):
+        """Q-05 only: reuse owned item reads inside one locked DB transaction.
+
+        The scope may write answers/jobs/finalization facts, never question or
+        material identity. No connection/transaction or row escapes the scope.
+        """
+        user_id, quiz_id = normalized_uuid(user_id), normalized_uuid(quiz_id)
+        info = self.connection.info
+        info.pop(self._CHECKED_ITEMS_KEY, None)
+        self.lock_quiz(user_id, quiz_id)
+        rows = self.items(user_id, quiz_id)
+        checked = {"connection": self.connection, "transaction": self.connection.get_transaction(),
+                   "user_id": user_id, "quiz_id": quiz_id, "rows": {row["id"]: row for row in rows}}
+        info[self._CHECKED_ITEMS_KEY] = checked
+        try:
+            yield self
+        finally:
+            if info.get(self._CHECKED_ITEMS_KEY) is checked:
+                info.pop(self._CHECKED_ITEMS_KEY, None)
+
+    def _checked_items(self, user_id, quiz_id):
+        checked = self.connection.info.get(self._CHECKED_ITEMS_KEY)
+        if checked is None:
+            return None
+        try:
+            same_owner = (checked["user_id"], checked["quiz_id"]) == (normalized_uuid(user_id), normalized_uuid(quiz_id))
+        except ApiError:
+            self.connection.info.pop(self._CHECKED_ITEMS_KEY, None)
+            raise
+        if (not same_owner or checked["connection"] is not self.connection
+                or checked["transaction"] is not self.connection.get_transaction()
+                or not checked["transaction"].is_active):
+            self.connection.info.pop(self._CHECKED_ITEMS_KEY, None)
+            return None
+        return checked["rows"]
+
     def quiz(self, user_id, quiz_id) -> dict:
         user_id, quiz_id = normalized_uuid(user_id), normalized_uuid(quiz_id)
+        self._checked_items(user_id, quiz_id)  # crossing ownership also ends an active checked scope
         row = self.connection.execute(select(t.quiz_sessions).outerjoin(
             t.subjects, t.quiz_sessions.c.subject_id == t.subjects.c.id).where(
             t.quiz_sessions.c.id == quiz_id, t.quiz_sessions.c.user_id == user_id,
@@ -79,6 +121,9 @@ class QuizAnswerRepository:
         return self.quiz(user_id, quiz_id)
 
     def items(self, user_id, quiz_id) -> list[dict]:
+        checked = self._checked_items(user_id, quiz_id)
+        if checked is not None:
+            return deepcopy(list(checked.values()))
         quiz = self.quiz(user_id, quiz_id)
         rows = self.connection.execute(select(t.quiz_items, t.questions.c.type, t.questions.c.choices,
             t.questions.c.unit_id, t.questions.c.concept_id, t.concepts.c.unit_id.label("concept_unit_id"),
@@ -99,7 +144,9 @@ class QuizAnswerRepository:
 
     def item(self, user_id, quiz_id, item_id) -> dict:
         item_id = normalized_uuid(item_id)
-        item = next((item for item in self.items(user_id, quiz_id) if item["id"] == item_id), None)
+        checked = self._checked_items(user_id, quiz_id)
+        item = (deepcopy(checked.get(item_id)) if checked is not None else
+                next((item for item in self.items(user_id, quiz_id) if item["id"] == item_id), None))
         if item is None:
             raise ApiError("INVALID_INPUT", "현재 퀴즈의 문항이 아니에요", 422)
         return item

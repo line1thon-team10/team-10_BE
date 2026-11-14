@@ -83,6 +83,10 @@ class QuizFinalizationService:
     def _admit(self, conn, user_id, key, body: SubmitIn):
         user, now, view = self._context(conn, user_id)
         quiz = view.session(key, quiz_id=str(body.quizId))
+        with QuizAnswerRepository(conn).checked_items(user_id, quiz["id"]):
+            return self._admit_locked(conn, user_id, quiz, body, now, view)
+
+    def _admit_locked(self, conn, user_id, quiz, body, now, view):
         answers, jobs = QuizAnswerRepository(conn), GradingJobRepository(conn)
         items = answers.items(user_id, quiz["id"])
         payloads = {str(answer.questionId): answer_payload(choice=answer.choice, text=answer.text,
@@ -171,6 +175,10 @@ class QuizFinalizationService:
 
     def _finalize(self, conn, user_id, admitted):
         user, now, view = self._context(conn, user_id)
+        with QuizAnswerRepository(conn).checked_items(user_id, admitted.quiz_id):
+            return self._finalize_locked(conn, user_id, admitted, now, view)
+
+    def _finalize_locked(self, conn, user_id, admitted, now, view):
         answers, jobs = QuizAnswerRepository(conn), GradingJobRepository(conn)
         quiz = answers.quiz(user_id, admitted.quiz_id)
         state = answers.submission(user_id, quiz["id"])
