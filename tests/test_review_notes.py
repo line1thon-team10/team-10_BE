@@ -113,3 +113,12 @@ def test_same_display_number_keeps_pdf_identity_and_history_order(api_client,dom
     assert [h['date'] for h in history]==[(DAY-timedelta(days=3)).isoformat(),(DAY-timedelta(days=1)).isoformat()]
     assert count['weakConcepts']==[{'subjectId':case['subject'],'subjectName':'자료','materialId':case['material'],
         'unitId':case['unit'],'conceptId':cid,'concept':'동일 개념','count':2}]
+
+
+@pytest.mark.parametrize('kind',['short','essay'])
+def test_free_text_review_question_returns_empty_options(api_client,domain_connection,answer_case,kind):
+    weak(domain_connection,answer_case,kind=kind)
+    response=api_client.get(f"/api/review/notes/{answer_case[kind]}/question",headers={'X-Anonymous-Id':answer_case['user']})
+    assert response.status_code==200,response.text
+    assert response.json()['data']['options']==[]
+    assert response.json()['data']['mockFilled'] is None
