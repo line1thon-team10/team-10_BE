@@ -37,6 +37,13 @@ def _lock(conn, user_id):
         raise ApiError('REQUEST_IN_PROGRESS', '다른 변경이 진행 중이에요. 잠시 후 다시 시도해 주세요', 409) from None
 
 
+def _span(material_id, start, end):
+    try:
+        return PageSpan(material_id, start, end)
+    except ValueError:
+        raise ApiError('INVALID_INPUT', '기존 목차의 PDF 페이지 범위를 확인해 주세요', 422) from None
+
+
 def _exam_pages(units, concepts):
     by_unit = defaultdict(list)
     for concept in concepts:
@@ -47,10 +54,10 @@ def _exam_pages(units, concepts):
             continue
         children = by_unit[unit['id']]
         if children:
-            spans.extend(PageSpan(unit['material_id'], child['start_page'], child['end_page'])
+            spans.extend(_span(unit['material_id'], child['start_page'], child['end_page'])
                          for child in children if child['in_scope'])
         else:
-            spans.append(PageSpan(unit['material_id'], unit['start_page'], unit['end_page']))
+            spans.append(_span(unit['material_id'], unit['start_page'], unit['end_page']))
     return page_count(spans)
 
 

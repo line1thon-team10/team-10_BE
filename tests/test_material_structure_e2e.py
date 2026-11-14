@@ -194,3 +194,17 @@ def test_second_tab_preview_becomes_stale_after_first_approval(api_client, domai
     assert put(api_client, case, {'previewId': one}).status_code == 200
     rejected = put(api_client, case, {'previewId': two})
     assert rejected.status_code == 409 and rejected.json()['error']['code'] == 'PREVIEW_STALE'
+
+
+def test_invalid_legacy_page_structure_is_a_domain_error_not_server_failure(api_client, domain_connection, addition_case):
+    conn, case = domain_connection, addition_case
+    material = dict(conn.execute(select(t.materials).where(t.materials.c.id == case['material'])).mappings().one())
+    identifier = str(uuid4())
+    conn.execute(t.materials.insert().values(**{**material, 'id': identifier, 'sha256': 'legacy-time'}))
+    conn.execute(t.units.insert().values(id=str(uuid4()), material_id=identifier, code='legacy', title='Legacy',
+        sort_order=1, quantity_basis='time', estimated_minutes=20, created_at=NOW, updated_at=NOW))
+    conn.commit()
+    body = body_for(api_client, case)
+    body['units'][0]['title'] = 'Edit'
+    result = put(api_client, case, body)
+    assert result.status_code == 422 and result.json()['error']['code'] == 'INVALID_INPUT', result.text
