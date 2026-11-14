@@ -136,8 +136,8 @@
       "id": "SYS-04",
       "title": "미리보기 저장 구조·기준 버전 추가",
       "lane": "platform",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02"
       ],
@@ -146,7 +146,12 @@
         "BE/app/db/schema.py",
         "BE/migrations/versions/",
         "BE/app/repositories/proposals.py",
-        "BE/tests/test_proposal_storage.py"
+        "BE/tests/test_proposal_storage.py",
+        "BE/scripts/gen_schema/gen_schema.js",
+        "BE/schema/preview-storage-constraints.json",
+        "BE/tests/test_proposal_storage_migration.py",
+        "BE/docs/preview-storage-handoff.md",
+        "BE/docs/api/persistence.md"
       ],
       "shared_resources": [
         "schema"
@@ -163,13 +168,16 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/preview-storage",
+      "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-preview-storage"
     },
     {
       "id": "SYS-05",
@@ -312,10 +320,11 @@
       "optional": false,
       "branch": "feat/ai-result-gateway",
       "base_sha": "05106e0755f11f4efe3731e6e9986d4c58b80c62",
-      "head_sha": "45b91d83e0413a6d94847bccec1c9264025dc1cf",
-      "pr_url": null,
+      "head_sha": "1719ec2ac4e4fcc73e2a43132de9ae3c2e99f707",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/23",
       "validation_evidence": [
-        "Originale9c7f9e149passed. Root reproduced NUL JSONB storage failure, fixed68b7314+docs45b91d8:161SQLite+PG passed. Astra independent final review running."
+        "Originale9c7f9e149passed. Root reproduced NUL JSONB storage failure, fixed68b7314+docs45b91d8:161SQLite+PG passed. Astra independent final review running.",
+        "Final1719ec2:169SQLite+PG passed. Fixed NUL JSON, usage job-delete race, blocked process spawn and hidden transport failures. Astra original9repro tests+151gateway tests passed;0.5second spawn budget returned0.453516second timeout. Actions43546674865 pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -411,7 +420,7 @@
       "id": "R-03",
       "title": "Task 응답 범위·자료 식별 통일",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-01"
@@ -446,10 +455,11 @@
       "optional": false,
       "branch": "feat/task-range-views",
       "base_sha": "3af3c9796b7d0364c6deb6d664fbe21301443f64",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "7beb500eb4cb8fd1211b359d75b78060be7ebd5b",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/24",
       "validation_evidence": [
-        "Shared TaskView+home/focus ca88fcd;282study+157focusSQLite/PG passed;handoff pending. FocusTask minimal field extension explicitly leased."
+        "Shared TaskView+home/focus ca88fcd;282study+157focusSQLite/PG passed;handoff pending. FocusTask minimal field extension explicitly leased.",
+        "Worker424SQLite+PG passed; Astra424+4independentHTTP+5000range-oracle cases passed, no findings. Actions43546278439 pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -871,7 +881,7 @@
       "id": "Q-02",
       "title": "답안 revision·채점 작업·결과 저장 스키마",
       "lane": "quiz",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-01"
@@ -907,7 +917,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/22",
       "validation_evidence": [
         "941e4fe:248SQLite+PG storage/migration/seed/onboarding tests passed. Five tables include no-op save receipts; independent review pending.",
-        "Astra941e4fe:192existing+10independent SQLite/PG checks passed; schema generator exact/head single; no findings. Actions43543602360 running."
+        "Astra941e4fe:192existing+10independent SQLite/PG checks passed; schema generator exact/head single; no findings. Actions43543602360 running.",
+        "Actions43543602360 candidate4997d81:1293passed/1skipped. Merged2cdc874. Exact integration2cdc874 full SQLite+PG1377passed/1skipped; Actions43546105252 succeeded."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -994,7 +1005,7 @@
       "id": "S-01",
       "title": "숙달도 계산 규칙·자료별 식별 보정",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02"
@@ -1026,9 +1037,11 @@
       "optional": false,
       "branch": "feat/mastery-rules",
       "base_sha": "baed68a",
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "head_sha": "53db4e43b35dd38ae90c3c6002ce9cad30470661",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/25",
+      "validation_evidence": [
+        "Worker304SQLite+PG passed. Astra independent oracles passed; existing demo package regression still called private metrics after UUID snapshot change. Root correcting that existing test separately before final review."
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
       "worktree": "BE-task-mastery"
@@ -1534,8 +1547,8 @@
       "id": "O-02",
       "title": "온보딩 일정 CRUD·가용시간",
       "lane": "onboarding",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "O-01"
       ],
@@ -1543,7 +1556,11 @@
         "BE/app/repositories/events.py",
         "BE/app/services/onboarding_events.py",
         "BE/app/routers/onboarding_events.py",
-        "BE/tests/test_onboarding_events.py"
+        "BE/tests/test_onboarding_events.py",
+        "BE/app/schemas/onboarding_events.py",
+        "BE/docs/onboarding-events-handoff.md",
+        "BE/app/seed/loader.py",
+        "BE/tests/test_seed_event_timezone.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -1562,15 +1579,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/onboarding-events",
+      "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-onboarding-events"
     },
     {
       "id": "O-03",
