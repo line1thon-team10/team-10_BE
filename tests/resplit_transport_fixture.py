@@ -9,7 +9,7 @@ from app.ai import resplit_adapter
 
 def resplit_transport_provider(call, context):
     payload = call.input
-    behavior = payload.get('_fixtureBehavior', 'valid')
+    behavior = payload.get('_fixtureBehavior', os.getenv('RESPLIT_FIXTURE_BEHAVIOR', 'valid'))
     class GroqTransport:
         def __init__(self, **options):
             assert options['max_retries'] == 0
