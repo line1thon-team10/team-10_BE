@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.db import schema as t
-from app.routers import today
+from app.services import records
 from tests.test_record_transactions import headers, task_for
 
 
@@ -163,13 +163,13 @@ def test_evidence_failure_rolls_back_record_ranges_task_and_pass(
     task = task_for(conn, demo_user)
     unit_id = task.ranges[0]["unit_id"]
     if failure == "after_revalidation":
-        real = today.revalidate_record_passes
+        real = records.revalidate_record_passes
 
         def fail(*args):
             real(*args)
             raise RuntimeError("test failure after evidence writes")
 
-        monkeypatch.setattr(today, "revalidate_record_passes", fail)
+        monkeypatch.setattr(records, "revalidate_record_passes", fail)
     else:
         item = learning_pass(conn, unit_id)
         link_evidence(conn, item, [], [{"nominalMinutes": 25}])
