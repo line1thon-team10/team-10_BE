@@ -1,4 +1,4 @@
-"""A real-day candidate must not silently apply a placement whose time has elapsed."""
+"""Time alone never expires immutable candidates under decisions.md."""
 from datetime import timedelta
 from sqlalchemy import select, update
 from app.db import schema as t
@@ -6,7 +6,7 @@ from tests.test_plan_draft import NOW, plan_case
 from tests.test_plan_today_e2e import today_case, copy_task, preview, apply
 
 
-def test_elapsed_real_day_candidate_cannot_apply_past_placement(api_client,domain_connection,today_case,monkeypatch):
+def test_elapsed_real_day_preserves_candidate_and_replay_without_automatic_expiry(api_client,domain_connection,today_case,monkeypatch):
     from app.services import proposals, schedule_placements
     conn,case=domain_connection,today_case
     future=copy_task(conn,case,minutes=45)
@@ -20,7 +20,14 @@ def test_elapsed_real_day_candidate_cannot_apply_past_placement(api_client,domai
     response=preview(api_client,case)
     assert response.status_code==200,response.text
     clock[0]+=timedelta(hours=1)
-    response=apply(api_client,case,response.json()['data']['previewId'])
-    assert response.status_code==409 and response.json()['error']['code']=='PREVIEW_STALE',response.text
-    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==future))=='planned'
-    assert conn.scalar(select(t.plans.c.revision))==1
+    candidate=response.json()['data']['previewId']
+    assert preview(api_client,case).json()==response.json()
+    response=apply(api_client,case,candidate)
+    assert response.status_code==200,response.text
+    moved=conn.execute(select(t.study_tasks).where(t.study_tasks.c.origin_task_id==future)).mappings().one()
+    assert moved['starts_at'].replace(tzinfo=None)==(NOW+timedelta(hours=1)).replace(tzinfo=None)
+    assert moved['ends_at']-moved['starts_at']==timedelta(minutes=45)
+    assert conn.scalar(select(t.plans.c.revision))==2
+    conn.commit()
+    assert apply(api_client,case,candidate).json()==response.json()
+    assert len(conn.execute(select(t.study_tasks.c.id).where(t.study_tasks.c.origin_task_id==future)).all())==1
