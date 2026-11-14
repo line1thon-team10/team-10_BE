@@ -139,3 +139,31 @@ def test_unpaged_review_moves_as_original_time_and_block_without_fake_pages(api_
     row=conn.execute(select(t.study_tasks).where(t.study_tasks.c.origin_task_id==task)).mappings().one()
     assert row['block_id']==block and row['estimated_minutes']==30
     assert conn.execute(select(t.study_task_ranges).where(t.study_task_ranges.c.task_id==row['id'])).all()==[]
+
+
+def test_calendar_reallocation_links_pending_obligation_without_replacing_original(api_client,domain_connection,addition_case):
+    from tests.e2e.test_pending_obligation_allocation import pending
+    conn,case=domain_connection,addition_case
+    conn.execute(update(t.materials).where(t.materials.c.id==case['material']).values(page_count=60))
+    conn.execute(update(t.units).where(t.units.c.id==case['unit']).values(end_page=60))
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==case['old_task']['id']).values(
+        scheduled_date=TODAY,starts_at=at(TODAY,'09:00'),ends_at=at(TODAY,'09:50')))
+    obligation=pending(conn,case,60)
+    owner=dict(conn.execute(select(t.users).where(t.users.c.id==case['user'])).mappings().one())
+    event=add_event(conn,owner,day=TODAY,start='15:00',end='16:00');conn.commit()
+    key=f"{event['id']}@{TODAY}"
+    candidate=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'09:00','end':'10:00'})
+    assert candidate.status_code==200,candidate.text
+    assert conn.execute(select(t.remedial_obligation_blocks)).all()==[];conn.commit()
+    response=apply(api_client,case['user'],key,candidate.json()['data']['previewId'])
+    assert response.status_code==200,response.text
+    links=list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(t.remedial_obligation_blocks.c.obligation_id==obligation)))
+    assert len(links)>=3
+    ranges=conn.execute(select(t.study_task_ranges).join(t.study_tasks,t.study_tasks.c.id==t.study_task_ranges.c.task_id)
+        .where(t.study_tasks.c.block_id.in_(links))).mappings().all()
+    assert sorted(page for row in ranges for page in range(row['start_page'],row['end_page']+1))==list(range(1,61))
+    original=conn.execute(select(t.remedial_obligations).where(t.remedial_obligations.c.id==obligation)).mappings().one()
+    assert original['required_ranges']==[[1,60]]
+    before=conn.execute(select(t.remedial_obligation_blocks)).all();conn.commit()
+    assert apply(api_client,case['user'],key,candidate.json()['data']['previewId']).json()==response.json()
+    assert conn.execute(select(t.remedial_obligation_blocks)).all()==before

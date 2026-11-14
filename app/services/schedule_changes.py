@@ -342,9 +342,14 @@ def _saved_allocation(request,result,supersede,data,zone):
     for placement in placements:
         requirements={part['requirementId'] for part in placement['parts']}
         if placement['kind']!='study':
-            if len(requirements)!=1 or not requirements<=source_tasks.keys():
+            if len(requirements)!=1 or not requirements<={item.id for item in request.requirements}:
                 raise ApiError('PLAN_INFEASIBLE','기존 복습 의무의 식별자를 보존할 수 없어요',409)
-            source=source_tasks[next(iter(requirements))]
+            identifier=next(iter(requirements))
+            if identifier not in source_tasks:
+                # Pending obligations may become several new books; their
+                # validated requirement identity links each block on apply.
+                continue
+            source=source_tasks[identifier]
             if sum(any(part['requirementId']==source.id for part in candidate['parts']) for candidate in placements)!=1:
                 raise ApiError('PLAN_INFEASIBLE','기존 복습은 하나의 연속 시간에 배정해야 해요',409)
             placement['source']={'taskId':source.id,'blockId':source.row['block_id']}
