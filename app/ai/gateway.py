@@ -25,7 +25,7 @@ class InvalidOutput(ValueError):
 
 
 def validate_json(value) -> None:
-    """Reject non-JSON values, cycles and nonfinite numbers at any depth."""
+    """Reject unsupported JSONB values, cycles and nonfinite numbers at any depth."""
     active = set()
     stack = [(value, False)]
     while stack:
@@ -33,7 +33,11 @@ def validate_json(value) -> None:
         if leaving:
             active.remove(id(item))
             continue
-        if item is None or type(item) in (str, bool, int):
+        if type(item) is str:
+            if "\x00" in item:
+                raise InvalidOutput("JSONB cannot store a NUL character")
+            continue
+        if item is None or type(item) in (bool, int):
             continue
         if type(item) is float:
             if not math.isfinite(item):
@@ -48,6 +52,8 @@ def validate_json(value) -> None:
         if type(item) is dict:
             if any(type(key) is not str for key in item):
                 raise InvalidOutput("JSON object keys must be strings")
+            if any("\x00" in key for key in item):
+                raise InvalidOutput("JSONB object keys cannot contain a NUL character")
             stack.extend((child, False) for child in item.values())
         else:
             stack.extend((child, False) for child in item)
@@ -83,6 +89,12 @@ def parse_json(raw: str):
 def _label(value, name):
     if type(value) is not str or not value.strip():
         raise ValueError(f"{name} must be a nonempty string")
+    if "\x00" in value:
+        raise ValueError(f"{name} cannot contain a NUL character")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError(f"{name} must be valid UTF-8 text") from exc
     return value
 
 
@@ -275,8 +287,11 @@ class _Telemetry:
         if event["status"] not in ("succeeded", "failed"):
             raise TelemetryError("Invalid request status")
         provider_id = event["provider_request_id"]
-        if provider_id is not None and (type(provider_id) is not str or not provider_id.strip()):
-            raise TelemetryError("Invalid provider request ID")
+        if provider_id is not None:
+            try:
+                _label(provider_id, "provider request ID")
+            except ValueError as exc:
+                raise TelemetryError("Invalid provider request ID") from exc
         cost, currency = event["estimated_cost"], event["currency"]
         try:
             if cost is not None and (type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0):

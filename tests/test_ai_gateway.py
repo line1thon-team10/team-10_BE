@@ -130,7 +130,8 @@ def test_material_revision_identity_is_sorted_immutable_and_versioned():
 
 
 @pytest.mark.parametrize("value", [{"nested": [float("nan")]}, {"nested": [float("inf")]}, {1: "key"},
-                                  {"value": Decimal("1")}, {"value": (1, 2)}, {"text": "\ud800"}])
+                                  {"value": Decimal("1")}, {"value": (1, 2)}, {"text": "\ud800"},
+                                  {"nested": ["text\x00more"]}, {"nested": [{"bad\x00key": 1}]}])
 def test_json_validation_rejects_non_json_and_nonfinite_values_recursively(value):
     with pytest.raises(InvalidOutput):
         canonical_json(value)
@@ -262,6 +263,12 @@ def fake_validator(value, context):
     if value.get("evidence") != context["evidence"]:
         raise InvalidOutput("The evidence is not supported by the material snapshot")
     return value
+
+
+def nul_request_id_provider(call, context):
+    request_id = context.start_request()
+    context.finish_request(request_id, provider_request_id="request\x00id")
+    return {"page": 2, "evidence": "source"}
 
 
 PROVIDER = ProviderSpec(FunctionRef(__name__, "fake_provider"))
@@ -579,6 +586,38 @@ def test_gateway_failure_persists_only_actual_observations_and_no_result(result_
     rows = usage_rows(domain_connection)
     assert len(rows) == calls and {row["status"] for row in rows} == {status}
     assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+
+
+@pytest.mark.parametrize("raw", [
+    '{"page":2,"evidence":"source","extra":["text\\u0000more"]}',
+    '{"page":2,"evidence":"source","extra":{"bad\\u0000key":1}}',
+])
+def test_jsonb_unsupported_provider_text_is_ai_failure_and_keeps_usage(result_repository, domain_connection, gateway_user, raw):
+    request = fake_request(gateway_user, {"behavior": "semantic", "raw": raw})
+    with pytest.raises(ApiError) as error:
+        AiGateway(result_repository.engine).run(request, provider=PROVIDER, validator=VALIDATOR)
+    assert error.value.code == "AI_FAILED" and error.value.status == 503
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+    rows = usage_rows(domain_connection)
+    assert len(rows) == 1 and rows[0]["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("value", [{"answer": "text\x00more"}, {"bad\x00key": "answer"}])
+def test_repository_rejects_unsupported_text_before_database_write(result_repository, domain_connection, gateway_user, value):
+    with pytest.raises(InvalidOutput):
+        result_repository.save(GatewayRequest(gateway_user, identity()), value)
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+
+
+def test_unsupported_provider_request_id_is_failed_observation_without_database_error(result_repository, domain_connection, gateway_user):
+    provider = ProviderSpec(FunctionRef(__name__, "nul_request_id_provider"))
+    with pytest.raises(ApiError) as error:
+        AiGateway(result_repository.engine).run(fake_request(gateway_user), provider=provider, validator=VALIDATOR)
+    assert error.value.code == "AI_FAILED" and error.value.status == 503
+    rows = usage_rows(domain_connection)
+    assert len(rows) == 1 and rows[0]["status"] == "failed" and rows[0]["provider_request_id"] is None
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+
 
 
 def test_gateway_own_connections_are_closed_during_external_work_and_usage_survives_save_failure(result_repository, domain_connection, gateway_user, monkeypatch):
