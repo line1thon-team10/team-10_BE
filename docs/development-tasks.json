@@ -196,14 +196,15 @@
       "id": "SYS-05",
       "title": "미리보기 승인·stale·재시도 공통 서비스",
       "lane": "platform",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-04"
       ],
       "write_scope": [
         "BE/app/services/proposals.py",
-        "BE/tests/test_proposals.py"
+        "BE/tests/test_proposals*.py",
+        "BE/docs/preview-application-handoff.md"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -218,13 +219,16 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/preview-application",
+      "base_sha": "f22db928309cf55b3e3128811b271c37db84000f",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-preview-application"
     },
     {
       "id": "POL-01",
@@ -609,7 +613,8 @@
       "validation_evidence": [
         "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives.",
         "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement.",
-        "Worker finalb9c76a5:745SQLite+PG tests passed across21files, no existing assertion changes. Astra independent review running."
+        "Worker finalb9c76a5:745SQLite+PG tests passed across21files, no existing assertion changes. Astra independent review running.",
+        "Astra b9c76a5:751SQLite+PG passed, independent set oracle3000cases/9000subject projections, no findings. Raw69.99->70->relocked HTTP verified. Actions43550278524 pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -969,7 +974,7 @@
       "contract_files": [
         "quiz.md"
       ],
-      "deliverable": "PUT answers에서 답을 먼저 commit하고 작업을 접수하며 GET의 savedAnswers로 복구한다.",
+      "deliverable": "PUT answers에서 답안 revision과 채점 작업 접수를 같은 트랜잭션에 commit하고 GET의 savedAnswers로 복구한다.",
       "acceptance": [
         "동일 revision 재전송/다른 입력 충돌·제출 후 수정 금지",
         "새로고침·저장 중 장애·오래된 답안/채점 상태 미노출"
@@ -1015,7 +1020,10 @@
         "BE/schema/quiz-storage-constraints.json",
         "BE/migrations/versions/0008_grading_execution_mode.py",
         "BE/tests/test_grading_mode_migration.py",
-        "BE/docs/quiz-storage-handoff.md"
+        "BE/docs/quiz-storage-handoff.md",
+        "BE/scripts/gen_schema/gen_schema.js",
+        "BE/scripts/gen_schema/test_gen_schema.js",
+        "BE/tests/test_proposal_storage_migration.py"
       ],
       "shared_resources": [
         "ci-deploy",
@@ -1042,7 +1050,8 @@
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [
-        "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally."
+        "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally.",
+        "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -2766,8 +2775,8 @@
       "id": "FE-01",
       "title": "FE 변경표·명세 기준·fixture 준비",
       "lane": "frontend",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
@@ -2789,13 +2798,16 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "docs/api-contract-handoff",
+      "base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "FE-task-handoff"
     },
     {
       "id": "FE-02",
