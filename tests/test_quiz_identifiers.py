@@ -417,7 +417,29 @@ def test_answer_arrays_have_no_arbitrary_thousand_item_limit(api_client, quiz_ca
     answers = [{"questionId": item["id"], "choice": 0, "confidence": "sure"} for item in items]
     response = api_client.post(f"/api/quiz/{quiz_id}/submit", headers=case["headers"],
                                json={"quizId": quiz_id, "answers": answers})
-    assert response.status_code == 200, response.text
+    assert response.status_code in (200, 503), response.text
+    stored = domain_connection.execute(select(t.quiz_answers).join(t.quiz_items,
+        t.quiz_answers.c.quiz_item_id == t.quiz_items.c.id).where(t.quiz_items.c.quiz_session_id == quiz_id)).mappings().all()
+    assert len(stored) == 1001
+    assert {answer["quiz_item_id"] for answer in stored} == {item["id"] for item in items}
+    assert all(answer["choice"] == 0 and answer["text"] is None and answer["confidence"] == "sure"
+               and answer["revision"] == 1 and len(answer["answer_hash"]) == 64 for answer in stored)
+    state = domain_connection.execute(select(t.quiz_submission_states).where(
+        t.quiz_submission_states.c.quiz_session_id == quiz_id)).mappings().one()
+    assert len(state["sealed_answers"]) == 1001 and state["input_recovered"]
+    assert {answer["questionId"] for answer in state["sealed_answers"]} == {item["id"] for item in items}
+    if response.status_code == 503:
+        # Q-05 bounds grading by one shared request budget. A large valid array
+        # must still be durably accepted in full, without publishing partial scores.
+        assert response.json()["error"]["code"] == "AI_FAILED" and "data" not in response.json()
+        assert state["result_snapshot"] is None
+        assert domain_connection.scalar(select(func.count()).select_from(t.quiz_attempts).join(t.quiz_items,
+            t.quiz_attempts.c.quiz_item_id == t.quiz_items.c.id).where(t.quiz_items.c.quiz_session_id == quiz_id)) == 0
+        assert domain_connection.scalar(select(func.count()).select_from(t.mastery_history).where(
+            t.mastery_history.c.quiz_session_id == quiz_id)) == 0
+        domain_connection.commit()
+        assert api_client.get(f"/api/quiz/{quiz_id}/result", headers=case["headers"]).status_code == 503
+        return
     assert response.json()["data"]["summary"]["total"] == 1001
     assert response.json()["data"]["summary"]["correct"] == 1001
     assert [item["questionId"] for item in response.json()["data"]["items"]] == [item["id"] for item in items]

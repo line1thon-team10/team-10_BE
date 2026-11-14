@@ -91,11 +91,17 @@ def test_legacy_unrecoverable_input_is_not_guessed_or_rewritten(api_client, answ
     assert snapshot(conn) == before
 
 
-def test_actual_legacy_submit_without_sidecar_is_closed_and_not_reconstructed(api_client, quiz_case, domain_connection):
+def test_legacy_submission_without_sidecar_is_closed_and_not_reconstructed(api_client, quiz_case, domain_connection):
     case = quiz_case
-    response = api_client.post(f"/api/quiz/{case['quiz_id']}/submit", headers=case["headers"],
-        json={"quizId": case["quiz_id"], "answers": case["answers"]})
-    assert response.status_code == 200, response.text
+    # Seed the historical representation directly. The current POST now owns
+    # durable answer revisions and must not be used to manufacture legacy data.
+    domain_connection.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case['quiz_id']).values(
+        status='submitted', finalized_at=NOW))
+    for item in case['items']:
+        domain_connection.execute(t.quiz_attempts.insert().values(id=str(uuid4()), quiz_item_id=item['id'],
+            answer='legacy raw answer', confidence='sure', is_correct=False, grading_status='graded',
+            answered_at=NOW, answered_date=DAY, finalized_at=NOW))
+    domain_connection.commit()
     assert domain_connection.scalar(select(t.quiz_submission_states.c.quiz_session_id).where(
         t.quiz_submission_states.c.quiz_session_id == case["quiz_id"])) is None
     before = snapshot(domain_connection)

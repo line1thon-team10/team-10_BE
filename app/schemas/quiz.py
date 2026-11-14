@@ -1,9 +1,10 @@
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
 from app.core.responses import ApiError
+from app.domain.quiz_answers import validate_answer_text
 
 
 class QuizCommand(BaseModel):
@@ -15,6 +16,11 @@ class Answer(QuizCommand):
     choice: StrictInt | None = None
     text: StrictStr | None = None
     confidence: Literal["sure", "unsure"]
+
+    @field_validator("text")
+    @classmethod
+    def require_storable_text(cls, value: str | None) -> str | None:
+        return validate_answer_text(value)
 
     @model_validator(mode="before")
     @classmethod
