@@ -59,7 +59,7 @@ class CustomQuizService:
         for question in sorted(available.values(),key=lambda q:(q['id'] in attempted,q['code'] or '',q['id'])):
             buckets[question['unit_id']].append(question['id'])
         order=sorted(units,key=lambda uid:((float(units[uid]['mastery_score']) if units[uid]['mastery_score'] is not None else -1)
-            if body.weight=='weak' else 0,units[uid]['sort_order'],units[uid]['material_id'],uid))
+            if body.weight=='weak' else 0,units[uid]['sort_order'],uid))
         chosen=[]
         if body.weight=='weak':
             chosen=[qid for uid in order for qid in buckets[uid]][:body.count]

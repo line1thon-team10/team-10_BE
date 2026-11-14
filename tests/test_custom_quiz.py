@@ -94,3 +94,18 @@ def test_foreign_subject_uses_documented_error(api_client,progress_world):
     w=progress_world;unit=w.unit(1,5)
     response=create(api_client,w,[scope(unit,1,5)],subjectId=str(uuid4()))
     assert response.status_code==404 and response.json()['error']['code']=='SUBJECT_NOT_FOUND'
+
+
+def test_weak_tie_uses_unit_id_before_material_id(api_client,progress_world):
+    w=progress_world
+    materials=sorted([w.unit(1,10)['material_id'],w.unit(1,10)['material_id']])
+    first=w.unit(1,10,material_id=materials[1],id='11111111-1111-4111-8111-111111111111',sort_order=0,score=30)
+    second=w.unit(1,10,material_id=materials[0],id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',sort_order=0,score=30)
+    for unit in (first,second):
+        w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+        add_question(w,unit)
+    response=create(api_client,w,[scope(second),scope(first)],count=1,weight='weak')
+    assert response.status_code==200,response.text
+    selected=w.conn.scalar(select(t.questions.c.unit_id).join(t.quiz_items,t.quiz_items.c.question_id==t.questions.c.id)
+        .where(t.quiz_items.c.quiz_session_id==response.json()['data']['quizId']))
+    assert selected==first['id']
