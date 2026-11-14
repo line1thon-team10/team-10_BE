@@ -98,7 +98,18 @@ def quiz_submit(key: UUID, body: SubmitIn, user: dict = Depends(current_user), c
 def quiz_result(key: UUID, quizId: UUID | None = None,
                 user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     svc = QuizService(conn, user, today_for(user))
-    return ok(svc.result_view(svc.result_session(str(key), quiz_id=str(quizId) if quizId is not None else None)))
+    quiz = svc.result_session(str(key), quiz_id=str(quizId) if quizId is not None else None)
+    if quiz['status'] == 'carried_over':
+        from app.services.quiz_finalization import finish_carried
+        engine = conn.engine
+        conn.close()
+        # Commit retry admission even if the following public read remains 503.
+        # The worker executes providers later, outside this request transaction.
+        with engine.begin() as fresh:
+            finish_carried(fresh,user,quiz['id'],retry_failed=True)
+        with engine.begin() as fresh:
+            return ok(QuizService(fresh,user,today_for(user)).result_view(quiz))
+    return ok(svc.result_view(quiz))
 
 
 class MoreIn(BaseModel):
