@@ -268,3 +268,21 @@ def test_settlement_keeps_other_owner_and_future_marker_unchanged(api_client,pro
     w.conn.commit()
     assert read(api_client,other).status_code==200
     assert dict(w.conn.execute(select(t.users).where(t.users.c.id==other)).mappings().one())==before
+
+
+def test_authenticated_request_never_reserves_two_pool_connections(api_client,progress_world,end_focus,real_clock,monkeypatch):
+    from sqlalchemy import create_engine, event, text
+    from app.db import session
+    w=progress_world;w.conn.commit();end_focus(w.user);ordinary(w)
+    args={'check_same_thread':False} if w.conn.dialect.name=='sqlite' else {
+        'options':'-csearch_path='+w.conn.scalar(text('select current_schema()'))}
+    w.conn.commit()
+    bounded=create_engine(session.engine.url,connect_args=args,pool_size=1,max_overflow=0,pool_timeout=.1)
+    if w.conn.dialect.name=='sqlite':
+        @event.listens_for(bounded,'connect')
+        def foreign_keys(dbapi_connection,_): dbapi_connection.execute('PRAGMA foreign_keys=ON')
+    monkeypatch.setattr(session,'engine',bounded)
+    try:
+        response=read(api_client,w.user)
+        assert response.status_code==200,response.text
+    finally: bounded.dispose()
