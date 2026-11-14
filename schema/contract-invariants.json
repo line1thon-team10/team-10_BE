@@ -1,0 +1,238 @@
+{
+  "checks": [
+    {
+      "table": "subjects",
+      "name": "ck_subjects_nonnegative",
+      "sql": "(minutes_per_page IS NULL OR minutes_per_page >= 0)"
+    },
+    {
+      "table": "subjects",
+      "name": "ck_subjects_scores",
+      "sql": "(target_score IS NULL OR target_score BETWEEN 0 AND 100) AND (exam_weight_percent IS NULL OR exam_weight_percent BETWEEN 0 AND 100)"
+    },
+    {
+      "table": "onboarding_messages",
+      "name": "ck_onboarding_messages_nonnegative",
+      "sql": "(sort_order IS NULL OR sort_order >= 0)"
+    },
+    {
+      "table": "calendar_events",
+      "name": "ck_calendar_events_interval",
+      "sql": "ends_at > starts_at AND revision > 0"
+    },
+    {
+      "table": "calendar_event_exceptions",
+      "name": "ck_calendar_exception_interval",
+      "sql": "(kind = 'cancelled' AND new_starts_at IS NULL AND new_ends_at IS NULL) OR (kind = 'moved' AND new_starts_at IS NOT NULL AND new_ends_at IS NOT NULL AND new_ends_at > new_starts_at)"
+    },
+    {
+      "table": "materials",
+      "name": "ck_materials_nonnegative",
+      "sql": "(page_count IS NULL OR page_count >= 0)"
+    },
+    {
+      "table": "materials",
+      "name": "ck_materials_ocr_confidence",
+      "sql": "ocr_confidence IS NULL OR ocr_confidence BETWEEN 0 AND 1"
+    },
+    {
+      "table": "units",
+      "name": "ck_units_pages",
+      "sql": "(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)"
+    },
+    {
+      "table": "concepts",
+      "name": "ck_concepts_pages",
+      "sql": "start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page"
+    },
+    {
+      "table": "study_task_ranges",
+      "name": "ck_study_task_ranges_pages",
+      "sql": "(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)"
+    },
+    {
+      "table": "study_record_ranges",
+      "name": "ck_study_record_ranges_pages",
+      "sql": "(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)"
+    },
+    {
+      "table": "question_sources",
+      "name": "ck_question_sources_pages",
+      "sql": "start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page"
+    },
+    {
+      "table": "quiz_scopes",
+      "name": "ck_quiz_scopes_pages",
+      "sql": "start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page"
+    },
+    {
+      "table": "tutor_sources",
+      "name": "ck_tutor_sources_pages",
+      "sql": "start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page"
+    },
+    {
+      "table": "units",
+      "name": "ck_units_nonnegative",
+      "sql": "(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0) AND (emphasis_weight IS NULL OR emphasis_weight >= 0)"
+    },
+    {
+      "table": "units",
+      "name": "ck_units_mastery_score",
+      "sql": "mastery_score IS NULL OR mastery_score BETWEEN 0 AND 100"
+    },
+    {
+      "table": "concepts",
+      "name": "ck_concepts_nonnegative",
+      "sql": "(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0)"
+    },
+    {
+      "table": "plans",
+      "name": "ck_plans_revision",
+      "sql": "revision > 0"
+    },
+    {
+      "table": "study_tasks",
+      "name": "ck_study_tasks_nonnegative",
+      "sql": "(estimated_minutes IS NULL OR estimated_minutes >= 0)"
+    },
+    {
+      "table": "study_tasks",
+      "name": "ck_study_tasks_interval",
+      "sql": "(starts_at IS NULL AND ends_at IS NULL) OR (starts_at IS NOT NULL AND ends_at IS NOT NULL AND ends_at > starts_at)"
+    },
+    {
+      "table": "study_task_ranges",
+      "name": "ck_study_task_ranges_nonnegative",
+      "sql": "(planned_minutes IS NULL OR planned_minutes >= 0) AND (sort_order IS NULL OR sort_order >= 0)"
+    },
+    {
+      "table": "daily_plan_totals",
+      "name": "ck_daily_plan_totals_nonnegative",
+      "sql": "(planned_new_pages IS NULL OR planned_new_pages >= 0) AND (planned_total_pages IS NULL OR planned_total_pages >= 0) AND (planned_unpaged_minutes IS NULL OR planned_unpaged_minutes >= 0)"
+    },
+    {
+      "table": "study_sessions",
+      "name": "ck_study_sessions_nonnegative",
+      "sql": "(last_confirmed_elapsed_seconds IS NULL OR last_confirmed_elapsed_seconds >= 0) AND (measured_seconds IS NULL OR measured_seconds >= 0) AND (expected_seconds IS NULL OR expected_seconds >= 0)"
+    },
+    {
+      "table": "study_sessions",
+      "name": "ck_study_sessions_interval",
+      "sql": "ended_at IS NULL OR ended_at >= started_at"
+    },
+    {
+      "table": "study_session_segments",
+      "name": "ck_study_segments_interval",
+      "sql": "ended_at IS NULL OR ended_at >= started_at"
+    },
+    {
+      "table": "study_session_segments",
+      "name": "ck_study_session_segments_nonnegative",
+      "sql": "(sort_order IS NULL OR sort_order >= 0)"
+    },
+    {
+      "table": "study_record_ranges",
+      "name": "ck_study_record_ranges_nonnegative",
+      "sql": "(completed_planned_minutes IS NULL OR completed_planned_minutes >= 0)"
+    },
+    {
+      "table": "speed_calibrations",
+      "name": "ck_speed_calibrations_nonnegative",
+      "sql": "(measured_seconds IS NULL OR measured_seconds >= 0) AND (completed_pages IS NULL OR completed_pages >= 0) AND (previous_minutes_per_page IS NULL OR previous_minutes_per_page >= 0) AND (proposed_minutes_per_page IS NULL OR proposed_minutes_per_page >= 0)"
+    },
+    {
+      "table": "speed_calibrations",
+      "name": "ck_speed_calibration_window",
+      "sql": "window_end >= window_start"
+    },
+    {
+      "table": "mastery_history",
+      "name": "ck_mastery_history_scores",
+      "sql": "(previous_score IS NULL OR previous_score BETWEEN 0 AND 100) AND raw_score BETWEEN 0 AND 100 AND score BETWEEN 0 AND 100"
+    },
+    {
+      "table": "mastery_history",
+      "name": "ck_mastery_history_nonnegative",
+      "sql": "(daily_increase_limit IS NULL OR daily_increase_limit >= 0)"
+    },
+    {
+      "table": "learning_passes",
+      "name": "ck_learning_pass_number",
+      "sql": "pass_number > 0"
+    },
+    {
+      "table": "quiz_sessions",
+      "name": "ck_quiz_sessions_nonnegative",
+      "sql": "(requested_question_count IS NULL OR requested_question_count >= 0) AND (current_position IS NULL OR current_position >= 0)"
+    },
+    {
+      "table": "quiz_items",
+      "name": "ck_quiz_items_nonnegative",
+      "sql": "(sort_order IS NULL OR sort_order >= 0)"
+    },
+    {
+      "table": "quiz_attempts",
+      "name": "ck_quiz_attempt_essay_score",
+      "sql": "essay_score IS NULL OR essay_score BETWEEN 0 AND 100"
+    },
+    {
+      "table": "weak_questions",
+      "name": "ck_weak_questions_nonnegative",
+      "sql": "(review_step IS NULL OR review_step >= 0)"
+    },
+    {
+      "table": "reflection_reports",
+      "name": "ck_reflection_report_period",
+      "sql": "period_end >= period_start"
+    },
+    {
+      "table": "ai_jobs",
+      "name": "ck_ai_jobs_nonnegative",
+      "sql": "(retry_count IS NULL OR retry_count >= 0)"
+    },
+    {
+      "table": "ai_usage_logs",
+      "name": "ck_ai_usage_logs_nonnegative",
+      "sql": "(input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0) AND (estimated_cost IS NULL OR estimated_cost >= 0) AND (latency_ms IS NULL OR latency_ms >= 0)"
+    }
+  ],
+  "indexes": [
+    {
+      "table": "units",
+      "name": "uq_units_current_order",
+      "columns": [
+        "material_id",
+        "sort_order"
+      ],
+      "where": "retired_at IS NULL"
+    },
+    {
+      "table": "concepts",
+      "name": "uq_concepts_current_code",
+      "columns": [
+        "unit_id",
+        "code"
+      ],
+      "where": "retired_at IS NULL"
+    },
+    {
+      "table": "concepts",
+      "name": "uq_concepts_current_order",
+      "columns": [
+        "unit_id",
+        "sort_order"
+      ],
+      "where": "retired_at IS NULL"
+    },
+    {
+      "table": "study_tasks",
+      "name": "uq_study_tasks_active_block",
+      "columns": [
+        "plan_id",
+        "block_id"
+      ],
+      "where": "status IN ('planned', 'partial')"
+    }
+  ],
+  "foreignKeys": {}
+}

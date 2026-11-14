@@ -27,7 +27,9 @@
 - 문항별 채점 작업은 quiz_item+답안 revision당 하나. 오래된 revision 결과는 반영하지 않는다. 최종 집계 작업은 quiz_session당 현재 대표 작업 하나. 결과 적용은 quiz_session 잠금+attempt/mastery 반영 표식으로 중복 금지.
 - calendar_event_exceptions(event_id,occurrence_date) 유일. 범위 시작<=끝, 시각 시작<끝, 점수0..100, 비음수 시간/개수.
 
-원문 erd-constraints.sql이 없어 위 내용은 이번 명세의 제약 요구사항이다. 배포 시 마이그레이션으로 작성하고 SQLite뿐 아니라 PostgreSQL에서 검증해야 한다.
+원문 erd-constraints.sql은 저장소에 없으며 위 명시 요구사항을 `0011_contract_invariants`로 구현했다. 현재 단원/개념과 활성 블록 부분 유일 인덱스, 페이지 범위/짝 nullable, 일정·배치 시간, 점수 범위, 비음수 분량을 `schema/contract-invariants.json`에서 생성한다. 원래의 task/session 연결·문항 시도 중복 제한과 0004/0006/0007 제약은 중복 생성하지 않는다. 교차 테이블 소유권·PDF 최대 페이지·실제 시험일/가용시간은 도메인 검증 책임이다.
+
+0011은 모든 제약의 기존 불량행/중복행을 DDL 전에 검사한다. 발견하면 제약 이름과 함께 중단하며 행을 임의 삭제하거나 수정하지 않는다. retired 구조와 carried_over 과거 배치는 유일 제약에서 제외된다. 즉시 종료/멈춤의 0초 집중 구간은 허용하되 역전 시각은 거절한다. downgrade는 추가한 인덱스/CHECK만 제거하며 데이터를 유지한다. migration은 현재 앱의 변경 가능한 manifest 대신 `migrations/baselines/contract_invariants_0011.json`을 사용한다.
 
 ## 기존 ERD에 필요한 보완
 

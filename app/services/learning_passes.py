@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from app.ai.metrics_adapter import current_scope
 from app.db import schema as t
 from app.services.learning_evidence import _covers, _required_pages
+from app.services.recovery_evidence import first_passes
 from app.services.study import StudyData
 
 
@@ -95,16 +96,17 @@ def create_remedial_passes(conn, user_id, task, record_id, at):
                 t.learning_passes.c.unit_id == unit_id, t.learning_passes.c.completion_kind == "remedial",
                 t.learning_passes.c.evidence_key == obligation["id"])):
             continue
-        if not conn.scalar(select(t.learning_passes.c.id).where(
-                t.learning_passes.c.unit_id == unit_id, t.learning_passes.c.completion_kind == "initial",
-                t.learning_passes.c.invalidated_at.is_(None))):
-            continue
-        unit = conn.execute(select(t.units, t.materials.c.subject_id)
+        unit = conn.execute(select(t.units, t.materials.c.subject_id,
+                                   t.materials.c.sha256.label("material_sha256"), t.materials.c.analysis_version)
             .join(t.materials, t.materials.c.id == t.units.c.material_id)
             .join(t.subjects, t.subjects.c.id == t.materials.c.subject_id)
             .where(t.units.c.id == unit_id, t.subjects.c.user_id == user_id,
                    t.units.c.quantity_basis == "page")).mappings().first()
         if unit is None:
+            continue
+        concepts = conn.execute(select(t.concepts).where(t.concepts.c.unit_id == unit_id)).mappings().all()
+        first = first_passes(conn, user_id, unit, concepts)
+        if not first:
             continue
         block_ids = set(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(
             t.remedial_obligation_blocks.c.obligation_id == obligation["id"])))
@@ -134,6 +136,9 @@ def create_remedial_passes(conn, user_id, task, record_id, at):
         if record_id not in {row["id"] for row in evidence} or not _covers(
                 required, [(row["start_page"], row["end_page"]) for row in evidence]):
             continue
+        completed_day = max(row["study_date"] for row in evidence)
+        if not any(row["completed_date"] <= completed_day for row in first):
+            continue
         number = 1 + (conn.scalar(select(func.max(t.learning_passes.c.pass_number)).where(
             t.learning_passes.c.unit_id == unit_id)) or 0)
         conn.execute(t.learning_passes.insert().values(
@@ -146,4 +151,4 @@ def create_remedial_passes(conn, user_id, task, record_id, at):
                 "recordIds": list(dict.fromkeys(row["id"] for row in evidence)),
                 "sessionIds": sorted({row["session_id"] for row in evidence if row["session_id"]}),
                 "requiredRanges": [list(pair) for pair in required]},
-            completed_at=at, completed_date=max(row["study_date"] for row in evidence)))
+            completed_at=at, completed_date=completed_day))

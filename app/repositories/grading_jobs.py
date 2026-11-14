@@ -187,6 +187,47 @@ class GradingJobRepository:
             result=null(), error_code=None))
         return self.get(user_id, job_id) if changed.rowcount == 1 else None
 
+    def submission_retry(self, user_id, job_id, *, revision: int, now: datetime,
+                         mode: str | None = None, stale_succeeded: bool = False) -> bool:
+        """Explicit submit only: fix retry mode before commit, never steal a live lease.
+
+        The caller validates succeeded provenance under the same user lock before
+        setting stale_succeeded. A completed response can never be regraded.
+        """
+        now, mode = aware_time(now), execution_mode(mode)
+        if type(revision) is not int or revision < 1 or type(stale_succeeded) is not bool:
+            raise ApiError("INVALID_INPUT", "저장된 답안 revision과 재시도 정책이 필요해요", 422)
+        job = self._locked(user_id, job_id)
+        state = self.answers.submission(user_id, job["quiz_session_id"])
+        if state is None or state["legacy"] or state["result_snapshot"] is not None:
+            raise ApiError("QUIZ_FINALIZED", "재채점할 수 있는 미확정 제출이 아니에요", 409)
+        sealed = next((answer for answer in state["sealed_answers"]
+                       if answer["questionId"] == job["quiz_item_id"]), None)
+        if (not self._is_current(job) or revision != job["stored_revision"] or not sealed
+                or sealed["answerId"] != job["answer_id"] or sealed["revision"] != revision):
+            raise ApiError("ANSWER_CONFLICT", "봉인한 답안 revision이 아니에요", 409)
+        if job["status"] == "running" and job["lease_expires_at"] > now:
+            return False
+        if job["status"] == "cancelled" or (job["status"] == "succeeded" and not stale_succeeded):
+            return False
+        if stale_succeeded and job["status"] != "succeeded":
+            raise ApiError("ANSWER_CONFLICT", "채점 상태가 바뀌었어요", 409)
+        unfinished = exists(select(t.quiz_submission_states.c.quiz_session_id).where(
+            t.quiz_submission_states.c.quiz_session_id == job["quiz_session_id"],
+            t.quiz_submission_states.c.answer_set_hash == state["answer_set_hash"],
+            t.quiz_submission_states.c.result_snapshot.is_(None)))
+        changed = self.connection.execute(update(t.quiz_grading_jobs).where(
+            t.quiz_grading_jobs.c.id == job["id"], t.quiz_grading_jobs.c.answer_revision == revision,
+            t.quiz_grading_jobs.c.status == job["status"], t.quiz_grading_jobs.c.lease_token == job["lease_token"],
+            t.quiz_grading_jobs.c.execution_mode == job["execution_mode"],
+            t.quiz_grading_jobs.c.result == job["result"] if job["result"] is not None else t.quiz_grading_jobs.c.result.is_(None),
+            self._current_condition(job), unfinished,
+        ).values(status="queued", execution_mode=mode or job["execution_mode"], result=null(), error_code=None,
+                 lease_owner=None, lease_token=None, lease_expires_at=None, claimed_at=None, finished_at=None))
+        if changed.rowcount != 1:
+            raise ApiError("ANSWER_CONFLICT", "채점 상태가 바뀌었어요", 409)
+        return True
+
     def _lease_conditions(self, job, owner, token, revision, now):
         return (t.quiz_grading_jobs.c.id == job["id"], t.quiz_grading_jobs.c.status == "running",
                 t.quiz_grading_jobs.c.lease_owner == _owner(owner),

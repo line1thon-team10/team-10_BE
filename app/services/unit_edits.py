@@ -125,14 +125,23 @@ def persist_structure(conn, user_id, candidate, now):
     if candidate['retireUnitIds']:
         conn.execute(update(t.units).where(t.units.c.id.in_(candidate['retireUnitIds']),
             t.units.c.id.in_(unit_ids)).values(retired_at=now, updated_at=now))
+    # Existing current IDs may exchange order/code. Temporarily remove only
+    # retained active rows from partial unique indexes in this same transaction.
+    # Actual retired history is absent from unit_ids/concept_ids and never revived.
+    retained_units = unit_ids & {row['id'] for row in candidate['units']}
+    retained_concepts = concept_ids & {row['id'] for row in candidate['concepts']}
+    if retained_units:
+        conn.execute(update(t.units).where(t.units.c.id.in_(retained_units)).values(retired_at=now))
+    if retained_concepts:
+        conn.execute(update(t.concepts).where(t.concepts.c.id.in_(retained_concepts)).values(retired_at=now))
     for row in candidate['units']:
         if row['id'] in unit_ids:
-            conn.execute(update(t.units).where(t.units.c.id == row['id']).values(**row, updated_at=now))
+            conn.execute(update(t.units).where(t.units.c.id == row['id']).values(**(row | {'retired_at': None, 'updated_at': now})))
         else:
             conn.execute(t.units.insert().values(**row, created_at=now, updated_at=now))
     for row in candidate['concepts']:
         if row['id'] in concept_ids:
-            conn.execute(update(t.concepts).where(t.concepts.c.id == row['id']).values(**row, updated_at=now))
+            conn.execute(update(t.concepts).where(t.concepts.c.id == row['id']).values(**(row | {'retired_at': None, 'updated_at': now})))
         else:
             conn.execute(t.concepts.insert().values(**row, created_at=now, updated_at=now))
     conn.execute(update(t.materials).where(t.materials.c.id == material['id']).values(updated_at=now))
