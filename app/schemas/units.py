@@ -71,7 +71,7 @@ class ConceptEdit(BaseModel):
 class UnitEdit(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     id: UUIDString | None = None
-    no: int = Field(ge=1)
+    no: int = Field(ge=1, le=2_147_483_647)
     title: str
     from_: int = Field(alias='from', ge=1)
     to: int = Field(ge=1)

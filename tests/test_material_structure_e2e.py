@@ -143,13 +143,14 @@ def test_approval_write_failure_rolls_back_retirement_and_can_retry(api_client, 
     assert put(api_client, case, {'previewId': preview}).status_code == 200
 
 
-@pytest.mark.parametrize('mutation', ['bool_page', 'unknown_output', 'empty'])
+@pytest.mark.parametrize('mutation', ['bool_page', 'unknown_output', 'empty', 'huge_no'])
 def test_public_write_contract_rejects_invalid_fields(api_client, domain_connection, unit_case, mutation):
     conn, case = domain_connection, unit_case
     unit = add_unit(conn, case)
     concept = add_concept(conn, unit)
     conn.commit()
     body = body_for(api_client, case)
+    if mutation == 'huge_no': body['units'][0]['no'] = 2_147_483_648
     if mutation == 'bool_page': body['units'][0]['from'] = True
     if mutation == 'unknown_output': body['units'][0]['quizless'] = False
     if mutation == 'empty': body['units'] = []
