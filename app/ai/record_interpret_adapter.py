@@ -6,7 +6,7 @@ from pathlib import PurePath
 from app.ai.gateway import FunctionRef, InvalidOutput, ProviderSpec
 from app.ai.material_adapter import MODEL_VERSION, ObservedGroq
 
-PROMPT_VERSION = 'record-explicit-pages-v1'
+PROMPT_VERSION = 'record-explicit-pages-v2'
 SCHEMA_VERSION = 'record-ranges-v1'
 PROVIDER = ProviderSpec(FunctionRef(__name__, 'record_provider'))
 VALIDATOR = FunctionRef(__name__, 'validate_record_result')
@@ -15,10 +15,10 @@ RANGE = re.compile(r'(?<![\d.\-])(?:p\.?\s*)?(\d+)\s*(?:쪽|페이지)?\s*(?:부
 P_RANGE = re.compile(r'(?<![\w.\-])p\.?\s*(\d+)\s*(?:부터|[~–-])\s*p?\.?\s*(\d+)(?:\s*(?:쪽|페이지|p))?(?:\s*까지)?', re.I)
 END = re.compile(r'(?<![\d.\-])(?:p\.?\s*)?(\d+)\s*(?:쪽|페이지|p)\s*까지', re.I)
 P_END = re.compile(r'(?<![\w.\-])p\.?\s*(\d+)\s*까지', re.I)
-UNCERTAIN = re.compile(r'아마|대략|정도|쯤|절반|반쯤|같아|같애|모르|할\s*예정|할\s*거|하려|할게|할까|공부할|읽을|볼\s*예정|못\s*했|안\s*했|못\s*읽|안\s*읽')
+UNCERTAIN = re.compile(r'아마|대략|정도|쯤|절반|반쯤|같아|같애|모르|할\s*예정|할\s*거|하려|할게|할까|공부할|읽을|볼\s*예정|(?:못|안)\s*(?:했|하|읽|봤|보|봐|풀|끝|마|공부|학습|정리)|못\s*다')
 FINISHED = re.compile(r'했|했다|했어|완료|끝냈|끝났|읽었|봤|보았|풀었|마쳤|학습했|정리했')
 ALL = re.compile(r'(?:전부|전체|모두|다)\s*(?:공부|학습|읽기|읽|풀기|풀|했|끝|완료|마쳤|봤|보았)')
-NONE = re.compile(r'(?:하나도\s*)?(?:못\s*했|안\s*했|못\s*읽|안\s*읽|안\s*봤)|(?:공부|학습|완료)\s*(?:한\s*것이?\s*)?없|0\s*(?:쪽|페이지)')
+NONE = re.compile(r'(?:하나도\s*)?(?:(?:못|안)\s*(?:했|하였|읽었|봤|보았|풀었|공부했|학습했|정리했))|(?:공부|학습|완료)\s*(?:한\s*것이?\s*)?없|0\s*(?:쪽|페이지)')
 
 
 def _named_ranges(text, ranges):
@@ -40,11 +40,11 @@ def explicit_ranges(text, ranges):
     if not ranges or any(row['from'] is None or row['to'] is None for row in ranges):
         raise ValueError('No unambiguous page task')
     text = text.strip()
-    if re.search(r'아마|대략|정도|쯤|같아|같애|모르|가정|치면|아니|않|겠|할래|[?？]',text):
+    if re.search(r'아마|대략|정도|쯤|절반|일부|조금|거의|대충|같아|같애|모르|가정|치면|아니|않|겠|할래|[?？]',text):
         raise ValueError('Ambiguous completion assertion')
     if re.search(r'(?:다|전부|전체|모두).*?(?:못|안)',text):
         raise ValueError('Not all is not the same as none')
-    if NONE.search(text) and not re.search(r'[1-9][0-9]*\s*(?:쪽|페이지)', text):
+    if NONE.search(text) and not re.search(r'[1-9][0-9]*\s*(?:쪽|페이지|p)|p\.?\s*[1-9][0-9]*|까지', text, re.I):
         remainder = NONE.sub('', text)
         if re.search(r'[,;\n]|그리고|완료|끝냈|마쳤|읽었|봤|보았', remainder):
             raise ValueError('Mixed completed and incomplete claims need exact pages')
