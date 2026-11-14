@@ -21,3 +21,18 @@ def delete_preview(occurrence_id:str,query:Annotated[DeletePreviewQuery,Query()]
 def delete_schedule(occurrence_id:str,previewId:UUID,user:dict=Depends(current_user),conn:Connection=Depends(get_conn)):
     engine=conn.engine;conn.close()
     return ok(ScheduleChangesService(engine).apply(user['id'],occurrence_id,str(previewId)))
+
+
+from app.schemas.schedule_changes import Approval, ScheduleEdit
+
+
+@router.patch('/{occurrence_id}/preview')
+def edit_preview(occurrence_id:str,command:ScheduleEdit,user:dict=Depends(current_user),conn:Connection=Depends(get_conn)):
+    engine=conn.engine;conn.close()
+    return ok(ScheduleChangesService(engine).edit_preview(user['id'],occurrence_id,command))
+
+
+@router.patch('/{occurrence_id}')
+def edit_schedule(occurrence_id:str,command:Approval,user:dict=Depends(current_user),conn:Connection=Depends(get_conn)):
+    engine=conn.engine;conn.close()
+    return ok(ScheduleChangesService(engine).apply(user['id'],occurrence_id,str(command.previewId),edit=True))
