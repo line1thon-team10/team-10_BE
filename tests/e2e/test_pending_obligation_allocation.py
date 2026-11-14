@@ -33,6 +33,17 @@ def test_addition_allocates_every_pending_page_and_links_split_books_once(api_cl
     assert response.status_code==200,response.text
     links=list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id).where(t.remedial_obligation_blocks.c.obligation_id==obligation)))
     assert len(links)>=3
+    snapshots=list(conn.scalars(select(t.remedial_obligation_blocks.c.allocation_snapshot).where(
+        t.remedial_obligation_blocks.c.obligation_id==obligation)))
+    assert all(snapshot['schemaVersion']=='remedial-allocation-v1' and snapshot['generatedAt'] for snapshot in snapshots)
+    for snapshot in snapshots:
+        from fractions import Fraction
+        task=conn.execute(select(t.study_tasks).where(t.study_tasks.c.id==snapshot['taskId'])).mappings().one()
+        assert snapshot['date']==task['scheduled_date'].isoformat()
+        measured=sum((Fraction(*part['baseline'])*Fraction(*part['multiplier'])*(part['to']-part['from']+1)
+            for part in snapshot['parts']),Fraction(0))
+        assert Fraction(*snapshot['end'])-Fraction(*snapshot['start'])==measured
+        assert all(part['baseline']==[5,2] and part['multiplier']==[1,1] for part in snapshot['parts'])
     rows=conn.execute(select(t.study_task_ranges).join(t.study_tasks,t.study_tasks.c.id==t.study_task_ranges.c.task_id)
         .where(t.study_tasks.c.block_id.in_(links),t.study_tasks.c.status=='planned')).mappings().all()
     assert sorted(page for row in rows for page in range(row['start_page'],row['end_page']+1))==list(range(1,61))
