@@ -190,9 +190,9 @@ class _Allocator:
         for i, count in enumerate(remaining):
             if count and self._eligible(i, day):
                 pool = self.pools[i]
-                groups[(pool.subject_id, pool.kind)].append(i)
+                groups[(pool.subject_id, pool.kind, pool.requirement_id if pool.kind != "study" else None)].append(i)
         scores, choices = self._scores(remaining, day), []
-        for (subject_id, _), indices in groups.items():
+        for (subject_id, _, _), indices in groups.items():
             counts = [0] * len(remaining)
             def collect(position, duration):
                 self.budget.tick()
@@ -253,7 +253,7 @@ class _Allocator:
                 return None
             grouped = defaultdict(Fraction)
             for count, pool in zip(counts, self.pools):
-                grouped[(pool.subject_id, pool.kind)] += count * pool.cost
+                grouped[(pool.subject_id, pool.kind, pool.requirement_id if pool.kind != "study" else None)] += count * pool.cost
             if any(0 < duration < MIN_TASK for duration in grouped.values()):
                 failed.add(key)
                 return None
