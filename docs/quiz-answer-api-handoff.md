@@ -17,7 +17,7 @@ Content-Type: application/json
 성공은 `200 {"success":true,"data":{"quizId":"…","questionId":"…","saved":true,"revision":1}}`다. 최초 저장은 revision 0, 이후 수정은 서버가 반환한 revision을 보낸다. 응답에는 정오·점수·해설·근거·채점 상태가 없다. 저장 완료는 채점 완료를 뜻하지 않는다.
 
 - `choice`는 0 기반 정수이며 현재 보기 범위 안이어야 한다. bool·float·숫자 문자열은 거절한다. OX도 choice다.
-- short/essay는 `text` 문자열을 명시한다. 빈 문자열·공백·줄바꿈을 원문 그대로 저장하며 임의 길이 제한을 추가하지 않았다. 사용하지 않는 choice/text는 null 또는 생략한다. 둘 다 비어 있거나 두 유형을 혼합하면 422다.
+- short/essay는 `text` 문자열을 명시한다. 빈 문자열·공백·줄바꿈과 유효한 Unicode를 원문 그대로 저장하며 임의 길이 제한을 추가하지 않았다. NUL과 단독 surrogate는 UTF-8/hash·PostgreSQL 저장 경계가 일치하도록 HTTP와 저장소 모두 쓰기 전에422로 거절한다. 사용하지 않는 choice/text는 null 또는 생략한다. 둘 다 비어 있거나 두 유형을 혼합하면 422다.
 - confidence는 sure/unsure 필수다. 누락은 기존 퀴즈 계약대로 `400 CONFIDENCE_REQUIRED`, null/다른 값은 `422 INVALID_INPUT`이다.
 - revision은 필수 정수 0 이상이다. 추가 필드는 `422 INVALID_INPUT`이며 savedGrading 같은 채점 제어 입력도 받지 않는다.
 - GET의 `savedAnswers`는 현재 세트의 최신 저장 입력만 질문 순서로 반환한다. 각 원소는 `{questionId,choice,text,confidence,revision}`이며 nullable choice/text 키도 항상 포함한다. 미답안은 `[]`다.
@@ -31,6 +31,8 @@ Content-Type: application/json
 `AnswerSave.created=true`일 때만 `GradingJobRepository.enqueue(..., revision=..., now=...)`를 호출한다. mode 인수는 생략하며 Q-04의 저장 mode를 변경하지 않는다. API는 외부 AI를 호출하거나 실패 점수 0을 만들지 않는다. attempts·숙달도·취약 문항 확정은 Q-05 소유다.
 
 실제로 수신했던 `(item, request_revision, 입력 hash)` 영수증은 최초 응답을 재생한다. 현재 답보다 오래된 응답도 head를 되돌리거나 새 job을 만들지 않는다. 열린 세트의 현재 revision에 같은 원문을 보내는 no-op은 revision·answered_at을 늘리지 않고 해당 요청 영수증만 저장한다. 미수신 stale revision이나 미래 revision은 `409 ANSWER_CONFLICT`다.
+
+기본 입력과 현재 소유권 검증 뒤, 실제 영수증의 answer item/hash가 일치해야 재생한다. 원래 성공 후 문항 유형이나 보기 개수가 바뀌어도 해당 영수증은 재생하며 현재 유형·보기 검사는 미수신 요청에만 적용한다. 손상된 영수증은409로 거절한다. concept가 있으면 question과 같은 unit이어야 하며, 다른 소유 단원 또는 타인 단원의 concept 연결은 PUT·GET·재생 모두404다.
 
 새 요청은 ready/in_progress에서만 받는다. generating/failed는 `404 NO_QUIZ`, submitted/carried_over/finalized_at 또는 Q-02 봉인이 있으면 `409 QUIZ_FINALIZED`다. migration 이후 기존 submit/seed가 만든 sidecar 없는 완료 세트도 session 상태로 차단한다. 봉인·종료 뒤에는 실제 수신 영수증만 200이며, 같은 원문이라도 수신한 적 없는 요청 revision은 거절한다.
 
@@ -73,3 +75,9 @@ Q-03 전용 테스트는 SQLite·PostgreSQL 합계 186 passed다. 입력/소유�
 기존 Q-02 저장소·Q-01 식별·demo와 QA-01 HTTP 하네스를 함께 실행한 두 번째 명령은 **569 passed, 5 warnings, 199.44초**였다. 경고는 기존 SWIG 타입의 `__module__` deprecation이며 로그는 `/private/tmp/team10-quiz-answer-regression.log`에 남겼다. 위 legacy HTTP submit 경합의 별도 1 failed는 이 통과 집계에 포함되지 않는다.
 
 원자 구현 커밋은 `c0aa7d9`(PUT와 관련 테스트), `5c8411e`(GET 복구와 관련 테스트)다. 이 문서는 별도 인계 커밋으로 분리한다.
+
+## 독립 검토 보완
+
+`fffdfd9`의 독립 테스트는20 failed/2 passed로 문자열 저장 경계, concept 소속, metadata 변경 후 receipt 재생의 세 결함을 검출했다. 각각 `7d1f49d`, `83acd27`, `4022fa7`로 수정했다. BE의 검증 누락/처리 순서 문제였으며 FE가 잘못된 값을 보냈다는 이유로500을 허용하지 않는다. FE는 유효한 기존 원문·요청 revision을 그대로 재전송한다.
+
+SQLite·PostgreSQL 영향 검증은 문자열+API166 passed(52.44초), concept+GET44 passed(14.40초), receipt+API+저장소334 passed(102.72초)다. 세 실행에는 중복 사례가 있으므로 합쳐 고유 테스트 수로 보고하지 않는다. 로그는 각각 `/private/tmp/team10-q03-text-fix.log`, `team10-q03-concept-fix.log`, `team10-q03-receipt-fix.log`다. 고정 코드 SHA `4022fa7035589405733ba016bab8df09347001f1`을 원래 독립 재현으로 다시 검사 중이며, 검증 전 승인으로 표시하지 않는다.
