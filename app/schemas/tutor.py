@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.responses import ApiError
 from app.schemas.units import UUIDString
 
 
@@ -27,8 +28,10 @@ class TutorRequest(BaseModel):
     @field_validator('question')
     @classmethod
     def valid_question(cls, value):
-        if not value.strip() or '\x00' in value:
-            raise ValueError('A nonempty question is required')
+        if not value.strip():
+            raise ApiError('EMPTY', '질문을 입력해 주세요', 400)
+        if '\x00' in value:
+            raise ValueError('A question must not contain NUL')
         value.encode('utf-8')
         return value.strip()
 
