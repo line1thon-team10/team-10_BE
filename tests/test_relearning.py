@@ -90,3 +90,30 @@ def test_direct_completion_supplies_custom_scope_without_daily_plan(api_client,p
     today=api_client.get('/api/today',headers={'X-Anonymous-Id':w.user})
     assert today.status_code==200,today.text
     assert today.json()['data']['tasks']==[] and today.json()['data']['progress']['totalPages']==0
+
+
+def test_books_task_id_supports_direct_completion_correction_and_restoration(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,5);key=str(uuid4())
+    first=request(api_client,w,unit,key)
+    assert first.status_code==200,first.text
+    headers={'X-Anonymous-Id':w.user}
+    books=api_client.get('/api/books',headers=headers).json()['data']
+    subject=next(s for s in books['subjects'] if s['subjectId']==w.subject['id'])
+    shown=next(u for u in subject['units'] if u['id']==unit['id'])
+    assert shown['round']==1 and len(shown['blocks'])==1
+    task=shown['blocks'][0]['task']['id']
+    before=dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id'])).mappings().one())
+    w.conn.commit()
+    partial=api_client.patch(f'/api/tasks/{task}/record',headers=headers,json={'toPage':3})
+    assert partial.status_code==200,partial.text
+    invalid=dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.id==before['id'])).mappings().one())
+    assert invalid['invalidated_at'] is not None
+    assert all(invalid[key]==before[key] for key in before if key!='invalidated_at')
+    w.conn.commit()
+    assert request(api_client,w,unit,key).json()==first.json()
+    restored=api_client.patch(f'/api/tasks/{task}/record',headers=headers,json={'toPage':5})
+    assert restored.status_code==200,restored.text
+    assert dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.id==before['id'])).mappings().one())==before
+    w.conn.commit()
+    today=api_client.get('/api/today',headers=headers).json()['data']
+    assert today['tasks']==[] and today['progress']['totalPages']==0
