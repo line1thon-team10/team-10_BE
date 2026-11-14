@@ -2,8 +2,8 @@
   "metadata": {
     "schema_version": 1,
     "planned_on": "2026-11-14",
-    "state": "implementation_complete_ci_gate",
-    "code_base_sha": "be5e7a4791612e44b357ac31a15b259c18e8a3e5",
+    "state": "final_ci_retry_ready",
+    "code_base_sha": "75bf82b95864feed2fce33146c04bd1ec09fb6dd",
     "deployed_be_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
     "fe_base_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
@@ -100,7 +100,7 @@
     },
     "handoff_entry": "../HANDOFF.md (workspace root; local file, not published)",
     "current_validation": {
-      "state": "local_verification_complete",
+      "state": "all_observed_failures_fixed_final_ci_required",
       "integrated_e2e_snapshot": "9f60d5133312aaff049e7819e308523f7180d45a",
       "integrated_e2e_collected": 912,
       "integrated_e2e_initial_passed": 910,
@@ -111,7 +111,50 @@
       "followup_log": "/private/tmp/team10-final-followup-tests-module.log",
       "github_ci_policy": "All backend implementation and local follow-up verification are complete. Run the entire SQLite/PostgreSQL suite in four GitHub CI shards; fix failures before reporting completion.",
       "github_ci_result_source": "https://github.com/line1thon-team10/team-10_BE/pull/14/checks",
-      "external_ai_quality": "Not verified with real provider keys; transport-only fixtures exercise provider code, API, worker and database behavior."
+      "external_ai_quality": "Not verified with real provider keys; transport-only fixtures exercise provider code, API, worker and database behavior.",
+      "full_local_sweep": {
+        "sha": "db2a1d0e5b76b684bbabb4ef0d2d9d9383a2828f",
+        "collected": 5687,
+        "passed": 5654,
+        "failed": 26,
+        "skipped": 7,
+        "maximum_shard_seconds": 1402.3,
+        "coverage": "All collected items executed exactly once across four shards, confirmed against ordered collection and manifests.",
+        "failure_scope": "Nine existing test functions: material upload2, onboarding2, plan4, quiz18. All were outdated fixtures; original reproductions preserved.",
+        "report": "/private/tmp/team10-full-regression-db2a1d0/final-report.json"
+      },
+      "ci_fixture_fixes": {
+        "commits": [
+          "54a5416",
+          "c89da46",
+          "6587786",
+          "735eaba",
+          "cfbf3cb",
+          "64b035d",
+          "a377428",
+          "73fe060",
+          "35de44d",
+          "8cc1fa3",
+          "70fe689"
+        ],
+        "product_code_changed": false,
+        "rechecks": "First CI follow-up245passed/1conditional skip. Second CI follow-up: material59, onboarding477, plan64, quiz270, result evidence8 SQLite/PostgreSQL passed.",
+        "preserved_contracts": "Original timeout and retry count, migration roundtrip data, readonly onboarding after date settlement, upload commit acknowledgement loss, ownership refusal, eligibility and receipt replay, invalid source storage and legacy evidence fallback."
+      },
+      "ci_attempts": [
+        {
+          "run_id": 43568722576,
+          "sha": "ec953e024795ce86b55a01db6212b452215d3a4a",
+          "conclusion": "failure",
+          "note": "Three test assumptions fixed and verified locally."
+        },
+        {
+          "run_id": 43569714849,
+          "sha": "db2a1d0e5b76b684bbabb4ef0d2d9d9383a2828f",
+          "conclusion": "failure",
+          "note": "Shard1 passed1381/skipped3. Other shards exposed the fixture issues now covered by the full local sweep and targeted fixes."
+        }
+      ]
     },
     "runtime_contract_registration": {
       "required": 74,
