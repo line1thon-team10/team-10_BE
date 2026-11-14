@@ -13,7 +13,7 @@ from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
 from app.core.cache import ApiNoStoreMiddleware
 from app.core.responses import install_error_handlers, ok
 from app.db.session import check_db_revision
-from app.routers import books, demo, materials, onboarding, onboarding_events, plan, quiz, quiz_answers, session, study, subjects, today, units
+from app.routers import books, calendar, custom_quiz, demo, empty_time, materials, monthly, onboarding, onboarding_events, pace, plan, plan_additions, plan_rebuild, plan_resplit, plan_today, quiz, quiz_answers, record_interpret, relearning, review_notes, schedule_changes, schedule_voice, session, study, subjects, today, tutor, units
 
 
 @asynccontextmanager
@@ -33,7 +33,21 @@ app.add_middleware(
 app.add_middleware(ApiNoStoreMiddleware)
 install_error_handlers(app)
 
+app.include_router(monthly.router)
+app.include_router(schedule_voice.router)
+app.include_router(schedule_changes.router)
+app.include_router(empty_time.router)
+app.include_router(calendar.router)
+app.include_router(empty_time.router)
+app.include_router(plan_additions.router)
+app.include_router(record_interpret.router)
+app.include_router(relearning.router)
+app.include_router(custom_quiz.router)
+app.include_router(review_notes.router)
+app.include_router(plan_today.router)
+app.include_router(pace.router)
 app.include_router(subjects.router)
+app.include_router(tutor.router)
 app.include_router(session.router)
 app.include_router(demo.router)
 app.include_router(onboarding.router)
@@ -55,3 +69,7 @@ def health(ai: bool = False):
     if ai:
         data["ai"] = ai_engine.status()
     return ok(data)
+
+app.include_router(plan_resplit.router)
+
+app.include_router(plan_rebuild.router)

@@ -46,7 +46,11 @@ def test_ambiguous_voice_has_no_schedule_write_and_can_retry(api_client, domain_
     conn.commit()
     case['model'].transform = lambda *_: result()
     retry = voice(api_client, case, text='토요일 저녁에 친구 약속')
-    assert retry.status_code == 200 and retry.json()['data']['addedId'] is not None
+    assert retry.status_code == 400 and retry.json()['error']['code'] == 'PARSE_FAILED'
+    assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
+    conn.commit()
+    exact = voice(api_client, case, key='22222222-2222-4222-8222-222222222222')
+    assert exact.status_code == 200 and exact.json()['data']['addedId'] is not None
 
 
 @pytest.mark.parametrize('bad', ['midnight', 'duplicate_day', 'two_date_modes', 'unknown_kind', 'goal_mutation'])
@@ -97,7 +101,7 @@ def test_nonexistent_dst_time_is_parse_failed_without_write(api_client, domain_c
     conn.execute(update(t.users).where(t.users.c.id == case['user']).values(timezone='America/New_York'))
     conn.commit()
     case['model'].transform = lambda *_: result({**EVENT, 'days': None, 'date': '2027-03-14', 'start': '02:30', 'end': '03:30'})
-    response = voice(api_client, case)
+    response = voice(api_client, case, text='2027-03-14 02:30부터 03:30까지 수업')
     assert response.status_code == 400 and response.json()['error']['code'] == 'PARSE_FAILED', response.text
     assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
 
@@ -119,3 +123,66 @@ def test_voice_retry_after_calendar_response_failure_has_no_duplicate_event(api_
     response = voice(api_client, case)
     assert response.status_code == 200
     assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 1
+
+
+@pytest.mark.parametrize('text,event', [
+    ('토요일 저녁에 친구 약속', {**EVENT, 'days': [6], 'start': '18:00', 'end': '20:00'}),
+    ('2026-11-20 10:00부터 11:00까지 수업', {**EVENT, 'days': None, 'date': '2026-11-21', 'end': '11:00'}),
+    ('매주 월요일 10:00부터 11:00까지 수업', {**EVENT, 'days': [2], 'end': '11:00'}),
+    ('매주 월요일 오전 10시부터 11시까지 수업', {**EVENT, 'days': [1], 'start': '22:00', 'end': '23:00'}),
+    ('2026년 11월 20일 월요일 10시부터 11시까지 수업', {**EVENT, 'days': None, 'date': '2026-11-20', 'end': '11:00'}),
+    ('매주 월요일 10시부터 11시까지, 수요일 13시부터 14시까지 수업', EVENT),
+    ('매주 월요일 100시부터 101시까지 수업', {**EVENT, 'days': [1], 'start': '00:00', 'end': '01:00'}),
+    ('매주 월요일 스물한 시부터 스물두 시까지 수업', {**EVENT, 'days': [1], 'start': '01:00', 'end': '02:00'}),
+])
+def test_source_contradiction_or_missing_coordinates_never_writes(api_client, domain_connection, dialogue_case, text, event):
+    case, conn = dialogue_case, domain_connection
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text=text)
+    assert response.status_code == 400 and response.json()['error']['code'] == 'PARSE_FAILED', response.text
+    assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
+    assert conn.scalar(select(func.count()).select_from(t.onboarding_messages)) == 0
+
+
+@pytest.mark.parametrize('text,event', [
+    ('매주 월요일 오후 두 시부터 세 시 반까지 수업', {**EVENT, 'days': [1], 'start': '14:00', 'end': '15:30'}),
+    ('매주 수요일 오전 10시 15분부터 오후 1시까지 수업', {**EVENT, 'days': [3], 'start': '10:15', 'end': '13:00'}),
+    ('2026년 11월 20일 금요일 오전 열 시부터 열한 시 반까지 수업', {**EVENT, 'days': None, 'date': '2026-11-20'}),
+    ('내일 10:00부터 11:30까지 수업', {**EVENT, 'days': None, 'date': '2026-11-17'}),
+    ('모레 10시부터 11시 30분까지 수업', {**EVENT, 'days': None, 'date': '2026-11-18'}),
+    ('매일 정오부터 오후 1시까지 점심', {**EVENT, 'days': list(range(1, 8)), 'start': '12:00', 'end': '13:00'}),
+])
+def test_explicit_korean_and_numeric_coordinates_can_be_saved(api_client, dialogue_case, text, event):
+    case = dialogue_case
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text=text)
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['events'] == [{'id': response.json()['data']['addedId'], **event, 'added': True}]
+
+
+@pytest.mark.parametrize('suffix', [
+    '약속은 취소됐어', '약속은 없으니 추가하지마', '약속을 등록하지 말아 줘',
+    '약속은 안 해', '약속을 잡지 마', '약속을 삭제해 줘', '약속은 아직 미정이야',
+    '약속이 있으면 추가해 줘', '약속이 가능한지 알려 줘', '약속을 추가하는 게 아니야',
+    '약속을 추가할까?', '',
+])
+def test_non_creation_intent_never_creates_a_confirmed_model_event(api_client, domain_connection, dialogue_case, suffix):
+    case, conn = dialogue_case, domain_connection
+    event = {**EVENT, 'kind': 'meet', 'title': '약속', 'days': None, 'date': '2026-11-16',
+             'start': '15:00', 'end': '16:00'}
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text='2026-11-16 15:00부터 16:00까지 ' + suffix)
+    assert response.status_code == 400 and response.json()['error']['code'] == 'PARSE_FAILED', response.text
+    assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
+    assert conn.scalar(select(func.count()).select_from(t.onboarding_messages)) == 0
+
+
+@pytest.mark.parametrize('suffix', ['약속이 있어', '약속을 추가해 줄래?', '일정에 등록해 주세요'])
+def test_definite_event_or_explicit_polite_creation_request_is_accepted(api_client, dialogue_case, suffix):
+    case = dialogue_case
+    event = {**EVENT, 'kind': 'meet', 'title': '약속', 'days': None, 'date': '2026-11-16',
+             'start': '15:00', 'end': '16:00'}
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text='2026-11-16 15:00부터 16:00까지 ' + suffix)
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['addedId'] is not None

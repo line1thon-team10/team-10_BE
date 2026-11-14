@@ -254,9 +254,14 @@ class AllocationInput:
     fixed: tuple[FixedTask, ...] = ()
     requirements: tuple[WorkRequirement, ...] = ()
     study_windows: tuple[StudyWindow, ...] = ()
+    study_time_factor: Number = Fraction(1)
 
     def __post_init__(self):
         _date(self.start_date)
+        factor = exact(self.study_time_factor)
+        if not 0 < factor <= 1:
+            raise ValueError("Study time factor must be positive and at most one")
+        object.__setattr__(self, "study_time_factor", factor)
         for name, item_type in (("subjects", Subject), ("units", UnitScope), ("busy", BusyInterval),
                                 ("fixed", FixedTask), ("requirements", WorkRequirement), ("study_windows", StudyWindow)):
             object.__setattr__(self, name, _tuple(getattr(self, name), item_type))

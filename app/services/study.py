@@ -137,7 +137,7 @@ class StudyData:
 
     # ---------- 조회 ----------
     def tasks_on(self, day: date) -> list[Task]:
-        tasks = [x for x in self.tasks if x.row["scheduled_date"] == day
+        tasks = [x for x in self.tasks if x.row["subject_id"] in self.subject_by_id and x.row["scheduled_date"] == day
                  and x.row["status"] not in ("carried_over", "excluded")]
         return sorted(tasks, key=lambda x: x.row["origin_task_id"] is None)  # 이월된 태스크가 맨 위
 
@@ -187,7 +187,7 @@ class StudyData:
         planned, completed = [], []
         for row in task.paged:
             unit = self.units.get(row["unit_id"])
-            if unit is None or (quiz_only and not unit["quiz_enabled"]):
+            if unit is None or (quiz_only and (not unit["quiz_enabled"] or not unit["evidence"])):
                 continue
             scope = intersect(self.unit_scopes[unit["id"]],
                               (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),))
@@ -216,22 +216,33 @@ class StudyData:
         }
 
     def quiz_counts(self, day: date) -> dict[str, int]:
-        """오늘의 퀴즈 문항 수. 이미 만든 오늘 퀴즈가 있으면 그 문항 수,
-        없으면 '오늘 출제 가능한 단원 × 5' (어제 오답은 퀴즈를 만들 때 더해져요)"""
-        made = dict(self.conn.execute(
-            select(t.quiz_sessions.c.subject_id, func.count(t.quiz_items.c.id))
-            .join(t.quiz_items, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
-            .where(t.quiz_sessions.c.user_id == self.user_id, t.quiz_sessions.c.quiz_date == day,
-                   t.quiz_sessions.c.type == "daily")
-            .group_by(t.quiz_sessions.c.subject_id)).all())
-        units_by_subject = defaultdict(set)
-        for x in self.tasks_on(day):
-            for row in x.paged:
-                unit = self.units.get(row["unit_id"])
-                if unit and unit["quiz_enabled"] and intersect(self.unit_scopes[unit["id"]],
-                        (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),)):
-                    units_by_subject[x.row["subject_id"]].add(unit["id"])
-        return {sid: made.get(sid, 5 * len(u)) for sid, u in units_by_subject.items()}
+        """Only stored or fully prepared question sets contribute a count."""
+        from app.services.quiz_selection import QuizSelection
+        from app.core.responses import ApiError
+        user = self.conn.execute(select(t.users).where(t.users.c.id == self.user_id)).mappings().one()
+        selection = QuizSelection(self.conn, dict(user), day)
+        counts = {}
+        for sid in self.quiz_progress(day)['subjectRates']:
+            sessions = selection.sessions(sid)
+            current = next((row for row in sessions if row['status'] in ('ready', 'in_progress')),
+                           sessions[-1] if sessions else None)
+            if not selection.has_scope(sid):
+                counts[sid] = 0
+                continue
+            if current:
+                counts[sid] = self.conn.scalar(select(func.count(t.quiz_items.c.id)).where(
+                    t.quiz_items.c.quiz_session_id == current['id']))
+                continue
+            try:
+                scope = selection.completed(sid)
+                difficulty = selection.difficulty(scope, None)
+                chosen, _ = selection.fresh(sid, scope, difficulty, [])
+                counts[sid] = len(chosen) + len(selection.reviews(sid))
+            except ApiError as error:
+                if error.code not in ('NO_QUESTIONS', 'INVALID_INPUT'):
+                    raise
+                counts[sid] = 0
+        return counts
 
     def quiz_progress(self, day: date) -> dict:
         """Today's eligible PDF union, using only these placements' own records."""

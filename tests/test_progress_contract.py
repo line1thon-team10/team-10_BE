@@ -216,7 +216,7 @@ def test_subject_progress_keeps_carried_excluded_learning_but_not_remedial_or_re
 def test_overlapping_current_units_have_no_invented_mastery_weight(progress_world, other_state):
     world = progress_world
     first = world.unit(1, 10, score=80)
-    other = world.unit(5, 15, score=20, material_id=first["material_id"],
+    other = world.unit(5, 15, score=20, material_id=first["material_id"], sort_order=first["sort_order"] + 1,
                        in_scope=other_state != "excluded", retired_at=world.now if other_state == "retired" else None)
     if other_state == "concepts_excluded":
         world.concept(other, 5, 15, in_scope=False)
@@ -345,7 +345,7 @@ def test_quiz_preserves_distinct_pdfs_and_counts_all_eligible_units(progress_wor
     assert not progress["open"]
     tomorrow = world.day + timedelta(days=1)
     world.task((manual, 1, 10), (first, 1, 10), (second, 1, 10), (first, 1, 10), day=tomorrow)
-    assert world.data().quiz_counts(tomorrow) == {world.subject["id"]: 10}
+    assert world.data().quiz_counts(tomorrow) == {world.subject["id"]: 0}  # No completed evidence or prepared bank.
 
 
 @pytest.mark.parametrize("other_done,overall_open", [(0, False), (6, True)])

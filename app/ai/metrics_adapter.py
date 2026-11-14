@@ -6,7 +6,7 @@ import json
 from app.domain.mastery import ConfirmedAttempt, RecoveryEntry, UnitScope, calculate_mastery
 
 
-KINDS = {"daily": "daily", "extra": "more", "more": "more", "practice": "custom", "custom": "custom", "retry": "retry"}
+KINDS = {"daily": "daily", "extra": "more", "more": "more", "practice": "custom", "custom": "custom", "retry": "retry", "review": "retry"}
 
 
 def _index(rows, label):
@@ -54,7 +54,7 @@ def calculate_learning_metrics(data, *, eligibility=()):
     attempts = []
     for row in data["attempts"]:
         if (row["finalized_at"] is None or row["graded_at"] is None or row["grading_status"] not in ("graded", "fallback")
-                or row["session_status"] != "submitted" or row["session_finalized_at"] is None
+                or row["session_status"] not in ("submitted", "carried_over") or row["session_finalized_at"] is None
                 or row["session_grading_status"] != "completed"):
             raise ValueError("Only finalized, graded set results can affect mastery")
         question = questions.get(row["question_id"])

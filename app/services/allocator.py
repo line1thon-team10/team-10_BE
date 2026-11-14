@@ -135,11 +135,11 @@ class _Allocator:
                     if restricted:
                         pools.append(_Pool(f"study:{unit.id}:window:{window.id}", subject.id, "study", unit.id,
                             restricted, self.request.start_date, subject.minutes_per_page,
-                            MULTIPLIERS[unit.difficulty], window.id))
+                            MULTIPLIERS[unit.difficulty] * self.request.study_time_factor, window.id))
                         remaining = subtract(remaining, restricted)
                 if remaining:
                     pools.append(_Pool(f"study:{unit.id}", subject.id, "study", unit.id, remaining,
-                        self.request.start_date, subject.minutes_per_page, MULTIPLIERS[unit.difficulty]))
+                        self.request.start_date, subject.minutes_per_page, MULTIPLIERS[unit.difficulty] * self.request.study_time_factor))
         for work in self.request.requirements:
             if work.subject_id not in self.subjects:
                 raise ValueError("An obligation must belong to an input subject")

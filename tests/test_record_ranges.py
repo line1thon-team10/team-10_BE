@@ -476,8 +476,11 @@ def test_record_correction_preserves_retired_placements_and_existing_evidence(
     end_focus(demo_user)
     task = task_for(conn, demo_user, "AI2")
     old_day = task.row["scheduled_date"]
+    # Three remaining pages at five minutes/page meet the 15-minute minimum;
+    # the former one-page fixture must now wait for replanning instead of carry.
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == task.id).values(estimated_minutes=45))
     conn.commit()
-    response = post(api_client, demo_user, task, "partial", toPage=19, sessionId=session["id"])
+    response = post(api_client, demo_user, task, "partial", toPage=17, sessionId=session["id"])
     assert response.status_code == 200, response.text
     original_record = snapshot(conn, task)["record"]
 
@@ -487,7 +490,7 @@ def test_record_correction_preserves_retired_placements_and_existing_evidence(
         "source_task_id": task.id, "completed_at": original_record["recorded_at"],
         "completed_date": original_record["study_date"], "invalidated_at": None,
         "evidence_snapshot": {"schemaVersion": "1", "recordIds": [original_record["id"]],
-                              "requiredRanges": [[12, 19]]}}
+                              "requiredRanges": [[12, 17]]}}
     conn.execute(t.learning_passes.insert().values(**historical_pass))
     if placement_status == "excluded":
         # The actual next-day API excludes placements on/after the exam date.
@@ -508,6 +511,7 @@ def test_record_correction_preserves_retired_placements_and_existing_evidence(
     if children:
         assert children[0]["status"] == "planned" and children[0]["block_id"] == task.row["block_id"]
     before_passes = [dict(row) for row in conn.execute(select(t.learning_passes).order_by(t.learning_passes.c.id)).mappings()]
+    before_sessions = [dict(row) for row in conn.execute(select(t.study_sessions).order_by(t.study_sessions.c.id)).mappings()]
     before_block_ids = set(conn.scalars(select(t.study_blocks.c.id)))
     conn.commit()
 
@@ -518,8 +522,38 @@ def test_record_correction_preserves_retired_placements_and_existing_evidence(
     if method == "patch":
         assert response.json()["data"]["status"] == result
 
-    assert [dict(row) for row in conn.execute(plan_tasks).mappings()] == before_tasks
+    after_tasks = [dict(row) for row in conn.execute(plan_tasks).mappings()]
+    after_by_id = {row["id"]: row for row in after_tasks}
+    new_tasks = [row for row in after_tasks if row["id"] not in task_ids]
+    child_id = children[0]["id"] if children else None
+    for before in before_tasks:
+        after = after_by_id[before["id"]]
+        if before["id"] == child_id:
+            assert after == {**before, "status": "excluded" if result == "done" else "carried_over"}
+        else:
+            # Original retired placements and every unrelated placement remain
+            # byte-for-byte unchanged even when an untouched carry is replaced.
+            assert after == before
+    if children and result != "done":
+        assert len(new_tasks) == 1
+        replacement = new_tasks[0]
+        assert replacement["origin_task_id"] == child_id
+        assert replacement["block_id"] == task.row["block_id"]
+        assert replacement["status"] == "planned"
+        assert replacement["scheduled_date"] == children[0]["scheduled_date"]
+        assert replacement["estimated_minutes"] == (45 if result == "none" else 35)
+        replacement_ranges = list(conn.execute(select(t.study_task_ranges).where(
+            t.study_task_ranges.c.task_id == replacement["id"])).mappings())
+        # The original carry contributes 18..20; restoring earlier pages may
+        # produce a second range, but must cover exactly the required PDF pages.
+        assert {page for row in replacement_ranges for page in range(row["start_page"], row["end_page"] + 1)} == set(
+            range(12 if result == "none" else 14, 21))
+        assert sum(row["end_page"] - row["start_page"] + 1 for row in replacement_ranges) == (9 if result == "none" else 7)
+        assert all(row["unit_id"] == task.ranges[0]["unit_id"] for row in replacement_ranges)
+    else:
+        assert not new_tasks
     assert [dict(row) for row in conn.execute(plan_ranges).mappings()] == before_ranges
+    assert [dict(row) for row in conn.execute(select(t.study_sessions).order_by(t.study_sessions.c.id)).mappings()] == before_sessions
     assert task.id not in {row.id for row in StudyData(conn, demo_user).tasks_on(old_day)}
     assert set(conn.scalars(select(t.study_blocks.c.id))) == before_block_ids
     saved = snapshot(conn, task)
