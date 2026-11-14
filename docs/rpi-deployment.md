@@ -10,6 +10,8 @@
 
 이는 GitHub의 [pull_request merge 후보와 fork secret 제한](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)에 따른다. 배포는 별도 `deploy-rpi.yml`의 main/배포 브랜치 push 또는 고정40자리 SHA 수동 실행에서만 수행한다. PR 테스트가 통과했다고 배포되었다고 표시하지 않는다.
 
+배포 manifest는 빌드한 BE SHA, AI gitlink SHA, image digest를 전달한다. RPI4는 pull한 이미지의 두 revision 라벨이 일치하는지 **DB 시작·API 중지·migration 전에** 확인하며 불일치는 기존 서비스를 유지한 채 실패한다. `compose.yml`은 대상 앱 SHA에서, 검증을 수행할 `apply.sh`는 workflow 자체의 `github.workflow_sha`에서 각각 가져온다. 과거 앱으로 돌아갈 때 과거의 검증 없는 스크립트까지 복원하지 않는다. 수동 복구의 digest-only 호출은 기존 호환 경로로 유지한다.
+
 ### 신규 AI/업로드 작업의 초기 운영 설정 (POL-02)
 
 | 설정 | 초기값 | 의미 |

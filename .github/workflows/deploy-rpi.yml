@@ -123,6 +123,16 @@ jobs:
         env:
           EXPECTED_REVISION: ${{ needs.build.outputs.revision }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+      # Keep verification tooling when deploying/rolling back an older app SHA.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .deployment-tools
+          persist-credentials: false
+      - name: Verify deployment tool revision
+        env:
+          EXPECTED_TOOLS: ${{ github.workflow_sha }}
+        run: test "$(git -C .deployment-tools rev-parse HEAD)" = "$EXPECTED_TOOLS"
       - name: Apply prebuilt image on RPI4
         env:
           BE_IMAGE: ${{ needs.build.outputs.image }}
@@ -134,7 +144,7 @@ jobs:
           key=/home/ubuntu/.ssh/line1-deploy
           target=ubuntu@100.78.68.53
           ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" 'mkdir -p /home/ubuntu/apps/2026-line1'
-          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes deploy/compose.yml deploy/apply.sh "$target:/home/ubuntu/apps/2026-line1/"
+          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes deploy/compose.yml .deployment-tools/deploy/apply.sh "$target:/home/ubuntu/apps/2026-line1/"
           printf '%s\n' "$REGISTRY_TOKEN" | ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
             "set -eu; export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; ln -s /home/ubuntu/.docker/cli-plugins \"\$DOCKER_CONFIG/cli-plugins\"; docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin >/dev/null; bash /home/ubuntu/apps/2026-line1/apply.sh '$BE_IMAGE' '$EXPECTED_BE_REVISION' '$EXPECTED_AI_REVISION'"
       - name: Verify public endpoint
