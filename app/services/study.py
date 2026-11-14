@@ -1,12 +1,12 @@
 """계획·기록 조회와 계산 (홈 S6, 기록 S7, 책 쌓기 S9).
 
 계산 기준은 정의서 v2 4장이에요.
-- 오늘 진행률 = 오늘 기록한 페이지 ÷ 오늘 계획 페이지 (보충 포함)
-- 퀴즈 열림 = 전체 70% 이상, 또는 과목별 70% 이상이면 그 과목만 (4-4)
+- 오늘 달성률 = 배치별 실제 완료 페이지 ÷ 배치별 계획 페이지 (보충 포함)
+- 퀴즈 진행률 = 오늘 출제 가능한 자료별 페이지 합집합의 완료 비율
+- 퀴즈 열림 = 원시 전체 비율 70% 이상, 또는 과목별 70% 이상이면 그 과목만 (4-4)
 - 준비도 = 진도율 × 숙달도 (4-9). 진도율 = 끝낸 새 범위 페이지 ÷ 시험 범위 페이지,
   숙달도 = 퀴즈를 본 단원 점수의 페이지 가중 평균
 """
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -178,7 +178,7 @@ class StudyData:
         return intersect(whole, (PageSpan(unit["material_id"], c["start_page"], c["end_page"])
                                  for c in concepts if c["in_scope"]))
 
-    def _task_exam_ranges(self, task: Task) -> tuple[tuple[PageSpan, ...], tuple[PageSpan, ...]]:
+    def _task_exam_ranges(self, task: Task, *, quiz_only: bool = False) -> tuple[tuple[PageSpan, ...], tuple[PageSpan, ...]]:
         """Clip this placement and its latest unit-owned evidence to current scope."""
         by_unit = defaultdict(list)
         for row in task.done_ranges:
@@ -187,7 +187,7 @@ class StudyData:
         planned, completed = [], []
         for row in task.paged:
             unit = self.units.get(row["unit_id"])
-            if unit is None:
+            if unit is None or (quiz_only and not unit["quiz_enabled"]):
                 continue
             scope = intersect(self.unit_scopes[unit["id"]],
                               (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),))
@@ -217,7 +217,7 @@ class StudyData:
 
     def quiz_counts(self, day: date) -> dict[str, int]:
         """오늘의 퀴즈 문항 수. 이미 만든 오늘 퀴즈가 있으면 그 문항 수,
-        없으면 '오늘 공부한 단원 × 5' (어제 오답은 퀴즈를 만들 때 더해져요)"""
+        없으면 '오늘 출제 가능한 단원 × 5' (어제 오답은 퀴즈를 만들 때 더해져요)"""
         made = dict(self.conn.execute(
             select(t.quiz_sessions.c.subject_id, func.count(t.quiz_items.c.id))
             .join(t.quiz_items, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
@@ -226,19 +226,49 @@ class StudyData:
             .group_by(t.quiz_sessions.c.subject_id)).all())
         units_by_subject = defaultdict(set)
         for x in self.tasks_on(day):
-            unit = self.unit_of(x)
-            if unit:
-                units_by_subject[x.row["subject_id"]].add(unit["id"])
+            for row in x.paged:
+                unit = self.units.get(row["unit_id"])
+                if unit and unit["quiz_enabled"] and intersect(self.unit_scopes[unit["id"]],
+                        (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),)):
+                    units_by_subject[x.row["subject_id"]].add(unit["id"])
         return {sid: made.get(sid, 5 * len(u)) for sid, u in units_by_subject.items()}
 
+    def quiz_progress(self, day: date) -> dict:
+        """Today's eligible PDF union, using only these placements' own records."""
+        by_subject = defaultdict(lambda: [[], []])
+        for task in self.tasks_on(day):
+            sid = task.row["subject_id"]
+            if sid not in self.subject_by_id:
+                continue
+            planned, completed = self._task_exam_ranges(task, quiz_only=True)
+            by_subject[sid][0].extend(planned)
+            by_subject[sid][1].extend(completed)
+        subjects = {sid: PageProgress.from_ranges(planned, completed)
+                    for sid, (planned, completed) in by_subject.items()}
+        total = PageProgress.from_ranges(
+            (span for planned, _ in by_subject.values() for span in planned),
+            (span for _, completed in by_subject.values() for span in completed))
+        opened = total.reaches(OPEN_RATE)
+        return {
+            "donePages": total.done_pages, "totalPages": total.total_pages, "rate": total.rate,
+            "subjectRates": {sid: progress.rate for sid, progress in subjects.items()},
+            "open": opened,
+            "subjectOpen": {sid: progress.total_pages > 0 and (opened or progress.reaches(OPEN_RATE))
+                            for sid, progress in subjects.items()},
+            "remainPages": total.remaining_pages(OPEN_RATE),
+        }
+
     def quiz_view(self, day: date, prog: dict) -> dict:
+        # Keep the existing caller signature; home placement achievement is not
+        # a quiz denominator and must never decide this view's eligibility.
+        prog = self.quiz_progress(day)
         counts = self.quiz_counts(day)
         open_subjects = [{"subjectId": sid, "count": counts.get(sid, 0)}
-                         for sid, r in prog["subjectRates"].items() if r >= OPEN_RATE]
+                         for sid, opened in prog["subjectOpen"].items() if opened]
         return {
             "openRate": OPEN_RATE,
-            "open": prog["rate"] >= OPEN_RATE,
-            "remainPages": max(0, math.ceil(prog["totalPages"] * OPEN_RATE / 100) - prog["donePages"]),
+            "open": prog["open"],
+            "remainPages": prog["remainPages"],
             "openSubjects": open_subjects,
             "totalCount": sum(counts.values()),
         }

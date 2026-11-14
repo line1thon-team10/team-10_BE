@@ -22,10 +22,10 @@ def quiz_today(user: dict = Depends(current_user), conn: Connection = Depends(ge
     today = today_for(user)
     svc = QuizService(conn, user, today)
     data = svc.data
-    prog = data.progress(today)
+    prog = data.quiz_progress(today)
     counts = data.quiz_counts(today)
     subjects = []
-    for sid in dict.fromkeys(x.row["subject_id"] for x in data.tasks_on(today)):
+    for sid in prog["subjectRates"]:
         s = data.subject_by_id[sid]
         sessions = svc.daily_sessions(sid)
         current = sessions[-1] if sessions else None
@@ -39,12 +39,12 @@ def quiz_today(user: dict = Depends(current_user), conn: Connection = Depends(ge
         rate = prog["subjectRates"].get(sid, 0)
         subjects.append({
             "subjectId": sid, "name": s["name"], "color": s["color"], "count": counts.get(sid, 0), "rate": rate,
-            "open": prog["rate"] >= OPEN_RATE or rate >= OPEN_RATE, "hasQuestions": counts.get(sid, 0) > 0,
+            "open": prog["subjectOpen"][sid], "hasQuestions": counts.get(sid, 0) > 0,
             "lines": lines, "round": svc.round_of(items) if items else None,
             "difficulty": "하" if items else None,
             "essayCount": sum(1 for x in items if x["type"] == "essay") if items else None, "result": result,
         })
-    return ok({"date": today.isoformat(), "rate": prog["rate"], "open": prog["rate"] >= OPEN_RATE,
+    return ok({"date": today.isoformat(), "rate": prog["rate"], "open": prog["open"],
                "openRate": OPEN_RATE, "subjects": subjects})
 
 
@@ -52,8 +52,8 @@ def _check_open(svc: QuizService, session: dict) -> None:
     """70% 미만이면 잠김 (QZ-02). 더 풀기·문제 뽑기는 예외"""
     if session["type"] != "daily" or session["status"] == "submitted":
         return
-    prog = svc.data.progress(svc.today)
-    if prog["rate"] < OPEN_RATE and prog["subjectRates"].get(session["subject_id"], 0) < OPEN_RATE:
+    prog = svc.data.quiz_progress(svc.today)
+    if not prog["subjectOpen"].get(session["subject_id"], False):
         raise ApiError("QUIZ_LOCKED", f"오늘 계획의 {OPEN_RATE}%를 넘기면 열려요", 403)
 
 

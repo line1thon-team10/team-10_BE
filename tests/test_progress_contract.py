@@ -33,7 +33,8 @@ class ProgressWorld:
             material_id = str(uuid4())
             self.conn.execute(t.materials.insert().values(**{
                 **self.material_template, "id": material_id, "sha256": uuid4().hex,
-                "page_count": end, "quiz_enabled": quiz_enabled,
+                "subject_id": self.subject["id"], "page_count": max(end, 10000) if end else None,
+                "quiz_enabled": quiz_enabled,
             }))
         unit = {key: value for key, value in self.unit_template.items() if key in t.units.c}
         unit.update({"id": str(uuid4()), "material_id": material_id, "code": "TEST1", "start_page": start,
@@ -281,3 +282,149 @@ def test_post_and_patch_replace_progress_evidence_without_duplicate_credit(api_c
     assert (data.readiness(world.subject)["studiedPages"], data.readiness(world.subject)["progressRate"]) == (3, 30)
     assert data.progress(world.day)["donePages"] == 3
     assert len(list(world.conn.scalars(select(t.study_records.c.id).where(t.study_records.c.task_id == task)))) == 1
+
+
+def test_remedial_repeat_has_its_own_achievement_but_one_quiz_page_union(api_client, progress_world):
+    world = progress_world
+    unit = world.unit(1, 100)
+    world.task((unit, 1, 100))
+    world.task((unit, 1, 100), done=[(unit, 1, 100)], status="completed", kind="remedial")
+    home, quiz = world.get(api_client, "/api/today"), world.get(api_client, "/api/quiz/today")
+    assert home["progress"]["rate"] == home["subjectRates"][world.subject["id"]] == 50
+    assert quiz["rate"] == quiz["subjects"][0]["rate"] == 100
+    assert quiz["open"] and quiz["subjects"][0]["open"] and home["quiz"]["open"]
+    assert home["quiz"]["remainPages"] == 0
+    assert world.data().readiness(world.subject)["studiedPages"] == 0
+
+
+def test_quiz_ignores_other_dates_and_noncurrent_placements(api_client, progress_world):
+    world = progress_world
+    unit = world.unit(1, 100)
+    world.task((unit, 1, 100))
+    for day, status in [(world.day - timedelta(days=1), "completed"),
+                        (world.day + timedelta(days=1), "completed"),
+                        (world.day, "excluded"), (world.day, "carried_over")]:
+        world.task((unit, 1, 100), done=[(unit, 1, 100)], status=status, day=day)
+    progress = world.data().quiz_progress(world.day)
+    assert (progress["donePages"], progress["totalPages"], progress["rate"], progress["remainPages"]) == (0, 100, 0, 70)
+    assert not progress["open"] and not progress["subjectOpen"][world.subject["id"]]
+    quiz = world.get(api_client, "/api/quiz/today")
+    assert not quiz["open"] and not quiz["subjects"][0]["open"]
+
+
+def test_quiz_eligibility_intersects_included_scope_and_ignores_quizless_pages(api_client, progress_world):
+    world = progress_world
+    included, manual = world.unit(1, 10), world.unit(1, 100, quiz_enabled=False)
+    world.concept(included, 1, 4)
+    world.concept(included, 3, 6)
+    world.concept(included, 7, 10, in_scope=False)
+    retired = world.unit(1, 100, retired_at=world.now)
+    excluded = world.unit(1, 100, in_scope=False)
+    all_excluded = world.unit(1, 100)
+    world.concept(all_excluded, 1, 100, in_scope=False)
+    unpaged = world.unit(None, None, quantity_basis="time")
+    world.task((included, 1, 10), done=[(included, 1, 3)], status="partial")
+    for unit in (manual, retired, excluded, all_excluded):
+        world.task((unit, 1, 100), done=[(unit, 1, 100)], status="completed")
+    world.task((unpaged, None, None), done=[], status="completed")
+    quiz = world.get(api_client, "/api/quiz/today")
+    home = world.get(api_client, "/api/today")
+    assert home["progress"]["rate"] == 98  # Placement achievement has its own denominator.
+    assert quiz["rate"] == 50 and not quiz["open"] and not quiz["subjects"][0]["open"]
+    assert not home["quiz"]["open"] and home["quiz"]["remainPages"] == 2
+    progress = world.data().quiz_progress(world.day)
+    assert (progress["donePages"], progress["totalPages"]) == (3, 6)
+
+
+def test_quiz_preserves_distinct_pdfs_and_counts_all_eligible_units(progress_world):
+    world = progress_world
+    first, second, manual = world.unit(1, 10), world.unit(1, 10), world.unit(1, 10, quiz_enabled=False)
+    world.task((first, 1, 6), (first, 4, 10), (second, 1, 10), done=[(first, 1, 7)], status="partial")
+    progress = world.data().quiz_progress(world.day)
+    assert (progress["donePages"], progress["totalPages"], progress["rate"]) == (7, 20, 35)
+    assert not progress["open"]
+    tomorrow = world.day + timedelta(days=1)
+    world.task((manual, 1, 10), (first, 1, 10), (second, 1, 10), (first, 1, 10), day=tomorrow)
+    assert world.data().quiz_counts(tomorrow) == {world.subject["id"]: 10}
+
+
+@pytest.mark.parametrize("other_done,overall_open", [(0, False), (6, True)])
+def test_quiz_global_or_subject_gate_never_opens_a_zero_scope_subject(api_client, progress_world, other_done, overall_open):
+    world = progress_world
+    first_subject = world.subject["id"]
+    first = world.unit(1, 10)
+    world.task((first, 1, 10), done=[(first, 1, 8)], status="partial")
+    world.subject = next(s for s in world.data().subjects if s["code"] == "DB")
+    second_subject = world.subject["id"]
+    second = world.unit(1, 10)
+    world.task((second, 1, 10), done=[(second, 1, other_done)] if other_done else None,
+               status="partial" if other_done else "planned")
+    world.subject = next(s for s in world.data().subjects if s["code"] == "OS")
+    zero_subject = world.subject["id"]
+    manual = world.unit(1, 10, quiz_enabled=False)
+    world.task((manual, 1, 10), done=[(manual, 1, 10)], status="completed")
+
+    quiz = world.get(api_client, "/api/quiz/today")
+    subjects = {subject["subjectId"]: subject for subject in quiz["subjects"]}
+    assert quiz["open"] is overall_open
+    assert subjects[first_subject]["open"] is True
+    assert subjects[second_subject]["open"] is overall_open
+    assert subjects[zero_subject]["open"] is subjects[zero_subject]["hasQuestions"] is False
+    home = world.get(api_client, "/api/today")
+    assert {s["subjectId"] for s in home["quiz"]["openSubjects"]} == (
+        {first_subject, second_subject} if overall_open else {first_subject})
+    response = api_client.get(f"/api/quiz/{zero_subject}", headers={"X-Anonymous-Id": world.user})
+    assert response.status_code == 403 and response.json()["error"]["code"] == "QUIZ_LOCKED"
+
+
+def test_quiz_raw_6999_boundary_locks_get_and_submit_until_actual_70(api_client, progress_world):
+    world = progress_world
+    unit = world.unit(1, 10000)
+    task_id = world.task((unit, 1, 10000), done=[(unit, 1, 6999)], status="partial")
+    quiz_id = world.conn.scalar(select(t.quiz_sessions.c.id).where(
+        t.quiz_sessions.c.user_id == world.user, t.quiz_sessions.c.subject_id == world.subject["id"],
+        t.quiz_sessions.c.quiz_date == world.day, t.quiz_sessions.c.type == "daily"))
+    items = world.conn.execute(select(t.quiz_items.c.id, t.questions.c.choices).join(
+        t.questions, t.quiz_items.c.question_id == t.questions.c.id).where(
+        t.quiz_items.c.quiz_session_id == quiz_id)).mappings().all()
+    answers = [{"questionId": item["id"], "confidence": "sure", **({"choice": 0} if item["choices"] else {"text": ""})}
+               for item in items]
+    payload = {"quizId": quiz_id, "answers": answers}
+    headers = {"X-Anonymous-Id": world.user}
+    cards = world.get(api_client, "/api/quiz/today")
+    assert cards["rate"] == cards["subjects"][0]["rate"] == 70
+    assert not cards["open"] and not cards["subjects"][0]["open"]
+    assert world.get(api_client, "/api/today")["quiz"]["remainPages"] == 1
+    for response in (api_client.get(f"/api/quiz/{quiz_id}", headers=headers),
+                     api_client.post(f"/api/quiz/{quiz_id}/submit", headers=headers, json=payload)):
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "QUIZ_LOCKED"
+
+    response = api_client.patch(f"/api/tasks/{task_id}/record", headers=headers, json={"toPage": 7000})
+    assert response.status_code == 200, response.text
+    cards = world.get(api_client, "/api/quiz/today")
+    assert cards["rate"] == 70 and cards["open"] and cards["subjects"][0]["open"]
+    assert api_client.get(f"/api/quiz/{quiz_id}", headers=headers).status_code == 200
+    submitted = api_client.post(f"/api/quiz/{quiz_id}/submit", headers=headers, json=payload)
+    assert submitted.status_code == 200, submitted.text  # Empty essays never call external grading.
+
+    response = api_client.patch(f"/api/tasks/{task_id}/record", headers=headers, json={"toPage": 1})
+    assert response.status_code == 200, response.text
+    assert not world.get(api_client, "/api/quiz/today")["open"]
+    assert api_client.get(f"/api/quiz/{quiz_id}", headers=headers).status_code == 200
+    assert api_client.get(f"/api/quiz/{quiz_id}/result", headers=headers).status_code == 200
+
+
+def test_empty_and_archived_quiz_scopes_stay_closed(api_client, progress_world):
+    world = progress_world
+    quiz = world.get(api_client, "/api/quiz/today")
+    assert quiz["rate"] == 0 and quiz["open"] is False and quiz["subjects"] == []
+    manual = world.unit(1, 10, quiz_enabled=False)
+    world.task((manual, 1, 10), done=[(manual, 1, 10)], status="completed")
+    quiz = world.get(api_client, "/api/quiz/today")
+    assert quiz["rate"] == 0 and not quiz["open"] and not quiz["subjects"][0]["open"]
+    assert not quiz["subjects"][0]["hasQuestions"]
+
+    world.conn.execute(update(t.subjects).where(t.subjects.c.id == world.subject["id"]).values(status="archived"))
+    quiz = world.get(api_client, "/api/quiz/today")
+    assert quiz["rate"] == 0 and quiz["open"] is False and quiz["subjects"] == []
