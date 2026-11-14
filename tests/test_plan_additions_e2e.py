@@ -206,3 +206,19 @@ def test_selected_learning_or_started_facts_are_not_duplicated(api_client,domain
 def test_no_plan_has_explicit_no_plan_error(api_client,plan_case):
     response=preview(api_client,plan_case)
     assert response.status_code==400 and response.json()['error']['code']=='NO_PLAN'
+
+
+@pytest.mark.parametrize('multiple_gaps',[False,True])
+def test_new_manual_unit_number_stays_within_database_integer_bounds(api_client,domain_connection,range_case,multiple_gaps):
+    case=range_case
+    domain_connection.execute(update(t.units).where(t.units.c.id==case['unit']).values(
+        code='unit_2147483647',sort_order=2147483647))
+    if multiple_gaps:
+        row=dict(domain_connection.execute(select(t.units).where(t.units.c.id==case['unit'])).mappings().one())
+        domain_connection.execute(t.units.insert().values(**{**row,'id':str(uuid4()),'code':'unit_2','sort_order':2,'start_page':24,'end_page':25}))
+    domain_connection.commit()
+    response=preview(api_client,case,to=28 if multiple_gaps else 26)
+    assert response.status_code==200,response.text
+    assert apply(api_client,case,response.json()['data']['previewId']).status_code==200
+    rows=domain_connection.execute(select(t.units.c.sort_order).where(t.units.c.material_id==case['material'],t.units.c.retired_at.is_(None))).scalars().all()
+    assert len(rows)==len(set(rows))==(4 if multiple_gaps else 2) and all(1<=number<=2147483647 for number in rows)
