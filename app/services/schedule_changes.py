@@ -231,6 +231,33 @@ def _edit_candidate(event,exceptions,original,command,zone):
     return changes,overrides,exception_overrides,added_ids,shown
 
 
+def _exact_occurrences(event,exceptions,first,last,zone):
+    """Keep exact occupancy separately from minute-formatted calendar labels."""
+    tz=ZoneInfo(zone)
+    start,end=_local(event['starts_at'],tz),_local(event['ends_at'],tz)
+    duration=(end.date()-start.date()).days
+    changed={row['occurrence_date']:row for row in exceptions}
+    earliest=max(start.date(),first-timedelta(days=min(duration,(first-date.min).days)))
+    dates={earliest+timedelta(days=offset) for offset in range(max(0,(last-earliest).days+1))}
+    dates.update(changed)
+    if not event['recurrence_rule']: dates.add(start.date())
+    for original in sorted(dates):
+        if not _recurs(event,original,zone): continue
+        exception=changed.get(original)
+        if exception and exception['kind']=='cancelled': continue
+        left=_local(exception['new_starts_at'],tz) if exception else datetime.combine(original,start.timetz())
+        right=_local(exception['new_ends_at'],tz) if exception else datetime.combine(original+timedelta(days=duration),end.timetz())
+        day=max(first,left.date())
+        while day<=min(last,right.date()):
+            a=_minute(left) if day==left.date() else Fraction(0)
+            b=_minute(right) if day==right.date() else Fraction(1440)
+            if a<b:
+                yield {'id':f"{event['id']}@{original.isoformat()}",'scheduleId':event['id'],
+                    'date':day.isoformat(),'start':clock_text(a),'end':clock_text(b),'_start':a,'_end':b}
+            if day==date.max: break
+            day+=timedelta(days=1)
+
+
 def _after_occurrences(conn,user_id,first,overrides,exception_overrides,added_ids,zone):
     repo=EventRepository(conn,user_id)
     events={row['id']:row for row in repo.events()}
@@ -252,12 +279,12 @@ def _after_occurrences(conn,user_id,first,overrides,exception_overrides,added_id
     last=anchor+timedelta(days=14)
     if (last-first).days>366:
         raise ApiError('PLAN_SEARCH_LIMIT','일정 충돌을 계산할 기간이 너무 길어요',503)
-    all_rows=[item for event in events.values() for item in occurrences(event,exceptions[event['id']],first,last,zone)]
+    all_rows=[item for event in events.values() for item in _exact_occurrences(event,exceptions[event['id']],first,last,zone)]
     added=[row for row in all_rows if row['id'] in added_ids or row['scheduleId'] in added_ids]
     others=[row for row in all_rows if row not in added]
     for index,row in enumerate(added):
         for other in [*others,*added[index+1:]]:
-            if row['date']==other['date'] and row['start']<other['end'] and other['start']<row['end']:
+            if row['date']==other['date'] and row['_start']<other['_end'] and other['_start']<row['_end']:
                 raise ApiError('SCHEDULE_CONFLICT','다른 고정 일정과 시간이 겹쳐요',409)
     return added
 
@@ -277,7 +304,7 @@ def _task_collisions(data,added,zone):
             if not left.date()<=day<=right.date(): continue
             start=_minute(left) if left.date()==day else Fraction(0)
             end=_minute(right) if right.date()==day else Fraction(1440)
-            if start<clock_minute(event['end']) and clock_minute(event['start'])<end:
+            if start<event.get('_end',clock_minute(event['end'])) and event.get('_start',clock_minute(event['start']))<end:
                 result.append(task.id);break
     return tuple(result)
 
@@ -381,8 +408,10 @@ def _move_view(data,changes):
         if task.id not in changes['supersedeIds']: continue
         pieces=[]
         for placement in changes['placements']:
+            if placement['kind']!=task.row['task_type']: continue
             cursor=Fraction(*placement['start'])
             for part in placement['parts']:
+                if placement['kind']!='study' and part['requirementId']!=task.id: continue
                 cost=Fraction(*part['baseline'])*Fraction(*part['multiplier'])
                 for old in task.paged:
                     if old['unit_id']!=part['unitId']: continue

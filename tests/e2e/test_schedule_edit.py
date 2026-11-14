@@ -154,6 +154,8 @@ def test_calendar_reallocation_links_pending_obligation_without_replacing_origin
     key=f"{event['id']}@{TODAY}"
     candidate=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'09:00','end':'10:00'})
     assert candidate.status_code==200,candidate.text
+    moved=next(row for row in candidate.json()['data']['moves'] if row['taskId']==case['old_task']['id'])
+    assert sorted(page for piece in moved['pieces'] for page in range(piece['from'],piece['to']+1))==list(range(1,21))
     assert conn.execute(select(t.remedial_obligation_blocks)).all()==[];conn.commit()
     response=apply(api_client,case['user'],key,candidate.json()['data']['previewId'])
     assert response.status_code==200,response.text
@@ -183,3 +185,12 @@ def test_edit_detects_overlap_with_fractional_minute_task_end(api_client,domain_
     response=apply(api_client,case['user'],key,candidate.json()['data']['previewId'])
     assert response.status_code==200,response.text
     assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==task['id']))=='carried_over'
+
+
+def test_fractional_fixed_event_rejects_overlapping_schedule_edit(api_client,calendar_world):
+    w=calendar_world
+    event=add_event(w.conn,user(w),day=w.day,start='16:00',end='17:00')
+    add_event(w.conn,user(w),day=w.day,start='12:00',end='13:00',ends_at=at(w.day,'13:00')+timedelta(seconds=30))
+    w.conn.commit()
+    response=preview(api_client,w.user,f"{event['id']}@{w.day}",{'date':w.day.isoformat(),'start':'13:00','end':'14:00'})
+    assert response.status_code==409 and response.json()['error']['code']=='SCHEDULE_CONFLICT'

@@ -100,3 +100,12 @@ TEST_POSTGRES_URL이 없으면 SQLite 검증만 실행한다. 지정하면 마�
 online upgrade는 어떤 DDL보다 먼저 중복 활성 세션/열린 구간을 검사한다. 중복이 있으면 데이터를 삭제하지 않고 중단한다. 이 경우 백업 후 기존 세션의 상태/시간/근거를 확인하여 정리하고 재실행해야 한다. 자동으로 최신 세션만 남기거나 임의 종료하지 않는다. offline SQL은 사전 조회와 Python 데이터 보정을 수행하지 않으므로 검토용으로만 사용한다.
 
 `downgrade 0003_demo_day_requests`는 두 인덱스와 스냅샷 컬럼만 제거하고 세션·측정 구간·학습 기록은 보존한다. 제거된 스냅샷은 재업그레이드 시 당시 태스크/기존 문구로 다시 채워지므로 원래 값이 필요한 운영 복구에는 백업이 필요하다. 이전 바이너리로 되돌릴 때도 해당 바이너리가 요구하는 DB revision과 맞춰야 한다. 이번 PR에서는 운영 migration/배포를 실행하지 않았다.
+
+
+## 공통 불변 조건 (0011)
+
+`0011_contract_invariants`는 `0010_remedial_obligations` 다음 revision이다. 원본 불량행/중복행이 있으면 변경 없이 중단하며, 운영자가 백업을 보존하고 원인을 해결한 뒤 재실행한다. 자동 정리/backfill은 없다. 부분 유일 인덱스는 현재 단원·개념과 활성 block 배치에만 적용하고, 과거 retired/carried_over 행은 보존한다.
+
+SQLite online migration은 FK parent 재생성 중 `ON DELETE CASCADE`가 자식 이력을 지우지 않도록 연결의 FK 설정을 잠시 끄고, 명시적인 `BEGIN IMMEDIATE` 한 트랜잭션에서 DDL·버전 기록을 실행한다. commit 전에 `foreign_key_check`를 수행하고 실패하면 DDL과 데이터 모두 rollback한다. FK 설정은 성공/실패 모두 원래 값으로 복구한다. 호출자의 미커밋 쓰기가 있으면 임의로 commit하지 않고 중단한다. baseline 인계의 stamp는 기존 호출자 트랜잭션을 계속 사용하며 rollback 의미를 바꾸지 않는다. PostgreSQL은 기존 migration별 트랜잭션을 유지한다.
+
+검증에는 전체 행이 있는 upgrade/downgrade 반복, schema metadata 및 CHECK 이름 대조, 잘못된 범위/점수/시간/중복 사전검사, 외래키 자식 보존과 주입한 중간 실패 rollback을 포함한다. 온라인 이행과 달리 offline SQL은 기존 데이터의 적합성을 판정할 수 없다.
