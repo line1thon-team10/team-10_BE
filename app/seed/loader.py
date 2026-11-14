@@ -10,6 +10,7 @@ from app.core.clock import now_utc
 from app.db import schema as t
 from app.domain.focus import quote_for
 from app.seed import demo_data as d
+from app.seed.essay_examples import DEMO_ESSAY, register_saved_evaluation
 from app.seed.package import load_package
 
 KST = ZoneInfo("Asia/Seoul")
@@ -257,6 +258,8 @@ def _load_quiz(conn, user_id, seed_day, quiz, subject_id, unit_id, concept_id, m
         conn.execute(t.question_sources.insert().values(
             id=_id(), question_id=qid, material_id=material_of[q["unit"]],
             start_page=q["page"], end_page=q["page"], quote=q.get("quote")))
+        if q["id"] == DEMO_ESSAY["code"]:
+            register_saved_evaluation(conn, user_id, qid)
 
     subj_of_q = {q["id"]: q["unit"][:2] for q in quiz["questions"]}
     # 날짜·과목별 퀴즈 1개로 묶어서 풀이 기록을 넣어요
