@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.db import schema as t
 from app.domain.progress import PageProgress, rounded_percent
@@ -37,13 +37,22 @@ class ProgressWorld:
                 "quiz_enabled": quiz_enabled,
             }))
         unit = {key: value for key, value in self.unit_template.items() if key in t.units.c}
+        last_order = self.conn.scalar(select(func.max(t.units.c.sort_order)).where(
+            t.units.c.material_id == material_id))
+        unit['sort_order'] = 1 if last_order is None else last_order + 1
         unit.update({"id": str(uuid4()), "material_id": material_id, "code": "TEST1", "start_page": start,
                      "end_page": end, "mastery_score": score, "in_scope": True, "retired_at": None, **values})
         self.conn.execute(t.units.insert().values(**unit))
         return unit
 
     def concept(self, unit, start, end, **values):
-        concept = {"id": str(uuid4()), "unit_id": unit["id"], "code": "C1", "title": "시험 범위", "sort_order": 0,
+        existing = self.conn.execute(select(t.concepts.c.sort_order, t.concepts.c.code).where(
+            t.concepts.c.unit_id == unit['id'])).all()
+        order = max((row.sort_order for row in existing), default=-1) + 1
+        number = 1
+        while f'C{number}' in {row.code for row in existing}:
+            number += 1
+        concept = {"id": str(uuid4()), "unit_id": unit["id"], "code": f"C{number}", "title": "시험 범위", "sort_order": order,
                    "start_page": start, "end_page": end, "in_scope": True, "created_at": self.now,
                    "updated_at": self.now, **values}
         self.conn.execute(t.concepts.insert().values(**concept))
