@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import func, select
 
+from app.ai.metrics_adapter import calculate_learning_metrics
 from app.db import schema as t
 from app.repositories.users import UserRepository
 from app.seed import package
@@ -43,10 +44,11 @@ def test_package_state_metrics_and_learning_evidence(api_client, demo_user, doma
     assert [(x.first,x.last,x.row["estimated_minutes"]) for x in tasks] == [(12,20,25)] * 3
     assert data.progress(date(2026,11,9))["donePages"] == 18
     user = UserRepository(conn).get(UUID(demo_user))
-    metrics = package.engine.module("learning_metrics").calculate_learning_metrics(
+    metrics = calculate_learning_metrics(
         QuizService(conn,user.to_mapping(),date(2026,11,9))._metrics_input())
-    stored = {u["code"]:u["mastery_score"] for u in data.units.values() if u["mastery_score"] is not None}
-    assert stored == {u["unit"]:u["score"] for u in metrics["units"]}
+    stored = {u["id"]:u["mastery_score"] for u in data.units.values() if u["mastery_score"] is not None}
+    assert stored == {u.unit_id:u.score for u in metrics.units}
+    assert {data.units[u.unit_id]["code"]:u.score for u in metrics.units} == {"AI1":90,"DB1":40,"OS1":80}
     records = set(conn.scalars(select(t.study_records.c.id)))
     passes = conn.execute(select(t.learning_passes)).mappings().all()
     assert len(passes) == 5
