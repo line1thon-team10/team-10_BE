@@ -208,6 +208,32 @@ class QuizAnswerRepository:
                 input_recovered=True, sealed_answers=sealed, legacy=False))
             return self.submission(user_id, quiz["id"])
 
+    def seal_carried(self, user_id, quiz_id, *, now):
+        """Close an elapsed daily set without inventing answers for skipped items."""
+        now = aware_time(now)
+        quiz = self.lock_quiz(user_id, quiz_id)
+        if quiz['type'] != 'daily':
+            raise ApiError('INVALID_INPUT', '일일 퀴즈만 날짜 마감할 수 있어요', 422)
+        state = self.submission(user_id, quiz_id)
+        if quiz['status'] == 'submitted':
+            return state
+        if state is None:
+            current = self.list_current(user_id, quiz_id)
+            if any(not answer['input_recovered'] for answer in current):
+                raise ApiError('ANSWER_CONFLICT', '원본 답안을 확인할 수 없어요', 409)
+            if current:
+                sealed = [{'questionId':answer['quiz_item_id'], 'answerId':answer['id'],
+                    'revision':answer['revision'], 'answerHash':answer['answer_hash']}
+                    for answer in sorted(current,key=lambda row:row['quiz_item_id'])]
+                digest = canonical_hash([{key:answer[key] for key in ('questionId','revision','answerHash')} for answer in sealed])
+                self.connection.execute(t.quiz_submission_states.insert().values(quiz_session_id=quiz_id,
+                    sealed_at=now,answer_set_hash=digest,input_recovered=True,sealed_answers=sealed,legacy=False))
+                state = self.submission(user_id, quiz_id)
+        self.connection.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==quiz_id).values(
+            status='carried_over', finalized_at=quiz['finalized_at'] or now,
+            grading_status='processing' if state is not None and state['result_snapshot'] is None else quiz['grading_status']))
+        return state
+
     def store_result_snapshot(self, user_id, quiz_id, *, expected_hash: str | None, snapshot: dict,
                               provenance: str, schema_version: str, now: datetime) -> dict:
         now = aware_time(now)
