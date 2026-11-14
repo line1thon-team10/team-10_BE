@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MaterialFile(BaseModel):
@@ -28,3 +28,55 @@ class MaterialList(BaseModel):
 class MaterialsResponse(BaseModel):
     success: Literal[True] = True
     data: MaterialList
+
+
+class MaterialAccepted(BaseModel):
+    materialId: UUID
+    jobId: UUID
+
+
+class MaterialUploadResponse(BaseModel):
+    success: Literal[True] = True
+    data: MaterialAccepted
+
+
+class MaterialJob(BaseModel):
+    jobId: UUID
+    materialId: UUID
+    subjectId: UUID
+    status: Literal['running', 'done', 'failed']
+    ocr: bool | None
+    steps: list[str]
+    current: int
+    failedStep: int | None
+    progress: int
+    reused: bool
+    reason: str | None
+
+
+class MaterialJobResponse(BaseModel):
+    success: Literal[True] = True
+    data: MaterialJob
+
+
+class MaterialTocRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    subjectId: UUID
+    materialId: UUID
+    text: str
+
+
+class MaterialTocUnit(BaseModel):
+    no: int
+    title: str
+    from_: int = Field(alias='from')
+    to: int
+
+
+class MaterialTocData(BaseModel):
+    units: list[MaterialTocUnit]
+
+
+class MaterialTocResponse(BaseModel):
+    success: Literal[True] = True
+    data: MaterialTocData
