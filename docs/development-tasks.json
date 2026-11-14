@@ -175,7 +175,8 @@
       "validation_evidence": [
         "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress.",
         "Finalfa1a673:222SQLite+PG passed; generator regeneration exact and single0007head. Astra review queued after S-01 fix recheck.",
-        "Review found JSONB number hash mismatch and mixed read snapshots. Fixed8a65750 and3e7abe6, documented13f1a82. Root185passed/3SQLiteonlyskip; independent recheck pending."
+        "Review found JSONB number hash mismatch and mixed read snapshots. Fixed8a65750 and3e7abe6, documented13f1a82. Root185passed/3SQLiteonlyskip; independent recheck pending.",
+        "Astra13f1a82:30independent passed/6SQLite skip, original numeric and read-race findings fixed. Final PR CI pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -664,7 +665,8 @@
       "deliverable": "(모두 기록 또는 현지23:30 이후)와 실제70% 조건을 적용해 사용자/날짜당 한 번 발급한다.",
       "acceptance": [
         "23:29:59/23:30:00·반올림70이나 실제미달·날짜 변경",
-        "동시 기록·요청 재전송 박스 중복 없음"
+        "동시 기록·요청 재전송 박스 중복 없음",
+        "Use raw PageProgress.reaches for P1 and separate quiz_progress for quiz-open toast; D-01 deliberately leaves today.post_record event decisions for this task."
       ],
       "operations": [
         "POST /api/records",
@@ -1030,7 +1032,7 @@
       "id": "S-01",
       "title": "숙달도 계산 규칙·자료별 식별 보정",
       "lane": "quiz",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02"
@@ -1066,7 +1068,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/25",
       "validation_evidence": [
         "Worker304SQLite+PG passed. Astra independent oracles passed; existing demo package regression still called private metrics after UUID snapshot change. Root correcting that existing test separately before final review.",
-        "Root29afcc3 only repairs existing demo-test consumer:20SQLite+PG passed and explicit90/40/80 assert. Independent recheck pending."
+        "Root29afcc3 only repairs existing demo-test consumer:20SQLite+PG passed and explicit90/40/80 assert. Independent recheck pending.",
+        "Astra final29afcc3 no findings; original2failed demo tests nowpassed,5000math+500multiday oraclespassed. Actions43547667573 passed; merged4c20454 and fullSQLite+PG1677passed/1skipped."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -1609,7 +1612,7 @@
       "branch": "feat/onboarding-events",
       "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
       "head_sha": "6a3608bf64ab16c453e17f3c8033c73c46c0dd35",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/27",
       "validation_evidence": [
         "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression.",
         "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04."
