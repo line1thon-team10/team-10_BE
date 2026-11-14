@@ -1,6 +1,6 @@
 # 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.
 # 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.
-from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,
+from sqlalchemy import (Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,
                         Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 
@@ -497,6 +497,72 @@ weak_questions = Table(
     Column("next_review_date", Date, nullable=True),
     Column("last_weak_at", DateTime(timezone=True), nullable=False),
     Column("resolved_at", DateTime(timezone=True), nullable=True),
+)
+
+quiz_answers = Table(
+    "quiz_answers", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("choice", Integer, nullable=True),
+    Column("text", Text, nullable=True),
+    Column("confidence", String, nullable=False),
+    Column("answer_hash", String, nullable=True),
+    Column("input_recovered", Boolean, nullable=False, default=True),
+    Column("legacy_answer", Text, nullable=True),
+    Column("answered_at", DateTime(timezone=True), nullable=False),
+    Column("answered_date", Date, nullable=False),
+    CheckConstraint("revision > 0", name="ck_quiz_answer_revision"),
+    CheckConstraint("confidence IN ('sure', 'unsure')", name="ck_quiz_answer_confidence"),
+    CheckConstraint("choice IS NULL OR choice >= 0", name="ck_quiz_answer_choice"),
+    CheckConstraint("(input_recovered = true AND answer_hash IS NOT NULL AND ((choice IS NOT NULL AND text IS NULL) OR (choice IS NULL AND text IS NOT NULL))) OR (input_recovered = false AND legacy_answer IS NOT NULL AND choice IS NULL AND text IS NULL AND answer_hash IS NULL)", name="ck_quiz_answer_payload"),
+    CheckConstraint("answer_hash IS NULL OR length(answer_hash) = 64", name="ck_quiz_answer_hash"),
+    Index("ix_quiz_answers_1", "quiz_item_id", "revision", unique=True),
+)
+
+quiz_answer_heads = Table(
+    "quiz_answer_heads", metadata,
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False, unique=True),
+)
+
+quiz_grading_jobs = Table(
+    "quiz_grading_jobs", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False, unique=True),
+    Column("answer_revision", Integer, nullable=False),
+    Column("status", String, nullable=False, default="queued"),
+    Column("lease_owner", String, nullable=True),
+    Column("lease_token", UUID, nullable=True),
+    Column("lease_expires_at", DateTime(timezone=True), nullable=True),
+    Column("claim_count", Integer, nullable=False, default=0),
+    Column("result", JSONB, nullable=True),
+    Column("error_code", String, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("claimed_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("answer_revision > 0 AND claim_count >= 0", name="ck_quiz_job_revision"),
+    CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')", name="ck_quiz_job_status"),
+    CheckConstraint("(status = 'running' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND claimed_at IS NOT NULL AND lease_expires_at > claimed_at) OR (status <> 'running' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)", name="ck_quiz_job_lease"),
+    CheckConstraint("(status = 'succeeded' AND result IS NOT NULL) OR (status <> 'succeeded' AND result IS NULL)", name="ck_quiz_job_result"),
+    Index("ix_quiz_grading_jobs_1", "status", "lease_expires_at", "created_at"),
+)
+
+quiz_submission_states = Table(
+    "quiz_submission_states", metadata,
+    Column("quiz_session_id", UUID, ForeignKey("quiz_sessions.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("sealed_at", DateTime(timezone=True), nullable=False),
+    Column("answer_set_hash", String, nullable=True),
+    Column("input_recovered", Boolean, nullable=False),
+    Column("sealed_answers", JSONB, nullable=False),
+    Column("legacy", Boolean, nullable=False, default=False),
+    Column("legacy_snapshot", JSONB, nullable=True),
+    Column("result_snapshot", JSONB, nullable=True),
+    Column("result_provenance", String, nullable=True),
+    Column("result_schema_version", String, nullable=True),
+    Column("result_captured_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(answer_set_hash IS NULL OR length(answer_set_hash) = 64) AND (input_recovered = false OR answer_set_hash IS NOT NULL)", name="ck_quiz_submission_hash"),
+    CheckConstraint("(result_snapshot IS NULL AND result_provenance IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL) OR (result_snapshot IS NOT NULL AND result_provenance IS NOT NULL AND result_provenance IN ('submitted', 'legacy_reconstructed') AND result_schema_version IS NOT NULL AND result_captured_at IS NOT NULL AND result_captured_at >= sealed_at)", name="ck_quiz_snapshot_metadata"),
 )
 
 user_notices = Table(
