@@ -113,3 +113,15 @@ def test_verified_remedial_requires_initial_and_live_complete_record_ranges(api_
     assert any(row.supplement_completed for row in eligible())
     conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==initial['pass']).values(invalidated_at=AT))
     assert not any(row.supplement_completed for row in eligible())
+
+
+def test_initial_pass_keeps_frozen_evidence_after_scope_selection_changes(api_client,domain_connection,mastery_case):
+    from app.services.recovery_evidence import verified_passes
+    c,conn=mastery_case,domain_connection
+    ids=add_record_pass(conn,c,kind='initial',day=DAY)
+    conn.execute(update(t.concepts).where(t.concepts.c.unit_id==c['units'][0]['id']).values(end_page=4))
+    metrics=QuizService(conn,c['user'].to_mapping(),DAY)._metrics_input()
+    unit=next(row for row in metrics['units'] if row['id']==c['units'][0]['id'])
+    assert [row['id'] for row in verified_passes(conn,c['user'].id,unit,metrics['concepts'])]==[ids['pass']]
+    conn.execute(update(t.study_record_ranges).where(t.study_record_ranges.c.id==ids['range']).values(end_page=4))
+    assert verified_passes(conn,c['user'].id,unit,metrics['concepts'])==[]

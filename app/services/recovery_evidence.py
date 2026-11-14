@@ -45,11 +45,11 @@ def verified_passes(conn, user_id, unit, concepts):
             ids = [str(UUID(value)) for value in ids]
         except (ValueError, TypeError, AttributeError):
             continue
-        if snapshot.get('masteryScopeRevision') != revision:
+        if row['completion_kind'] != 'initial' and snapshot.get('masteryScopeRevision') != revision:
             continue
-        if not required or subtract(required, scope):
+        if not required or (row['completion_kind'] != 'initial' and subtract(required, scope)):
             continue
-        if row['completion_kind'] in ('initial', 'full_relearn') and required != scope:
+        if row['completion_kind'] == 'full_relearn' and required != scope:
             continue
         if row['completion_kind'] == 'full_relearn' and not ids:
             key, digest = row['evidence_key'], snapshot.get('directRequestHash')
