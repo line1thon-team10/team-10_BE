@@ -158,3 +158,57 @@ def test_unexpected_validation_failure_is_not_silently_skipped(domain_connection
     with pytest.raises(RuntimeError, match="implementation failure"):
         service(worker_engine, gateway_factory=no_gateway).run_next()
     assert domain_connection.scalar(select(t.quiz_grading_jobs.c.claim_count)) == 0
+
+
+def append_job(conn, at):
+    case = make_case(conn)
+    answer = QuizAnswerRepository(conn).save(case["user"], case["quiz"], case["choice_item"],
+        revision=0, choice=0, confidence="sure", now=at, answered_date=DAY).answer
+    job = GradingJobRepository(conn).enqueue(case["user"], case["quiz"], case["choice_item"],
+        revision=answer["revision"], now=at)
+    conn.commit()
+    return case, job
+
+
+@pytest.mark.parametrize("reappears", ["expired_lease", "repaired_quiz"])
+def test_old_eligible_job_is_not_starved_by_a_continuing_trickle_of_new_jobs(
+        domain_connection, worker_engine, reappears):
+    conn = domain_connection
+    old_case, old_job = append_job(conn, NOW)
+    next_case, first_new_job = append_job(conn, NOW + timedelta(seconds=1))
+    if reappears == "expired_lease":
+        claim = GradingJobRepository(conn).claim(old_case["user"], old_job["id"], owner="crashed-worker",
+            now=NOW, lease_for=timedelta(seconds=5))
+        assert claim is not None
+    else:
+        conn.execute(update(t.quiz_items).where(t.quiz_items.c.id == old_case["essay_item"])
+            .values(question_id=next_case["essay"]))
+    conn.commit()
+    instant = [NOW + timedelta(seconds=2)]
+    worker = service(worker_engine, clock=lambda: instant[0], gateway_factory=no_gateway)
+    assert worker.run_next().job_id == first_new_job["id"]
+    # The old job now becomes eligible *behind* this same worker's cursor.
+    instant[0] = NOW + timedelta(seconds=10)
+    if reappears == "repaired_quiz":
+        conn.execute(update(t.quiz_items).where(t.quiz_items.c.id == old_case["essay_item"])
+            .values(question_id=old_case["essay"]))
+        conn.commit()
+    observed = []
+    for index in range(12):
+        instant[0] += timedelta(seconds=1)
+        _, incoming = append_job(conn, instant[0])
+        result = worker.run_next()
+        observed.append({"state": str(result.state), "old_job_chosen": result.job_id == old_job["id"],
+                         "new_job_chosen": result.job_id == incoming["id"]})
+        state = conn.execute(select(t.quiz_grading_jobs).where(
+            t.quiz_grading_jobs.c.id == old_job["id"])).mappings().one()
+        conn.rollback()
+        if state["status"] == "succeeded":
+            break
+    # The witness extends to any number of polls: appending one newer job is
+    # enough to keep pending(after=cursor) nonempty, so the old eligible job
+    # receives no claim while every newer job is processed.
+    assert state["status"] == "succeeded", {
+        "reappears": reappears, "old_status": state["status"], "old_claim_count": state["claim_count"],
+        "polls": observed, "cursor": worker._pending_cursor,
+    }

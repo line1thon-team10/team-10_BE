@@ -230,6 +230,7 @@ class GradingService:
         self.settings = settings or AiSettings.from_environment()
         self.gateway_factory, self.provider = gateway_factory, provider
         self._pending_cursor = None
+        self._pending_high_water = None
 
     def prepare(self, connection, user_id, job_id, *, retry_failed=False, mode=None, budget=None):
         """Caller commits this transaction before execute(); mode is durable even after a crash."""
@@ -344,9 +345,19 @@ class GradingService:
             if not budget.remaining:
                 return GradingRun(None, "budget_exhausted", error_code="AI_FAILED")
             with self.engine.connect() as conn:
-                candidates = GradingJobRepository(conn).pending(now=self.clock(), after=self._pending_cursor)
+                repo = GradingJobRepository(conn)
+                if self._pending_high_water is None:
+                    self._pending_high_water = repo.pending_high_water(now=self.clock())
+                    if self._pending_high_water is None:
+                        return GradingRun(None, "idle")
+                if stop_requested():
+                    return GradingRun(None, "idle")
+                if not budget.remaining:
+                    return GradingRun(None, "budget_exhausted", error_code="AI_FAILED")
+                candidates = repo.pending(now=self.clock(), after=self._pending_cursor, through=self._pending_high_water)
             if not candidates:
                 self._pending_cursor = None
+                self._pending_high_water = None
                 if wrapped:
                     return GradingRun(None, "idle")
                 wrapped = True
