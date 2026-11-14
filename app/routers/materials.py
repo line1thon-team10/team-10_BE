@@ -81,3 +81,18 @@ def parse_toc(body: MaterialTocRequest, user: dict = Depends(current_user), conn
     engine = conn.engine
     conn.close()
     return ok(MaterialTocService(engine).parse(user["id"], str(body.subjectId), str(body.materialId), body.text))
+
+
+from app.schemas.units import UnitSelection, UnitsApproval
+
+
+@router.patch("/{material_id}/units")
+def select_material_units(material_id: UUID, body: UnitSelection | UnitsApproval,
+                          user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    from app.services.material_structure import MaterialStructureService
+    engine = conn.engine
+    conn.close()
+    service = MaterialStructureService(engine)
+    if isinstance(body, UnitsApproval):
+        return ok(service.approve(user["id"], body.previewId, operation="patch", material_id=str(material_id)))
+    return ok(service.edit(user["id"], body, operation="patch", material_id=str(material_id)))
