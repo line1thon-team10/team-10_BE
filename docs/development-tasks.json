@@ -357,7 +357,7 @@
       "id": "R-02",
       "title": "범위별 기록 저장·정정 API",
       "lane": "study",
-      "status": "review",
+      "status": "running",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "R-01"
@@ -392,7 +392,8 @@
       "head_sha": "0df4432208d96c29519afff7262b631f4bf33ce2",
       "pr_url": null,
       "validation_evidence": [
-        "Worker SQLite+PG records223 + demo22 passed; independent review pending"
+        "Worker SQLite+PG records223 + demo22 passed; independent review pending",
+        "Astra245regression+768snapshot comparisons passed; P2 carried/excluded placement revival found, worker fixing; none PATCH policy clarification required"
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -869,7 +870,9 @@
         "BE/migrations/versions/",
         "BE/app/repositories/quiz_answers.py",
         "BE/app/repositories/grading_jobs.py",
-        "BE/tests/test_quiz_storage.py"
+        "BE/tests/test_quiz_storage.py",
+        "BE/scripts/gen_schema/gen_schema.js",
+        "BE/schema/quiz-storage-constraints.json"
       ],
       "shared_resources": [
         "schema"
@@ -1036,7 +1039,8 @@
       "deliverable": "답안 봉인→채점 완료 확인→점수/취약 항목/이력 한 번 반영→고정 결과 반환을 구현한다.",
       "acceptance": [
         "동시 제출/동일 답 재전송/다른 답409·AI 실패503·프로세스 재시작",
-        "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증"
+        "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증",
+        "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction"
       ],
       "operations": [
         "POST /api/quiz/:subjectId/submit",
@@ -3072,7 +3076,7 @@
       "id": "OPS-01",
       "title": "기능 PR 검증과 고정 SHA 배포 경로 정리",
       "lane": "platform",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root",
       "depends_on": [
         "SYS-01"
@@ -3100,8 +3104,9 @@
       "head_sha": "0bfbe9ecf0999b6a3ad2d61a82f6487a1f2837e1",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/18",
       "validation_evidence": [
-        "c74dda4 Actions43539000569:579 passed,1 skipped; newer0bfbe9e under review; deployment shell21 tests passed",
-        "Astra final0bfbe9e:21 existing+8 independent deploy tests pass; old-target label bypass fixed; actual final Actions43539867574 pending"
+        "Astra immutable0bfbe9e:21existing+8independent tests pass; older-target bypass resolved",
+        "Actions43539867574 candidate896209c merges0bfbe9e into6259288:900 passed,1 skipped in344.07s",
+        "Local integrationae7dfe8ec166c9a7044e26d41530c45ba337b91f:deployment tests21passed; no RPI deployment in this task"
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"

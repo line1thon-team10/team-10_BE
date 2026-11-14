@@ -28,3 +28,9 @@
 - Q-01 독립 검토는220 회귀+6개 추가 엣지 통과. O-01은104 회귀+5개 추가 검증 통과 후 Decimal 변환 경계 문제4개를 재현했다. `334cec8`에서 원본 Decimal을 먼저 검사하도록 수정하고 root80개/독립30개(원래 실패4개 포함) 통과.
 - PR #15/#16/#17의 실제 변경을 통합했다. 후속 답안 저장/채점, 일정 쓰기/자연어 대화까지 완료한 것은 아니다. 새 운영 배포는 아직 없다.
 - OPS-01(PR #18) 초판의 실제 GitHub ARM64 CI는579 passed/1 skipped. 이후 배포 라벨 guard와 과거 앱의 도구 분리를 추가하여 새 SHA를 다시 검토 중이며 초판 통과를 새 SHA 통과로 대신하지 않는다.
+
+## OPS-01 최종 통합
+
+- 최종 검토 `0bfbe9ecf0999b6a3ad2d61a82f6487a1f2837e1`. 과거 앱 SHA의 오래된 apply.sh가 라벨 검사를 건너뛰는 P2를 발견해, Compose는 앱 SHA/apply.sh는 workflow SHA로 분리했다. 독립 모의 실행29개 통과, 잔여 findings 없음.
+- Actions [43539867574](https://github.com/line1thon-team10/team-10_BE/actions/runs/43539867574)의 실제 후보 merge `896209c`(0bfbe9e + 6259288), pinned AI `6d74ffb`: **900 passed, 1 skipped**,344.07초. 이미지 발행·RPI 배포 없는 PR 테스트다.
+- 로컬 통합에서도 배포 실패/라벨/복구 경계21개 통과. Q-02는 schema lease0006으로 진행 중, R-02는 이월/excluded 배치가 기록 정정으로 부활하는 검토 지적을 수정 중이다.
