@@ -357,7 +357,7 @@
       "id": "R-02",
       "title": "범위별 기록 저장·정정 API",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "R-01"
@@ -389,9 +389,11 @@
       "optional": false,
       "branch": "feat/study-record-ranges",
       "base_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
-      "head_sha": null,
+      "head_sha": "0df4432208d96c29519afff7262b631f4bf33ce2",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Worker SQLite+PG records223 + demo22 passed; independent review pending"
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
@@ -809,7 +811,7 @@
       "id": "Q-01",
       "title": "퀴즈 항목 ID·입출력 계약 정리",
       "lane": "quiz",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02"
@@ -842,9 +844,10 @@
       "branch": "fix/quiz-item-identity",
       "base_sha": "e0c71053c1769ba70bb8e8926a0421b7b294779d",
       "head_sha": "b2565def0b3173d35feffea0df5f3d6206aab494",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/16",
       "validation_evidence": [
-        "Worker SQLite+PostgreSQL: 230 passed in 60.13s; independent review pending"
+        "Worker 230 passed; Astra regression220 + independent6 passed; no current-scope findings",
+        "Integration62592888c36bd6f99c97d9e1d31620df42a26755: SQLite+PG full889 passed,1 skipped in179.76s"
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1460,7 +1463,7 @@
       "id": "O-01",
       "title": "온보딩 목표·확인 상태 영속화",
       "lane": "onboarding",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02"
@@ -1488,10 +1491,11 @@
       "optional": false,
       "branch": "feat/onboarding-state",
       "base_sha": "e0c71053c1769ba70bb8e8926a0421b7b294779d",
-      "head_sha": "cbba13c9992916ab34965da8f699d720021447f7",
-      "pr_url": null,
+      "head_sha": "334cec802d2a924b8ffaf692a9c31a6ba6ef7ef2",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/17",
       "validation_evidence": [
-        "Worker SQLite+PostgreSQL impact tests: 212 passed; independent review pending"
+        "Worker212 passed; Astra104+5 passed,4 Decimal failures reproduced; fixed334cec8, root80+independent30 passed",
+        "Integration62592888c36bd6f99c97d9e1d31620df42a26755: SQLite+PG full889 passed,1 skipped; single Alembic head0005"
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -3068,7 +3072,7 @@
       "id": "OPS-01",
       "title": "기능 PR 검증과 고정 SHA 배포 경로 정리",
       "lane": "platform",
-      "status": "running",
+      "status": "review",
       "assignee": "/root",
       "depends_on": [
         "SYS-01"
@@ -3077,7 +3081,7 @@
         "BE/.github/workflows/",
         "BE/docs/rpi-deployment.md",
         "BE/deploy/apply.sh",
-        "BE/tests/test_deployment_revision.py"
+        "BE/tests/test_deployment.py"
       ],
       "shared_resources": [
         "ci-deploy"
@@ -3093,9 +3097,11 @@
       "optional": false,
       "branch": "infra/pr-contract-checks",
       "base_sha": "1e7144c",
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "head_sha": "0bfbe9ecf0999b6a3ad2d61a82f6487a1f2837e1",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/18",
+      "validation_evidence": [
+        "c74dda4 Actions43539000569:579 passed,1 skipped; newer0bfbe9e under review; deployment shell21 tests passed"
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
     },

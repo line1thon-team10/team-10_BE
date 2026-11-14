@@ -21,3 +21,10 @@
 - 상세 계산은 제품 원문과 구분한 BE 정책이다. Astra 검토에서 속도 난이도 중복 배수와 직전일 예약 경합이 발견되어 `363d652`, `a05ebf0`로 보완했다. 최종 SHA에 미해결 차단 지적 없음.
 - 품질 기준은 pinned AI 휴리스틱과 실제 네이티브 PDF/합성 추출 결과로 대조했다. 실제 OCR은 아직 검증하지 않았다. 업로드/AI 예산의 실제 강제는 각 구현 task에서 검증한다.
 - Q-01은230개 SQLite/PG 테스트를 통과한 immutable `b2565de`로 독립 검토 중. R-02는 `a05ebf0` 기준 별도 worktree에 배정했다.
+
+## 첫 기능 묶음 통합 검증
+
+- 통합 SHA `62592888c36bd6f99c97d9e1d31620df42a26755`: R-01/Q-01/O-01. 전체 `python -m pytest -q tests --tb=short`에서 **889 passed, 1 skipped**(179.76초). SQLite와 격리 PostgreSQL schema 사용. Alembic 단일 head `0005_onboarding_state`.
+- Q-01 독립 검토는220 회귀+6개 추가 엣지 통과. O-01은104 회귀+5개 추가 검증 통과 후 Decimal 변환 경계 문제4개를 재현했다. `334cec8`에서 원본 Decimal을 먼저 검사하도록 수정하고 root80개/독립30개(원래 실패4개 포함) 통과.
+- PR #15/#16/#17의 실제 변경을 통합했다. 후속 답안 저장/채점, 일정 쓰기/자연어 대화까지 완료한 것은 아니다. 새 운영 배포는 아직 없다.
+- OPS-01(PR #18) 초판의 실제 GitHub ARM64 CI는579 passed/1 skipped. 이후 배포 라벨 guard와 과거 앱의 도구 분리를 추가하여 새 SHA를 다시 검토 중이며 초판 통과를 새 SHA 통과로 대신하지 않는다.
