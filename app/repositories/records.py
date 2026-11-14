@@ -17,6 +17,24 @@ class RecordRepository:
             .where(t.study_tasks.c.id == task_id, t.subjects.c.user_id == user_id,
                    t.plans.c.user_id == user_id)).mappings().first()
 
+    def planless_review(self, task_id, user_id):
+        row = self.conn.execute(select(t.study_tasks, t.subjects.c.name.label("subject_name"))
+            .join(t.subjects, t.subjects.c.id == t.study_tasks.c.subject_id)
+            .join(t.study_blocks, t.study_blocks.c.id == t.study_tasks.c.block_id)
+            .where(t.study_tasks.c.id == task_id, t.subjects.c.user_id == user_id,
+                   t.study_tasks.c.plan_id.is_(None), t.study_tasks.c.task_type == "review",
+                   t.study_blocks.c.subject_id == t.study_tasks.c.subject_id,
+                   t.study_blocks.c.task_type == "review")).mappings().first()
+        return dict(row) if row else None
+
+    def record_snapshot(self, task_id):
+        row = self.conn.execute(select(t.study_records).where(
+            t.study_records.c.task_id == task_id)).mappings().first()
+        record = dict(row) if row else None
+        ranges = [dict(item) for item in self.conn.execute(select(t.study_record_ranges).where(
+            t.study_record_ranges.c.record_id == record["id"])).mappings()] if record else []
+        return record, ranges
+
     def ranges(self, task_id):
         return [dict(row) for row in self.conn.execute(
             select(t.study_task_ranges, t.units.c.material_id,
