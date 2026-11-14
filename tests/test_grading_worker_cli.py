@@ -1,4 +1,5 @@
 """Actual CLI subprocess lifecycle with local DB and synthetic providers only."""
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from sqlalchemy import select, text, update
 
 from app.db import schema as t
+from app.repositories.grading_jobs import GradingJobRepository
 from app.workers.grading import healthy
 from test_grading_worker import worker_case, worker_engine, queue, job_row
 
@@ -39,6 +41,49 @@ def test_actual_cli_once_processes_a_deterministic_job_without_ai_keys(domain_co
     assert json.loads(result.stdout)["state"] == "succeeded"
     assert job_row(conn, job)["result"]["is_correct"] is True
     assert conn.execute(select(t.quiz_attempts)).first() is None
+
+
+def forbidden_provider(call, context):
+    Path(os.environ["GRADING_TEST_FORBIDDEN_CALL"]).write_text("provider was invoked")
+    raise RuntimeError("Saved execution must never reach a provider")
+
+
+@pytest.mark.parametrize("mode", ["saved", "backup"])
+def test_actual_cli_restart_preserves_expired_saved_mode_and_does_not_retry_failure(
+    domain_connection, worker_engine, worker_case, tmp_path, mode
+):
+    conn, case = domain_connection, worker_case
+    job = queue(conn, case, mode=mode)
+    abandoned = GradingJobRepository(conn).claim(case["user"], job["id"], owner="dead-process",
+        now=datetime.now(timezone.utc) - timedelta(minutes=1), lease_for=timedelta(seconds=1))
+    assert abandoned is not None
+    conn.commit()
+    marker = tmp_path / "forbidden-provider"
+    bootstrap = """
+from app.ai.gateway import FunctionRef, ProviderSpec
+from app.services.grading import GradingService
+from app.workers.grading import main
+provider = ProviderSpec(FunctionRef('test_grading_worker_cli', 'forbidden_provider'))
+def factory(engine, **kwargs):
+    return GradingService(engine, provider=provider, **kwargs)
+raise SystemExit(main(['--once'], service_factory=factory))
+"""
+    env = cli_environment(worker_engine, conn, GRADING_TEST_FORBIDDEN_CALL=str(marker))
+    first = subprocess.run([sys.executable, "-c", bootstrap], cwd=ROOT, env=env,
+        capture_output=True, text=True, timeout=10)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["state"] == "failed"
+    row = job_row(conn, job)
+    assert row["execution_mode"] == mode and row["claim_count"] == 2
+    assert row["status"] == "failed" and row["result"] is None
+    assert row["lease_token"] != abandoned["lease_token"]
+    assert not marker.exists() and conn.execute(select(t.ai_usage_logs)).first() is None
+    conn.rollback()
+    second = subprocess.run([sys.executable, "-c", bootstrap], cwd=ROOT, env=env,
+        capture_output=True, text=True, timeout=10)
+    assert second.returncode == 0 and second.stdout == "", second.stderr
+    assert job_row(conn, job)["claim_count"] == 2
+    assert not marker.exists() and conn.execute(select(t.ai_usage_logs)).first() is None
 
 
 def hanging_provider(call, context):
