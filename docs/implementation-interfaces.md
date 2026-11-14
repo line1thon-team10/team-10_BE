@@ -30,6 +30,10 @@ Q-02는 저장된 답안 revision/hash와 채점 작업 lease, 세트 봉인 및
 
 후보는 owner, kind, normalized input/hash, 기준 날짜, plan revision(계획 없으면 자료·목표·일정 ID/updated_at 해시), 관련 자료/일정/기록 버전, 실제 변경안, 상태와 최초 응답을 가진다. 생성만으로 승인 상태를 바꾸지 않는다. apply는 저장된 변경안만 사용하고 동일 후보 재시도는 최초 응답을 반환한다. 기준 불일치는409 PREVIEW_STALE, 임의30분 유효기간은 없다. 도메인은 현재 의존 버전 계산과 후보의 실제 실행 함수를 제공하며 공통 서비스가 도메인 SQL을 추측하지 않는다.
 
+SYS-05는 caller 트랜잭션 안에서 사용자 잠금과 최신 사용자 재조회를 수행한다. 한 요청의 UTC 판단 시각을 한 번 잡고, 그 시각과 최신 사용자 timezone/demo_date로 기준 날짜를 계산한다. 도메인 콜백에는 잠금 후의 사용자와 저장된 변경안만 전달하며 외부 AI 호출을 하지 않는다. 같은 applied 후보의 응답 재생은 owner/kind/target 확인 후, 현재 날짜·의존 버전 검사보다 먼저 처리한다. legacy 최초 응답 누락은 decisions.md의409 정책을 따른다.
+
+승인 계획이 있는 변경은 plans.revision을 현재 기준값에서 정확히 한 번 증가시킨다. 최초 승인으로 계획을 만드는 경우 초기 revision은1이고, 승인 전 draft만 교체하는 작업은 승인 계획을 만들거나 revision을 증가시키지 않는다. 이 세 실행 유형은 서버 도메인이 명시적으로 선택하며 요청 body가 선택하지 않는다. 도메인 SQL·revision 변경·후보 applied/최초 응답 저장 중 하나라도 실패하면 같은 트랜잭션의 변경 전체가 되돌아가야 한다. 내부 savepoint를 쓰더라도 사용자 잠금보다 먼저 열지 않는다.
+
 ## 근거 형식·정책의 미정 범위
 
 기존 page-backed learning_passes의 schemaVersion="1", recordIds, requiredRanges=[[start,end],...]는 보존한다. 정정은 저장된 recordIds만 검사하고 동일 행의 자격만 바꾼다. 새 회독 생성 B-01/02와 직접 재학습 V-04가 새로운 근거 소비를 소유한다.
