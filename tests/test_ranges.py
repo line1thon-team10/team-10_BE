@@ -7,7 +7,7 @@ from itertools import combinations, permutations
 
 import pytest
 
-from app.domain.ranges import PageSpan, normalize, page_count, subtract
+from app.domain.ranges import PageSpan, intersect, normalize, page_count, subtract
 
 
 @pytest.mark.parametrize("material_id", ["pdf-a", "PDF-a", "강의자료", " pdf-a "])
@@ -271,3 +271,71 @@ def test_subtract_handles_huge_intervals_without_expanding_pages():
 def test_subtract_validates_both_inputs_even_if_the_other_is_empty(invalid, side):
     with pytest.raises(ValueError):
         subtract(invalid, []) if side == "source" else subtract([], invalid)
+
+
+@pytest.mark.parametrize(
+    "left,right,expected",
+    [
+        ([], [], []),
+        ([], [(1, 3)], []),
+        ([(1, 3)], [], []),
+        ([(1, 3)], [(4, 5)], []),
+        ([(4, 5)], [(1, 3)], []),
+        ([(1, 3)], [(3, 5)], [(3, 3)]),
+        ([(1, 9)], [(3, 5)], [(3, 5)]),
+        ([(1, 3), (5, 7), (9, 11)], [(2, 10)], [(2, 3), (5, 7), (9, 10)]),
+        ([(1, 2), (4, 6)], [(2, 2), (5, 7)], [(2, 2), (5, 6)]),
+        ([(1, 4), (3, 7)], [(2, 3), (3, 5)], [(2, 5)]),
+    ],
+)
+def test_intersect_handles_inclusive_boundaries_gaps_and_multiple_spans(left, right, expected):
+    left_spans = [PageSpan("pdf-a", start, end) for start, end in left]
+    right_spans = [PageSpan("pdf-a", start, end) for start, end in right]
+
+    result = intersect(_SingleUseIterable(left_spans), _SingleUseIterable(right_spans))
+
+    assert result == tuple(PageSpan("pdf-a", start, end) for start, end in expected)
+    _assert_canonical(result)
+
+
+def test_intersect_preserves_material_identity_and_does_not_mutate_inputs():
+    left = [PageSpan("pdf-d", 1, 3), PageSpan("pdf-a", 1, 3), PageSpan("pdf-c", 2, 4)]
+    right = [PageSpan("pdf-e", 1, 3), PageSpan("pdf-b", 1, 3), PageSpan("pdf-c", 1, 3)]
+    before_left, before_right = left.copy(), right.copy()
+
+    assert intersect(left, right) == (PageSpan("pdf-c", 2, 3),)
+    assert left == before_left
+    assert right == before_right
+
+
+def test_intersect_handles_a_shared_single_use_iterable():
+    spans = _SingleUseIterable([PageSpan("pdf-a", 2, 5), PageSpan("pdf-a", 1, 3)])
+
+    assert intersect(spans, spans) == (PageSpan("pdf-a", 1, 5),)
+
+
+def test_intersect_matches_set_intersection_and_partition_identities():
+    collections = _small_collections()
+    for left in collections:
+        assert intersect(left, left) == normalize(left)
+        for right in collections:
+            common = intersect(left, right)
+            _assert_canonical(common)
+            assert _pages(common) == _pages(left) & _pages(right)
+            assert common == intersect(right, left)
+            assert normalize(subtract(left, right) + common) == normalize(left)
+            assert page_count(left) + page_count(right) == page_count(left + right) + page_count(common)
+
+
+def test_intersect_handles_huge_intervals_without_expanding_pages():
+    end = 10**100
+    middle = end // 2
+
+    assert intersect([PageSpan("pdf-a", 1, end)], [PageSpan("pdf-a", middle, end + 1)]) == (PageSpan("pdf-a", middle, end),)
+
+
+@pytest.mark.parametrize("invalid", [None, "", [None], [PageSpan("pdf-a", 1, 1), ("pdf-a", 1, 2)]])
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_intersect_validates_both_inputs_even_if_the_other_is_empty(invalid, side):
+    with pytest.raises(ValueError):
+        intersect(invalid, []) if side == "left" else intersect([], invalid)

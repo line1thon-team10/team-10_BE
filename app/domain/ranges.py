@@ -85,3 +85,32 @@ def subtract(spans: Iterable[PageSpan], removed: Iterable[PageSpan]) -> tuple[Pa
             remaining.append(PageSpan(source.material_id, cursor, source.end))
 
     return tuple(remaining)
+
+
+def intersect(left: Iterable[PageSpan], right: Iterable[PageSpan]) -> tuple[PageSpan, ...]:
+    """Return pages shared by both inputs, only within the same material."""
+    left_spans = normalize(left)
+    right_spans = left_spans if left is right else normalize(right)
+    common: list[PageSpan] = []
+    left_index = right_index = 0
+
+    while left_index < len(left_spans) and right_index < len(right_spans):
+        first = left_spans[left_index]
+        second = right_spans[right_index]
+        if first.material_id < second.material_id:
+            left_index += 1
+            continue
+        if first.material_id > second.material_id:
+            right_index += 1
+            continue
+
+        start = max(first.start, second.start)
+        end = min(first.end, second.end)
+        if start <= end:
+            common.append(PageSpan(first.material_id, start, end))
+        if first.end <= second.end:
+            left_index += 1
+        if second.end <= first.end:
+            right_index += 1
+
+    return tuple(common)
