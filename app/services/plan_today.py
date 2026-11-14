@@ -153,7 +153,7 @@ class TodayPlanService:
                 return service.create(user_id,domain=DOMAIN,target=target,snapshot=snapshot,
                     normalized_input=target,changes={**changes,'action':command.action,'timezone':user['timezone']},
                     preview_response=response,proposal_type='today',description='오늘 학습 계획 조정')
-            movable=[task for task in data.tasks_on(today) if _movable(task,sessions)]
+            movable=[task for task in data.tasks_on(today) if task.row['subject_id'] in data.subject_by_id and _movable(task,sessions)]
             if not movable: raise ApiError('NO_TASK','옮길 오늘의 미완료 범위가 없어요',400)
             if any(data.subject_by_id.get(task.row['subject_id'],{}).get('exam_date') is None
                     or data.subject_by_id[task.row['subject_id']]['exam_date']<=today+timedelta(days=1) for task in movable):
