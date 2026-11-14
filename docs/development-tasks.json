@@ -96,8 +96,12 @@
       "held": "BE API-changing main merges, FE dev to main promotion, new-contract production dispatch.",
       "runtime_target_question": "Confirmed by user: judging FE calls https://2026-line1.leehyowon14.dev. Restore3475-compatible requests on current4c20454 without DB/schema reset or new API promotion.",
       "fe_compatibility": "FE03A already merged to dev1edf606 requires quizId and answer PUT absent in3475cf2. FE main does not include it; FE03B stays local.",
-      "compatibility_exception": "Prepare a minimal compatibility fix on the current runtime lineage only; keep main3475cf2 and new-contract integration isolated."
-    }
+      "compatibility_exception": "Prepare a minimal compatibility fix on the current runtime lineage only; keep main3475cf2 and new-contract integration isolated.",
+      "compatibility_candidate_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
+      "compatibility_ci_run_id": 43561071174,
+      "deployment_instruction": "Sol preflight complete; dispatch instruction held. Root must re-check CI and explicitly reassign exact candidate before deployment."
+    },
+    "handoff_entry": "../HANDOFF.md (workspace root; local file, not published)"
   },
   "tasks": [
     {
@@ -1853,21 +1857,23 @@
       "pr_url": null,
       "validation_evidence": [
         "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease.",
-        "Final522ec901 author59 SQLite/PG impact cases passed, immutable queued input and atomic file cleanup. New API only, no push/main/deploy; independent review deferred for urgent current FE compatibility."
+        "Final522ec901 author59 SQLite/PG impact cases passed, immutable queued input and atomic file cleanup. New API only, no push/main/deploy; independent review deferred for urgent current FE compatibility.",
+        "Independent final522ec901 P2: reusable succeeded job restores file but fails to restore original_storage_key/original_deleted_at; upload200 then download404. Preserved /private/tmp/team10-m01-edge-review.4i5xkubw/tests/test_independent_material_admission.py. SQLite/PG4 failed, contention/chunk-cap6 passed. Author fix required."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
       "validation_mode": "task-specific-tests-and-integration",
       "worktree": "BE-task-material-storage",
-      "release_hold": true
+      "release_hold": true,
+      "review_status": "changes_requested"
     },
     {
       "id": "M-02",
       "title": "PDF 분석 작업·OCR·진행·재시도",
       "lane": "materials",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "M-01",
         "AI-01",
@@ -1895,15 +1901,19 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/material-analysis",
+      "base_sha": "522ec901ccebc3158ccfc31b82913c266a5b13a2",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Design investigation only, no implementation/tests. ai_jobs.result lease envelope and schema DTO lease remain unapproved; inspect every writer and retry/token CAS before implementation."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-material-analysis",
+      "release_hold": true
     },
     {
       "id": "M-03",
@@ -2079,8 +2089,8 @@
       "id": "P-02",
       "title": "초기 계획 후보·승인",
       "lane": "planning",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "P-01",
         "O-01",
@@ -2109,15 +2119,19 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
+      "branch": "feat/initial-plan-approval",
+      "base_sha": "00930b93b4dc294d76ed642b87fd259fe00c9790",
+      "head_sha": "cd2238e0a973a7f404535c0f296e6d61b13efa14",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Read-only plan_inputs and tests committedcd2238e:22 SQLite and44 SQLite/PG passed, clean. No public API/preview persistence/approval or placement writes. Existing approved plan draftSubjectIds, SearchLimit error and speed snapshot policy undecided."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-plan-draft",
+      "release_hold": true
     },
     {
       "id": "P-03",
@@ -3837,7 +3851,7 @@
       "id": "COMPAT-01",
       "title": "심사용 퀴즈 제출의3475 요청 계약 복구",
       "lane": "compatibility",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [],
       "write_scope": [
@@ -3859,18 +3873,22 @@
       "optional": false,
       "branch": "fix/submission-quiz-compat",
       "base_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "head_sha": "fc06c0ab7b1843a2c7f050907f6ff87f28398f6f",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
+      "validation_evidence": [
+        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed."
+      ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",
-      "worktree": "BE-fix-submission-quiz-compat"
+      "worktree": "BE-fix-submission-quiz-compat",
+      "review_status": "approved",
+      "ci_run_id": 43561071174
     },
     {
       "id": "COMPAT-02",
       "title": "심사용 수동 기록의 nullable session 계약 복구",
       "lane": "compatibility",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [],
       "write_scope": [
@@ -3890,12 +3908,16 @@
       "optional": false,
       "branch": "fix/submission-study-compat",
       "base_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "head_sha": "e3f9a7bf1471e73f2d75fe30cbc7e633caee2bee",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
+      "validation_evidence": [
+        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed."
+      ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",
-      "worktree": "BE-fix-submission-study-compat"
+      "worktree": "BE-fix-submission-study-compat",
+      "review_status": "approved",
+      "ci_run_id": 43561071174
     }
   ]
 }
