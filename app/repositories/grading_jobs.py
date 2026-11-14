@@ -99,13 +99,38 @@ class GradingJobRepository:
             .order_by(t.quiz_grading_jobs.c.created_at, t.quiz_grading_jobs.c.id).limit(limit)).all()
         return [self.get(user_id, job_id) for job_id in ids]
 
-    def claim(self, user_id, job_id, *, owner: str, now: datetime, lease_for: timedelta) -> dict | None:
+    def pending(self, *, now: datetime, limit: int = 100) -> list[dict]:
+        """Automatic workers never retry failed jobs, even after a key is added."""
+        now = aware_time(now)
+        if type(limit) is not int or limit < 1:
+            raise ApiError("INVALID_INPUT", "작업 조회 개수가 올바르지 않아요", 422)
+        return [dict(row) for row in self.connection.execute(select(
+            t.quiz_grading_jobs.c.id, t.quiz_sessions.c.user_id)
+            .join(t.quiz_answers, t.quiz_grading_jobs.c.answer_id == t.quiz_answers.c.id)
+            .join(t.quiz_answer_heads, t.quiz_answer_heads.c.answer_id == t.quiz_answers.c.id)
+            .join(t.quiz_items, t.quiz_answers.c.quiz_item_id == t.quiz_items.c.id)
+            .join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
+            .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
+            .join(t.units, t.questions.c.unit_id == t.units.c.id)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+            .where(t.quiz_answer_heads.c.quiz_item_id == t.quiz_answers.c.quiz_item_id,
+                t.quiz_answers.c.input_recovered.is_(True), t.quiz_grading_jobs.c.answer_revision == t.quiz_answers.c.revision,
+                t.subjects.c.user_id == t.quiz_sessions.c.user_id,
+                or_(t.quiz_sessions.c.subject_id.is_(None), t.quiz_sessions.c.subject_id == t.subjects.c.id),
+                or_(t.quiz_grading_jobs.c.status == "queued",
+                    and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now)))
+            .order_by(t.quiz_grading_jobs.c.created_at, t.quiz_grading_jobs.c.id).limit(limit)).mappings()]
+
+    def claim(self, user_id, job_id, *, owner: str, now: datetime, lease_for: timedelta, retry_failed: bool = True) -> dict | None:
+        if type(retry_failed) is not bool:
+            raise ApiError("INVALID_INPUT", "재시도 여부가 올바르지 않아요", 422)
         now, owner = aware_time(now), _owner(owner)
         expires = _expiry(now, lease_for)
         job = self._locked(user_id, job_id)
         if not self._is_current(job):
             return None
-        eligible = or_(t.quiz_grading_jobs.c.status.in_(("queued", "failed")),
+        eligible = or_(t.quiz_grading_jobs.c.status.in_(("queued", "failed") if retry_failed else ("queued",)),
                        and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now))
         changed = self.connection.execute(update(t.quiz_grading_jobs).where(
             t.quiz_grading_jobs.c.id == job["id"], t.quiz_grading_jobs.c.answer_revision == job["stored_revision"],
