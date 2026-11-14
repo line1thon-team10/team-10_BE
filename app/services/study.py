@@ -14,15 +14,12 @@ from datetime import date, timedelta
 from sqlalchemy import Connection, func, select
 
 from app.db import schema as t
+from app.domain.progress import PageProgress
 from app.services.task_views import TaskView, unit_no
 
 OPEN_RATE = 70
 STATUS_TO_FRONT = {"planned": "todo", "partial": "partial", "completed": "done", "missed": "none",
                    "carried_over": "none", "excluded": "none"}
-
-
-def pct(a: float, b: float) -> int:
-    return round(a / b * 100) if b else 0
 
 
 @dataclass
@@ -175,8 +172,8 @@ class StudyData:
             "totalCount": len(tasks),
             "donePages": done,
             "totalPages": total,
-            "rate": pct(done, total),
-            "subjectRates": {sid: pct(d, n) for sid, (d, n) in by_subject.items()},
+            "rate": PageProgress(done, total).rate,
+            "subjectRates": {sid: PageProgress(d, n).rate for sid, (d, n) in by_subject.items()},
             "recordedAll": all(x.row["status"] != "planned" for x in tasks) and bool(tasks),
         }
 
