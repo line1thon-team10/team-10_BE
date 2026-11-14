@@ -73,7 +73,7 @@ class DailyTotalsService:
             for task in data.tasks:
                 if task.row['scheduled_date']==day:
                     frozen=stored.get(task.row['subject_id'],{}).get('finalized_at') is not None
-                    if frozen or task.row['status'] not in ('carried_over','excluded'):
+                    if task.row['status'] != 'excluded' and (frozen or task.row['status'] != 'carried_over'):
                         done[task.row['subject_id']]+=task.done_pages
         subjects=[]
         for sid in sorted(current.keys() | stored.keys()):
