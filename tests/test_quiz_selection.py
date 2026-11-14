@@ -147,3 +147,32 @@ def test_manual_unit_without_analysis_evidence_remains_quizless(api_client,progr
     cards=api_client.get('/api/quiz/today',headers={'X-Anonymous-Id':w.user}).json()['data']
     row=next(row for row in cards['subjects'] if row['subjectId']==w.subject['id'])
     assert row['count']==0 and row['hasQuestions'] is False and row['open'] is False
+
+
+@pytest.mark.parametrize('invalid', ['ambiguous_choice', 'outside_pdf'])
+def test_prepared_bank_requires_gradable_answers_and_physical_pdf_bounds(api_client,progress_world,invalid):
+    w=progress_world;unit=w.unit(1,10);w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    for _ in range(4):add_question(w,unit)
+    if invalid=='ambiguous_choice':
+        add_question(w,unit,type='choice',choices=[{'text':'정답'},{'text':'정답'}])
+    else:
+        add_question(w,unit,page=10)
+        w.conn.execute(update(t.materials).where(t.materials.c.id==unit['material_id']).values(page_count=9))
+    response=get(api_client,w)
+    assert response.status_code==404 and response.json()['error']['code']=='NO_QUESTIONS'
+
+
+@pytest.mark.parametrize('source_range,expected', [((1,2),200), ((2,3),404), ((8,8),404)])
+def test_every_source_stays_inside_its_own_concept(api_client,progress_world,source_range,expected):
+    w=progress_world;unit=w.unit(1,10)
+    concept=w.concept(unit,1,2)
+    w.concept(unit,3,10)
+    w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    for _ in range(4):add_question(w,unit,page=1,concept_id=concept['id'])
+    qid=add_question(w,unit,page=1,concept_id=concept['id'])
+    w.conn.execute(t.question_sources.insert().values(id=str(uuid4()),question_id=qid,
+        material_id=unit['material_id'],start_page=source_range[0],end_page=source_range[1],quote='추가 근거'))
+    response=get(api_client,w)
+    assert response.status_code==expected,response.text
+    if expected==404:
+        assert response.json()['error']['code']=='NO_QUESTIONS'

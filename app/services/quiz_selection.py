@@ -85,6 +85,7 @@ class QuizSelection:
 
     def questions(self, subject_id, scopes, difficulty=None):
         units = {uid:u for uid,u in self.data.units.items() if uid in scopes and u['subject_id']==subject_id and u['quiz_enabled'] and u['evidence']}
+        materials = {r['id']:dict(r) for r in self.conn.execute(select(t.materials).where(t.materials.c.id.in_([u['material_id'] for u in units.values()]))).mappings()}
         concepts = {r['id']:dict(r) for r in self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(units))).mappings()}
         questions = [dict(r) for r in self.conn.execute(select(t.questions).where(t.questions.c.unit_id.in_(units))
             .order_by(t.questions.c.code, t.questions.c.id)).mappings()]
@@ -98,9 +99,14 @@ class QuizSelection:
                 continue
             if question['type'] not in ('choice','ox','short','essay') or not (question['prompt'] or '').strip() or not (question['explanation'] or '').strip() or not (question['correct_answer'] or '').strip():
                 continue
+            concept_scope = None
             if question['concept_id'] is not None:
                 concept = concepts.get(question['concept_id'])
                 if concept is None or concept['unit_id'] != uid or not concept['in_scope'] or concept['retired_at'] is not None:
+                    continue
+                try:
+                    concept_scope = [PageSpan(unit['material_id'], concept['start_page'], concept['end_page'])]
+                except ValueError:
                     continue
             elif question['origin']=='generated':
                 continue
@@ -109,6 +115,8 @@ class QuizSelection:
                 if not isinstance(choices,list) or len(choices)<2 or (question['type']=='ox' and len(choices)!=2):
                     continue
                 if any(not isinstance(c,dict) or not isinstance(c.get('text'),str) or not c['text'].strip() for c in choices):
+                    continue
+                if sum(c['text']==question['correct_answer'] for c in choices)!=1:
                     continue
             elif choices:
                 continue
@@ -121,7 +129,9 @@ class QuizSelection:
                     span = PageSpan(source['material_id'], source['start_page'], source['end_page'])
                 except ValueError:
                     acceptable=False; break
-                if (source['material_id']!=unit['material_id'] or subtract([span], scopes[uid])
+                pages=materials[unit['material_id']]['page_count']
+                if (source['material_id']!=unit['material_id'] or pages is None or span.end>pages or subtract([span], scopes[uid])
+                    or (concept_scope is not None and subtract([span], concept_scope))
                     or not isinstance(source['quote'],str) or not source['quote'].strip()):
                     acceptable=False; break
             if acceptable:
@@ -237,7 +247,7 @@ class QuizSelection:
             chosen,new_scopes=self.fresh(subject_id,scopes,difficulty,sessions)
         except ApiError as error:
             if error.code!='NO_QUESTIONS' or current is None: raise
-            return current
+            chosen, new_scopes = [], {}
         chosen = self.reviews(subject_id) + chosen
         if current:
             self.append(current['id'],chosen,new_scopes)

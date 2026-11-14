@@ -60,11 +60,12 @@ def test_pending_and_failed_grading_preserve_inputs_until_original_result_can_pu
     worker_jobs(conn,case,failure=True)
     close(conn,case)
     assert get_result(api_client,case).status_code==503
+    assert 'queued' in list(conn.scalars(select(t.quiz_grading_jobs.c.status)))
     assert facts(conn,case)=={'attempts':[],'history':[]}
     original=QuizAnswerRepository(conn).list_current(case['user'],case['quiz'])
     conn.execute(update(t.users).where(t.users.c.id==case['user']).values(demo_date=DAY+timedelta(days=1)))
     conn.commit()
-    worker_jobs(conn,case,retry=True)
+    worker_jobs(conn,case,retry=False)
     response=get_result(api_client,case);assert response.status_code==200,response.text
     assert response.json()['data']['summary']['total']==2
     assert QuizAnswerRepository(conn).list_current(case['user'],case['quiz'])==original

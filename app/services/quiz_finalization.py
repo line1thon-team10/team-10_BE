@@ -235,7 +235,7 @@ class QuizFinalizationService:
         return deepcopy(stored["result_snapshot"])
 
 
-def finish_carried(connection, user, quiz_id, *, at=None):
+def finish_carried(connection, user, quiz_id, *, at=None, retry_failed=False):
     """Publish already graded saved answers; this function never invokes a provider."""
     now = at or now_utc()
     user = lock_quiz_user(connection, user)
@@ -246,6 +246,15 @@ def finish_carried(connection, user, quiz_id, *, at=None):
         return None
     if state['result_snapshot'] is not None:
         return deepcopy(state['result_snapshot'])
+    if retry_failed:
+        jobs=GradingJobRepository(connection)
+        for answer in state['sealed_answers']:
+            job_id=connection.scalar(select(t.quiz_grading_jobs.c.id).where(t.quiz_grading_jobs.c.answer_id==answer['answerId']))
+            if job_id is None:
+                continue
+            job=jobs.get(user['id'],job_id)
+            if job['status']=='failed':
+                jobs.submission_retry(user['id'],job_id,revision=answer['revision'],now=now)
     today = user.get('demo_date') or now.astimezone(ZoneInfo(user['timezone'])).date()
     view = QuizService(connection,user,today)
     service = QuizFinalizationService(connection.engine,clock=lambda:now)
