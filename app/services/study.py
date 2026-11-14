@@ -187,7 +187,7 @@ class StudyData:
         planned, completed = [], []
         for row in task.paged:
             unit = self.units.get(row["unit_id"])
-            if unit is None or (quiz_only and not unit["quiz_enabled"]):
+            if unit is None or (quiz_only and (not unit["quiz_enabled"] or not unit["evidence"])):
                 continue
             scope = intersect(self.unit_scopes[unit["id"]],
                               (PageSpan(unit["material_id"], row["start_page"], row["end_page"]),))
