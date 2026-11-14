@@ -18,6 +18,7 @@ from sqlalchemy import Connection, select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.services.study import StudyData, Task, unit_no
+from app.domain.ranges import PageSpan, normalize, subtract, page_count
 
 CARRY_RATE = 0.5
 KEEP_NOTE = "보충 학습은 어느 안에서도 미루지 않아요"
@@ -39,29 +40,25 @@ def _mdw(d: date) -> str:
 
 
 def remaining_ranges(task: Task) -> list[dict]:
-    """계획 범위에서 기록한 범위를 뺀 남은 범위"""
-    done = defaultdict(set)
-    for r in task.done_ranges:
-        if r["start_page"] is not None:
-            done[r["unit_id"]].update(range(r["start_page"], r["end_page"] + 1))
-    out = []
+    """Subtract actual PDF-page unions while retaining the originating range IDs."""
+    units = {r["unit_id"]: r.get("material_id", r["unit_id"]) for r in task.paged}
+    completed = [PageSpan(units[r["unit_id"]], r["start_page"], r["end_page"])
+                 for r in task.done_ranges if r["unit_id"] in units
+                 and r["start_page"] is not None and r["end_page"] is not None]
+    seen, out = [], []
     for r in task.paged:
-        pages = [p for p in range(r["start_page"], r["end_page"] + 1) if p not in done[r["unit_id"]]]
-        if not pages:
-            continue
-        start = prev = pages[0]
-        for p in pages[1:] + [None]:
-            if p is not None and p == prev + 1:
-                prev = p
-                continue
-            out.append({"unit_id": r["unit_id"], "start_page": start, "end_page": prev})
-            if p is not None:
-                start = prev = p
+        material = units[r["unit_id"]]
+        source = PageSpan(material, r["start_page"], r["end_page"])
+        for part in subtract([source], [*completed, *seen]):
+            out.append({"unit_id": r["unit_id"], "material_id": material,
+                        "source_range_id": r.get("id"), "start_page": part.start, "end_page": part.end})
+        seen.append(source)
     return out
 
 
 def _pages(ranges) -> int:
-    return sum(r["end_page"] - r["start_page"] + 1 for r in ranges)
+    return page_count(PageSpan(r.get("material_id", r["unit_id"]), r["start_page"], r["end_page"])
+                      for r in ranges)
 
 
 class Planner:
@@ -74,8 +71,8 @@ class Planner:
 
     # ---------- 기준 ----------
     def daily_average(self, subject_id: str) -> float:
-        scope = sum(u["end_page"] - u["start_page"] + 1 for u in self.data.units.values()
-                    if u["subject_id"] == subject_id and u["in_scope"] and u["start_page"] is not None)
+        scope = page_count(span for uid, spans in self.data.unit_scopes.items()
+                           if self.data.units[uid]["subject_id"] == subject_id for span in spans)
         days = {x.row["scheduled_date"] for x in self.data.tasks  # 보충만 있던 날도 '태스크가 있는 날'
                 if x.row["subject_id"] == subject_id and x.row["origin_task_id"] is None}
         return scope / len(days) if days else 0
