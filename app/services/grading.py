@@ -107,7 +107,7 @@ def _hash(value):
 
 
 def _json_row(row):
-    return {str(key): ((value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
+    return {str(key): ((value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
                   if isinstance(value, datetime) else value.isoformat() if isinstance(value, date) else value)
             for key, value in dict(row).items()}
 

@@ -1,6 +1,7 @@
 from datetime import timedelta
 import time
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, event, select, text, update
@@ -11,12 +12,18 @@ from app.core.responses import ApiError
 from app.db import schema as t
 from app.repositories.grading_jobs import GradingJobRepository
 from app.repositories.quiz_answers import QuizAnswerRepository
-from app.services.grading import GradingBudget, GradingService, capture_snapshot, validated_completed_result
+from app.services.grading import GradingBudget, GradingService, _json_row, capture_snapshot, validated_completed_result
 from test_grading_adapter import grade
 from test_quiz_storage import DAY, NOW, make_case, save
 
 
 FAKE_PROVIDER = ProviderSpec(FunctionRef("test_grading_adapter", "fake_provider"))
+
+
+def test_snapshot_timestamp_hashes_do_not_depend_on_database_timezone_representation():
+    utc = _json_row({"at": NOW})
+    assert _json_row({"at": NOW.astimezone(ZoneInfo("Asia/Seoul"))}) == utc
+    assert _json_row({"at": NOW.replace(tzinfo=None)}) == utc
 
 
 @pytest.fixture
