@@ -10,7 +10,7 @@ from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.ranges import PageSpan, intersect, normalize, page_count, subtract
 from app.repositories.locking import lock_user, UserBusyError
-from app.services.study import StudyData
+from app.services.study import StudyData, Task
 
 
 class QuizSelection:
@@ -35,7 +35,7 @@ class QuizSelection:
         if subject_id not in self.data.subject_by_id:
             raise ApiError('NO_QUIZ', '과목을 찾지 못했어요', 404)
         spans = defaultdict(list)
-        tasks = self.data.tasks_on(self.today) if today_only else self.data.tasks
+        tasks = self.data.tasks_on(self.today) if today_only else [*self.data.tasks, *self.planless_reviews(subject_id)]
         for task in tasks:
             if task.row['subject_id'] != subject_id or task.row['scheduled_date'] > self.today:
                 continue
@@ -49,6 +49,26 @@ class QuizSelection:
                     if r['unit_id']==unit['id'] and r['start_page'] is not None and r['end_page'] is not None]
                 spans[unit['id']].extend(intersect(scope, done))
         return {uid: normalize(parts) for uid,parts in spans.items() if parts}
+
+    def planless_reviews(self, subject_id):
+        """Direct relearning evidence is owned history, never a daily placement."""
+        result=[]
+        rows=self.conn.execute(select(t.study_tasks).join(t.subjects,t.subjects.c.id==t.study_tasks.c.subject_id)
+            .where(t.subjects.c.user_id==self.user['id'],t.study_tasks.c.subject_id==subject_id,
+                t.study_tasks.c.plan_id.is_(None),t.study_tasks.c.task_type=='review')).mappings()
+        for row in rows:
+            task=Task(dict(row))
+            task.ranges=[dict(r) for r in self.conn.execute(select(t.study_task_ranges,t.units.c.material_id)
+                .join(t.units,t.units.c.id==t.study_task_ranges.c.unit_id).join(t.materials,t.materials.c.id==t.units.c.material_id)
+                .where(t.study_task_ranges.c.task_id==row['id'],t.materials.c.subject_id==subject_id)).mappings()]
+            record=self.conn.execute(select(t.study_records).where(t.study_records.c.task_id==row['id'])
+                .order_by(t.study_records.c.recorded_at.desc(),t.study_records.c.id.desc())).mappings().first()
+            if record is not None and record['study_date']<=self.today:
+                task.record=dict(record)
+                task.done_ranges=[dict(r) for r in self.conn.execute(select(t.study_record_ranges)
+                    .where(t.study_record_ranges.c.record_id==record['id'])).mappings()]
+                result.append(task)
+        return result
 
     def difficulty(self, unit_ids, requested):
         if requested is not None and requested not in ('low','mid','high'):
