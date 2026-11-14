@@ -1,5 +1,7 @@
 """Durable quiz storage primitives. The caller owns the outer transaction."""
 from dataclasses import dataclass
+from contextlib import contextmanager
+from copy import deepcopy
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -55,11 +57,51 @@ class AnswerSave:
 
 
 class QuizAnswerRepository:
+    _CHECKED_ITEMS_KEY = "quiz_submission_checked_items"
+
     def __init__(self, connection: Connection):
         self.connection = connection
 
+    @contextmanager
+    def checked_items(self, user_id, quiz_id):
+        """Q-05 only: reuse owned item reads inside one locked DB transaction.
+
+        The scope may write answers/jobs/finalization facts, never question or
+        material identity. No connection/transaction or row escapes the scope.
+        """
+        user_id, quiz_id = normalized_uuid(user_id), normalized_uuid(quiz_id)
+        info = self.connection.info
+        info.pop(self._CHECKED_ITEMS_KEY, None)
+        self.lock_quiz(user_id, quiz_id)
+        rows = self.items(user_id, quiz_id)
+        checked = {"connection": self.connection, "transaction": self.connection.get_transaction(),
+                   "user_id": user_id, "quiz_id": quiz_id, "rows": {row["id"]: row for row in rows}}
+        info[self._CHECKED_ITEMS_KEY] = checked
+        try:
+            yield self
+        finally:
+            if info.get(self._CHECKED_ITEMS_KEY) is checked:
+                info.pop(self._CHECKED_ITEMS_KEY, None)
+
+    def _checked_items(self, user_id, quiz_id):
+        checked = self.connection.info.get(self._CHECKED_ITEMS_KEY)
+        if checked is None:
+            return None
+        try:
+            same_owner = (checked["user_id"], checked["quiz_id"]) == (normalized_uuid(user_id), normalized_uuid(quiz_id))
+        except ApiError:
+            self.connection.info.pop(self._CHECKED_ITEMS_KEY, None)
+            raise
+        if (not same_owner or checked["connection"] is not self.connection
+                or checked["transaction"] is not self.connection.get_transaction()
+                or not checked["transaction"].is_active):
+            self.connection.info.pop(self._CHECKED_ITEMS_KEY, None)
+            return None
+        return checked["rows"]
+
     def quiz(self, user_id, quiz_id) -> dict:
         user_id, quiz_id = normalized_uuid(user_id), normalized_uuid(quiz_id)
+        self._checked_items(user_id, quiz_id)  # crossing ownership also ends an active checked scope
         row = self.connection.execute(select(t.quiz_sessions).outerjoin(
             t.subjects, t.quiz_sessions.c.subject_id == t.subjects.c.id).where(
             t.quiz_sessions.c.id == quiz_id, t.quiz_sessions.c.user_id == user_id,
@@ -79,6 +121,9 @@ class QuizAnswerRepository:
         return self.quiz(user_id, quiz_id)
 
     def items(self, user_id, quiz_id) -> list[dict]:
+        checked = self._checked_items(user_id, quiz_id)
+        if checked is not None:
+            return deepcopy(list(checked.values()))
         quiz = self.quiz(user_id, quiz_id)
         rows = self.connection.execute(select(t.quiz_items, t.questions.c.type, t.questions.c.choices,
             t.questions.c.unit_id, t.questions.c.concept_id, t.concepts.c.unit_id.label("concept_unit_id"),
@@ -99,7 +144,9 @@ class QuizAnswerRepository:
 
     def item(self, user_id, quiz_id, item_id) -> dict:
         item_id = normalized_uuid(item_id)
-        item = next((item for item in self.items(user_id, quiz_id) if item["id"] == item_id), None)
+        checked = self._checked_items(user_id, quiz_id)
+        item = (deepcopy(checked.get(item_id)) if checked is not None else
+                next((item for item in self.items(user_id, quiz_id) if item["id"] == item_id), None))
         if item is None:
             raise ApiError("INVALID_INPUT", "현재 퀴즈의 문항이 아니에요", 422)
         return item
@@ -160,6 +207,32 @@ class QuizAnswerRepository:
                 quiz_session_id=quiz["id"], sealed_at=now, answer_set_hash=digest,
                 input_recovered=True, sealed_answers=sealed, legacy=False))
             return self.submission(user_id, quiz["id"])
+
+    def seal_carried(self, user_id, quiz_id, *, now):
+        """Close an elapsed daily set without inventing answers for skipped items."""
+        now = aware_time(now)
+        quiz = self.lock_quiz(user_id, quiz_id)
+        if quiz['type'] != 'daily':
+            raise ApiError('INVALID_INPUT', '일일 퀴즈만 날짜 마감할 수 있어요', 422)
+        state = self.submission(user_id, quiz_id)
+        if quiz['status'] == 'submitted':
+            return state
+        if state is None:
+            current = self.list_current(user_id, quiz_id)
+            if any(not answer['input_recovered'] for answer in current):
+                raise ApiError('ANSWER_CONFLICT', '원본 답안을 확인할 수 없어요', 409)
+            if current:
+                sealed = [{'questionId':answer['quiz_item_id'], 'answerId':answer['id'],
+                    'revision':answer['revision'], 'answerHash':answer['answer_hash']}
+                    for answer in sorted(current,key=lambda row:row['quiz_item_id'])]
+                digest = canonical_hash([{key:answer[key] for key in ('questionId','revision','answerHash')} for answer in sealed])
+                self.connection.execute(t.quiz_submission_states.insert().values(quiz_session_id=quiz_id,
+                    sealed_at=now,answer_set_hash=digest,input_recovered=True,sealed_answers=sealed,legacy=False))
+                state = self.submission(user_id, quiz_id)
+        self.connection.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==quiz_id).values(
+            status='carried_over', finalized_at=quiz['finalized_at'] or now,
+            grading_status='processing' if state is not None and state['result_snapshot'] is None else quiz['grading_status']))
+        return state
 
     def store_result_snapshot(self, user_id, quiz_id, *, expected_hash: str | None, snapshot: dict,
                               provenance: str, schema_version: str, now: datetime) -> dict:

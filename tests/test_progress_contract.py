@@ -345,7 +345,7 @@ def test_quiz_preserves_distinct_pdfs_and_counts_all_eligible_units(progress_wor
     assert not progress["open"]
     tomorrow = world.day + timedelta(days=1)
     world.task((manual, 1, 10), (first, 1, 10), (second, 1, 10), (first, 1, 10), day=tomorrow)
-    assert world.data().quiz_counts(tomorrow) == {world.subject["id"]: 10}
+    assert world.data().quiz_counts(tomorrow) == {world.subject["id"]: 0}  # No completed evidence or prepared bank.
 
 
 @pytest.mark.parametrize("other_done,overall_open", [(0, False), (6, True)])

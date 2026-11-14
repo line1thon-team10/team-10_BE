@@ -6,6 +6,7 @@
 """
 import re
 import uuid
+from copy import deepcopy
 from collections import defaultdict
 from datetime import date, datetime, timezone
 
@@ -43,7 +44,7 @@ class QuizService:
         self.data = StudyData(conn, user["id"])
 
     # ---------- 조회 ----------
-    def session(self, key: str, quiz_id: str | None = None) -> dict:
+    def session(self, key: str, quiz_id: str | None = None, difficulty: str | None = None) -> dict:
         """명시한 quiz_id는 새 세트를 만들지 않고 경로·소유 과목까지 검증한다."""
         owned_subjects = select(t.subjects.c.id).where(t.subjects.c.user_id == self.user["id"])
         s = self.conn.execute(select(t.quiz_sessions).where(
@@ -54,16 +55,38 @@ class QuizService:
         if s:
             if quiz_id is not None and key not in (s["id"], s["subject_id"]):
                 raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
+            if difficulty is not None and difficulty != s['selected_difficulty']:
+                raise ApiError('QUIZ_DIFFICULTY_CONFLICT', '이미 준비된 퀴즈의 난이도는 바꿀 수 없어요', 409)
             return dict(s)
         if quiz_id is not None or key not in self.data.subject_by_id:
             raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
-        return self.ensure_daily(key)
+        return self.ensure_daily(key, difficulty)
 
     def daily_sessions(self, subject_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(select(t.quiz_sessions).where(
             t.quiz_sessions.c.user_id == self.user["id"], t.quiz_sessions.c.subject_id == subject_id,
             t.quiz_sessions.c.quiz_date == self.today, t.quiz_sessions.c.type == "daily")
             .order_by(t.quiz_sessions.c.created_at)).mappings()]
+
+    def result_session(self, key: str, quiz_id: str | None = None) -> dict:
+        """Result reads never generate another daily set."""
+        if quiz_id is not None:
+            return self.session(key, quiz_id=quiz_id)
+        direct = self.conn.scalar(select(t.quiz_sessions.c.id).where(
+            t.quiz_sessions.c.id == key, t.quiz_sessions.c.user_id == self.user["id"]))
+        if direct:
+            return QuizAnswerRepository(self.conn).quiz(self.user["id"], direct)
+        subject = self.conn.scalar(select(t.subjects.c.id).where(
+            t.subjects.c.id == key, t.subjects.c.user_id == self.user["id"]))
+        if subject is None:
+            raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
+        latest = self.conn.scalar(select(t.quiz_sessions.c.id).where(
+            t.quiz_sessions.c.user_id == self.user["id"], t.quiz_sessions.c.subject_id == subject,
+            t.quiz_sessions.c.type == "daily").order_by(
+                t.quiz_sessions.c.quiz_date.desc(), t.quiz_sessions.c.created_at.desc(), t.quiz_sessions.c.id.desc()))
+        if latest is None:
+            raise ApiError("NO_RESULT", "아직 제출한 퀴즈가 없어요", 404)
+        return QuizAnswerRepository(self.conn).quiz(self.user["id"], latest)
 
     def items(self, session_id: str) -> list[dict]:
         rows = self.conn.execute(
@@ -83,48 +106,16 @@ class QuizService:
         if out:
             srcs = {}
             for r in self.conn.execute(select(t.question_sources).where(
-                    t.question_sources.c.question_id.in_([x["question_id"] for x in out]))).mappings():
+                    t.question_sources.c.question_id.in_([x["question_id"] for x in out])).order_by(t.question_sources.c.id)).mappings():
                 srcs.setdefault(r["question_id"], dict(r))
             for x in out:
                 x["source"] = srcs.get(x["question_id"])
         return out
 
     # ---------- 구성 ----------
-    def ensure_daily(self, subject_id: str) -> dict:
-        """그 과목의 오늘 퀴즈. 없으면 규칙대로 만들어요 (새 문제 5/단원 + 취약 문항)"""
-        open_ones = [s for s in self.daily_sessions(subject_id) if s["status"] in ("ready", "in_progress")]
-        if open_ones:
-            return open_ones[0]
-        done = [s for s in self.daily_sessions(subject_id) if s["status"] == "submitted"]
-        if done:
-            return done[-1]
-        studied_units = []
-        for x in self.data.tasks_on(self.today):
-            unit = self.data.unit_of(x)
-            if x.row["subject_id"] == subject_id and unit and unit["id"] not in studied_units:
-                studied_units.append(unit["id"])
-        if not studied_units:
-            raise ApiError("NO_QUIZ", "오늘 이 과목은 공부한 범위가 없어서 퀴즈가 없어요", 404)
-        attempted = set(self.conn.execute(
-            select(t.quiz_items.c.question_id).join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
-            .where(t.quiz_sessions.c.user_id == self.user["id"])).scalars())
-        chosen: list[tuple[str, str]] = []
-        weak = self.conn.execute(
-            select(t.weak_questions.c.question_id).join(t.questions, t.weak_questions.c.question_id == t.questions.c.id)
-            .join(t.units, t.questions.c.unit_id == t.units.c.id)
-            .join(t.materials, t.units.c.material_id == t.materials.c.id)
-            .where(t.materials.c.subject_id == subject_id, t.weak_questions.c.status == "active",
-                   t.weak_questions.c.next_review_date <= self.today)).scalars().all()
-        chosen += [(q, "weak") for q in weak]
-        for uid in studied_units:
-            fresh = self.conn.execute(
-                select(t.questions.c.id).where(t.questions.c.unit_id == uid, t.questions.c.difficulty == "low",
-                                               t.questions.c.origin != "generated")
-                .order_by(t.questions.c.code)).scalars().all()
-            chosen += [(q, "new") for q in [q for q in fresh if q not in attempted][:NEW_PER_UNIT]]
-        if not chosen:
-            raise ApiError("NO_QUESTIONS", "이 범위 문항이 아직 준비되지 않았어요", 404)
-        return self._create(subject_id, "daily", chosen)
+    def ensure_daily(self, subject_id: str, difficulty: str | None = None) -> dict:
+        from app.services.quiz_selection import QuizSelection
+        return QuizSelection(self.conn, self.user, self.today).ensure_daily(subject_id, difficulty)
 
     def _create(self, subject_id, qtype, chosen, parent=None) -> dict:
         sid = str(uuid.uuid4())
@@ -138,32 +129,9 @@ class QuizService:
                 inclusion_reason=reason))
         return dict(self.conn.execute(select(t.quiz_sessions).where(t.quiz_sessions.c.id == sid)).mappings().one())
 
-    def make_more(self, subject_id: str, unit_number: int) -> dict:
-        base = next((s for s in reversed(self.daily_sessions(subject_id)) if s["status"] == "submitted"), None)
-        if not base:
-            raise ApiError("NO_RESULT", "오늘 퀴즈를 먼저 풀어 주세요")
-        unit = next((u for u in self.data.units.values()
-                     if u["subject_id"] == subject_id and unit_no(u["code"]) == unit_number), None)
-        if not unit:
-            raise ApiError("UNIT_NOT_FOUND", "단원을 찾지 못했어요", 404)
-        already = self.conn.execute(select(t.quiz_sessions.c.id).join(
-            t.quiz_scopes, t.quiz_scopes.c.quiz_session_id == t.quiz_sessions.c.id).where(
-            t.quiz_sessions.c.parent_quiz_session_id == base["id"], t.quiz_scopes.c.unit_id == unit["id"])).first()
-        if already:
-            raise ApiError("ALREADY", "이 단원은 오늘 더 풀기를 했어요")
-        attempted = set(self.conn.execute(
-            select(t.quiz_items.c.question_id).join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
-            .where(t.quiz_sessions.c.user_id == self.user["id"])).scalars())
-        pool = [q for q in self.conn.execute(select(t.questions.c.id).where(
-            t.questions.c.unit_id == unit["id"], t.questions.c.difficulty == "low").order_by(t.questions.c.code)).scalars()
-            if q not in attempted][:MORE_COUNT]
-        if not pool:
-            raise ApiError("NO_QUESTIONS", "이 단원은 더 풀 문항이 없어요", 404)
-        s = self._create(subject_id, "extra", [(q, "extra") for q in pool], parent=base["id"])
-        self.conn.execute(t.quiz_scopes.insert().values(
-            id=str(uuid.uuid4()), quiz_session_id=s["id"], unit_id=unit["id"],
-            start_page=unit["start_page"] or 0, end_page=unit["end_page"] or 0))
-        return {"quizId": s["id"], "count": len(pool)}
+    def make_more(self, subject_id: str, unit_id: str, difficulty: str | None = None) -> dict:
+        from app.services.extra_quiz import create_extra
+        return create_extra(self.conn, self.user, self.today, subject_id, unit_id, difficulty)
 
     # ---------- 화면 모양 ----------
     def round_of(self, items) -> str:
@@ -172,9 +140,10 @@ class QuizService:
         return self._round(fresh or {x["unit_id"] for x in items})
 
     def _round(self, unit_ids) -> str:
-        passes = self.conn.execute(select(func.max(t.learning_passes.c.pass_number)).where(
-            t.learning_passes.c.unit_id.in_(list(unit_ids)), t.learning_passes.c.invalidated_at.is_(None))).scalar()
-        return f"{max(1, passes or 1)}회독"
+        rounds = dict(self.conn.execute(select(t.learning_passes.c.unit_id, func.count(t.learning_passes.c.id)).where(
+            t.learning_passes.c.unit_id.in_(list(unit_ids)), t.learning_passes.c.invalidated_at.is_(None))
+            .group_by(t.learning_passes.c.unit_id)).all())
+        return f"{max(1, min((rounds.get(uid, 0) for uid in unit_ids), default=0))}회독"
 
     def composition(self, items) -> tuple[str, list[str]]:
         by_unit = defaultdict(list)
@@ -257,37 +226,6 @@ class QuizService:
                 return saved
             raise ApiError("AI_FAILED", "서술형 채점을 하지 못했어요. 답안을 유지한 채 다시 제출해 주세요.", 503)
 
-    def submit(self, session: dict, answers: list[dict]) -> None:
-        if session["status"] == "submitted":
-            raise ApiError("QUIZ_FINALIZED", "이미 제출한 퀴즈예요", 409)
-        items = self.items(session["id"])
-        by_item = self._validated_answers(items, answers)
-        now = _now()
-        fallback = False
-        for x in items:
-            a = by_item[x["item_id"]]
-            score, good, miss, status = None, None, None, "graded"
-            if x["type"] in ("choice", "ox"):
-                picked = x["choices"][a["choice"]]["text"]
-                answer, correct = str(picked or ""), _norm(picked) == _norm(x["correct_answer"])
-            elif x["type"] == "short":
-                answer = a["text"]
-                correct = bool(answer.strip()) and _norm(answer) == _norm(x["correct_answer"])
-            else:
-                answer = a["text"]
-                score, good, miss, status = self._grade_essay(x, answer)
-                correct = score >= 85
-                fallback = fallback or status == "fallback"
-            self.conn.execute(t.quiz_attempts.insert().values(
-                id=str(uuid.uuid4()), quiz_item_id=x["item_id"], answer=answer, confidence=a["confidence"],
-                is_correct=correct, grading_status=status, essay_score=score, got_points=good, missing_points=miss,
-                answered_at=now, answered_date=self.today, finalized_at=now, graded_at=now, mastery_applied_at=now))
-            self._update_weak(x["question_id"], correct and a["confidence"] == "sure", now)
-        self.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == session["id"]).values(
-            status="submitted", current_position=len(items), grading_status="completed", is_fallback=fallback,
-            submitted_at=now, finalized_at=now, graded_at=now))
-        self._recalc_mastery(session["id"], {x["unit_id"] for x in items})
-
     def _update_weak(self, question_id: str, sure_correct: bool, now) -> None:
         """취약 문항: 1일 후 → 3일 후 두 번 다 확실로 맞히면 해제, 중간에 틀리면 처음부터 (4-3)"""
         w = self.conn.execute(select(t.weak_questions).where(t.weak_questions.c.question_id == question_id)).mappings().first()
@@ -329,7 +267,7 @@ class QuizService:
             .join(t.materials, t.units.c.material_id == t.materials.c.id)
             .where(t.questions.c.unit_id.in_(unit_ids), t.quiz_sessions.c.user_id == self.user["id"],
                    t.quiz_sessions.c.subject_id.is_(None) | (t.quiz_sessions.c.subject_id == t.materials.c.subject_id),
-                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
                    t.quiz_sessions.c.grading_status == "completed", t.quiz_attempts.c.finalized_at.is_not(None),
                    t.quiz_attempts.c.graded_at.is_not(None), t.quiz_attempts.c.grading_status.in_(("graded", "fallback")),
                    t.quiz_attempts.c.is_correct.is_not(None), t.quiz_attempts.c.answered_date <= self.today)
@@ -338,7 +276,7 @@ class QuizService:
             .join(t.quiz_sessions, t.mastery_history.c.quiz_session_id == t.quiz_sessions.c.id)
             .where(t.mastery_history.c.unit_id.in_(unit_ids), t.mastery_history.c.score < 80,
                    t.mastery_history.c.recorded_date <= self.today, t.quiz_sessions.c.user_id == self.user["id"],
-                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
                    t.quiz_sessions.c.grading_status == "completed")
             .order_by(t.mastery_history.c.recorded_date, t.mastery_history.c.created_at, t.mastery_history.c.id)).mappings().all()
         # S-03 will supply verified current-scope eligibility. Legacy unit flags,
@@ -348,7 +286,7 @@ class QuizService:
     def _recalc_mastery(self, quiz_session_id: str, unit_ids: set[str]) -> None:
         finalized = self.conn.scalar(select(t.quiz_sessions.c.id).where(
             t.quiz_sessions.c.id == quiz_session_id, t.quiz_sessions.c.user_id == self.user["id"],
-            t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+            t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
             t.quiz_sessions.c.grading_status == "completed"))
         if finalized is None:
             raise ValueError("Mastery requires a finalized owned quiz set")
@@ -375,33 +313,92 @@ class QuizService:
                 daily_increase_limit=r.daily_increase_limit, created_at=now))
 
     # ---------- 결과 ----------
-    def result_view(self, session: dict) -> dict:
-        if session["status"] != "submitted":
+    def _result_evidence(self, source):
+        if source is None:
+            return None
+        material = self.conn.execute(select(t.materials).join(t.subjects,
+            t.materials.c.subject_id == t.subjects.c.id).where(t.materials.c.id == source["material_id"],
+                t.subjects.c.user_id == self.user["id"])).mappings().first()
+        start, end, quote = source["start_page"], source["end_page"], source["quote"]
+        if (material is None or type(material["page_count"]) is not int
+                or type(start) is not int or type(end) is not int
+                or not 1 <= start <= end <= material["page_count"] or type(quote) is not str or not quote.strip()):
+            return None
+        # No writer/version currently establishes the shape of highlight JSON.
+        # Keep verified citation navigation without inventing rectangle geometry.
+        return {"materialId": material["id"], "page": start, "quote": quote, "rects": []}
+
+    def result_view(self, session: dict, *, seen=frozenset()) -> dict:
+        repo = QuizAnswerRepository(self.conn)
+        repo.items(self.user["id"], session["id"])
+        state = repo.submission(self.user["id"], session["id"])
+        if session['status']=='carried_over' and state is not None and not state['legacy'] and state['result_snapshot'] is None:
+            from app.services.quiz_finalization import finish_carried
+            finish_carried(self.conn,self.user,session['id'])
+            state = repo.submission(self.user['id'],session['id'])
+        if state is not None and state["result_snapshot"] is not None:
+            result = deepcopy(state["result_snapshot"])
+        else:
+            if state is not None and not state["legacy"]:
+                raise ApiError("AI_FAILED", "채점이 아직 끝나지 않았어요", 503)
+            if session["status"] != "submitted":
+                raise ApiError("NO_RESULT", "아직 제출한 퀴즈가 없어요", 404)
+            from app.services.quiz_finalization import legacy_result
+            result = legacy_result(self.conn, self.user["id"], session["id"], seen=seen)
+        if session["type"] != "extra":
+            result["more"] = self._completed_more(session, seen=seen)
+        return result
+
+    def _completed_more(self, session: dict, *, seen=frozenset()) -> list[dict]:
+        # Compose only published child snapshots on a copy. POST retries keep
+        # replaying the original snapshot even when GET later has more results.
+        extras = self.conn.execute(select(t.quiz_sessions).join(t.quiz_submission_states,
+            t.quiz_submission_states.c.quiz_session_id == t.quiz_sessions.c.id).where(
+            t.quiz_sessions.c.parent_quiz_session_id == session["id"],
+            t.quiz_sessions.c.user_id == self.user["id"],
+            t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.grading_status == "completed",
+            t.quiz_sessions.c.finalized_at.is_not(None),
+            t.quiz_submission_states.c.result_snapshot.is_not(None)).order_by(
+                t.quiz_sessions.c.created_at, t.quiz_sessions.c.id)).mappings().all()
+        visited = seen | {session["id"]}
+        return [self.result_view(dict(extra), seen=visited) for extra in extras if extra["id"] not in visited]
+
+    def _build_result_view(self, session: dict, *, before_blocks: dict | None = None, seen=frozenset(), item_ids=None) -> dict:
+        if session["status"] not in ("submitted", "carried_over"):
             raise ApiError("NO_RESULT", "아직 푼 퀴즈가 없어요", 404)
         data = StudyData(self.conn, self.user["id"])  # 채점 뒤 점수로 다시 읽어요
+        # Archived/retired objects still identify historical result facts.
+        units = {row["id"]: dict(row) for row in self.conn.execute(select(t.units)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+            .where(t.subjects.c.user_id == self.user["id"])).mappings()}
         items = self.items(session["id"])
+        if item_ids is not None:
+            items = [item for item in items if item["item_id"] in item_ids]
         out_items = []
         for i, x in enumerate(items):
             src = x.get("source")
+            evidence = self._result_evidence(src)
             essay = x["type"] == "essay"
             out_items.append({
-                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(units[x["unit_id"]]["code"]),
                 "materialId": x["material_id"], "unitId": x["unit_id"],
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
-                "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
+                "prompt": x["prompt"], "page": f"p.{evidence['page']}" if evidence else None,
                 "confidence": x["confidence"], "correct": bool(x["is_correct"]),
                 "score": x["essay_score"] if essay else None,
                 "feedback": {"good": " ".join(x["got_points"] or []), "miss": " ".join(x["missing_points"] or [])}
                 if essay else None,
                 "answer": x["correct_answer"], "explanation": x["explanation"],
-                "evidence": {"materialId": src["material_id"], "page": src["start_page"], "quote": src["quote"]}
-                if src else None,
+                "evidence": evidence,
             })
         hist = self.conn.execute(select(t.mastery_history).where(
             t.mastery_history.c.quiz_session_id == session["id"])).mappings().all()
         unit_changes, book_changes = [], []
         for h in hist:
-            u = data.units[h["unit_id"]]
+            if h["unit_id"] not in units:
+                raise ApiError("NO_RESULT", "결과 단원의 소유권을 확인하지 못했어요", 404)
+            u = units[h["unit_id"]]
             no, title = unit_no(u["code"]), u["title"]
             unit_changes.append({"materialId": u["material_id"], "unitId": u["id"],
                                  "unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
@@ -409,23 +406,26 @@ class QuizService:
             unit_tasks = [x for x in data.tasks if data.unit_of(x) and data.unit_of(x)["id"] == u["id"]
                           and x.row["status"] not in ("carried_over", "excluded")]
             after_blocks = [data.block_state(x, self.today) for x in unit_tasks]
-            before_blocks = []
+            previous_blocks = []
             for x, b in zip(unit_tasks, after_blocks):
                 if b not in ("stable", "shaky", "risk", "perfect"):
-                    before_blocks.append(b)  # 예정·진행 중은 그대로
+                    previous_blocks.append(b)  # 예정·진행 중은 그대로
                 elif x.record and x.record["study_date"] == self.today:
-                    before_blocks.append("done")  # 오늘 쌓은 회색 블록이 등급 색으로 (P3)
+                    previous_blocks.append("done")  # 오늘 쌓은 회색 블록이 등급 색으로 (P3)
                 else:
-                    before_blocks.append(h["previous_level"] or "done")
+                    previous_blocks.append(h["previous_level"] or "done")
+            if before_blocks is not None:
+                previous_blocks = before_blocks.get(u["id"], [])
             book_changes.append({"materialId": u["material_id"], "unitId": u["id"], "unitNo": no, "title": title,
-                                 "before": {"score": h["previous_score"], "grade": h["previous_level"], "blocks": before_blocks},
+                                 "before": {"score": h["previous_score"], "grade": h["previous_level"], "blocks": previous_blocks},
                                  "after": {"score": h["score"], "grade": h["level"], "blocks": after_blocks},
                                  "recovering": bool(h["recovery_mode"])})
         summary = {"total": len(out_items), "correct": sum(1 for x in out_items if x["correct"]),
                    "sureCorrect": sum(1 for x in out_items if x["correct"] and x["confidence"] == "sure"),
                    "unsureCorrect": sum(1 for x in out_items if x["correct"] and x["confidence"] == "unsure"),
                    "wrong": sum(1 for x in out_items if not x["correct"])}
-        subject = data.subject_by_id.get(session["subject_id"], {})
+        subject = self.conn.execute(select(t.subjects).where(t.subjects.c.id == session["subject_id"],
+            t.subjects.c.user_id == self.user["id"])).mappings().first() or {}
         result = {
             "quizId": session["id"], "subjectId": session["subject_id"], "name": subject.get("name"),
             "essayGrading": "saved" if session["is_fallback"] else "ai", "summary": summary, "items": out_items,
@@ -437,14 +437,11 @@ class QuizService:
             scope = self.conn.execute(select(t.quiz_scopes.c.unit_id).where(
                 t.quiz_scopes.c.quiz_session_id == session["id"])).scalar()
             result["unitId"] = scope
-            result["materialId"] = data.units[scope]["material_id"] if scope in data.units else None
-            result["unitNo"] = unit_no(data.units[scope]["code"]) if scope in data.units else None
+            result["materialId"] = units[scope]["material_id"] if scope in units else None
+            result["unitNo"] = unit_no(units[scope]["code"]) if scope in units else None
             result["moreUnitChange"] = ({"materialId": result["materialId"], "unitId": scope,
                                          "unitNo": result["unitNo"], "before": unit_changes[0]["before"],
                                          "after": unit_changes[0]["after"]} if unit_changes else None)
         else:
-            extras = self.conn.execute(select(t.quiz_sessions).where(
-                t.quiz_sessions.c.parent_quiz_session_id == session["id"],
-                t.quiz_sessions.c.status == "submitted")).mappings().all()
-            result["more"] = [self.result_view(dict(e)) for e in extras]
+            result["more"] = self._completed_more(session, seen=seen)
         return result
