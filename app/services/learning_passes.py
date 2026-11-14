@@ -88,7 +88,7 @@ def create_remedial_passes(conn, user_id, task, record_id, at):
         .join(t.quiz_sessions, t.quiz_sessions.c.id == t.remedial_obligations.c.quiz_session_id)
         .where(t.remedial_obligation_blocks.c.block_id == task.row["block_id"],
                t.remedial_obligations.c.user_id == user_id, t.quiz_sessions.c.user_id == user_id,
-               t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+               t.quiz_sessions.c.status.in_(("submitted", "carried_over")), t.quiz_sessions.c.finalized_at.is_not(None),
                t.quiz_sessions.c.grading_status == "completed")).mappings().all()
     for obligation in obligations:
         unit_id = obligation["unit_id"]
