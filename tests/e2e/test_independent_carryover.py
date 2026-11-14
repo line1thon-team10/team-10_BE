@@ -126,6 +126,8 @@ def test_close_and_historical_correction_serialize_before_child_reconciliation(a
     assert correct().status_code == 200
     replacement = children(w, original_child['id'])
     assert len(replacement) == 1 and replacement[0]['estimated_minutes'] == 16
+    assert replacement[0]['starts_at'] is not None and replacement[0]['ends_at'] is not None
+    assert replacement[0]['ends_at'] - replacement[0]['starts_at'] == timedelta(minutes=16)
     assert task(w, original_child['id'])['status'] == 'carried_over'
 
 
