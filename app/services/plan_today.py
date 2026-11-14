@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 
 from app.core.responses import ApiError
 from app.db import schema as t
-from app.domain.ranges import PageSpan, subtract, page_count
+from app.domain.ranges import PageSpan, subtract, intersect, page_count
 from app.domain.scheduling import BusyInterval, Slot, free_slots, half_up, POLICY_VERSION, SearchLimit
 from app.repositories.proposals import ProposalRepository, ProposalNotFound, LegacyProposalUnavailable, LegacyResponseUnavailable
 from app.services.onboarding_events import _local, _minute
@@ -20,6 +20,8 @@ from app.services.study import StudyData
 from app.services.allocator import allocate
 from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
 from app.services.plan_draft import _present
+from app.core.clock import now_utc
+from app.services.pace_samples import placement_snapshots, snapshot_for_task, task_factors
 
 
 def _apply(conn, context, changes):
@@ -69,6 +71,53 @@ def _movable(task, sessions):
     return (task.row['status'] not in ('completed','carried_over','excluded')
         and not sessions.get(task.id) and (task.record is None or task.record['result'] != 'completed')
         and bool(_remaining(task)))
+
+
+def _duration(conn,user,data,task):
+    if task.row['starts_at'] is not None and task.row['ends_at'] is not None:
+        elapsed=task.row['ends_at']-task.row['starts_at']
+        original=Fraction(elapsed.days*86400+elapsed.seconds,60)+Fraction(elapsed.microseconds,60_000_000)
+    else:
+        original=Fraction(task.row['estimated_minutes'])
+    if not task.paged or not task.done_ranges:
+        return original
+    remaining=_remaining(task)
+    snapshot=snapshot_for_task(task,{x.id:x for x in data.tasks},placement_snapshots(conn,user['id']),now_utc())
+    factors=[]
+    if snapshot is not None:
+        try:
+            factors=[(part,baseline*multiplier) for part,multiplier,baseline in task_factors(task,snapshot)]
+        except ValueError:
+            pass
+    if not factors:
+        if all(part['planned_minutes'] is not None for part in task.paged):
+            factors=[({'unitId':part['unit_id'],'materialId':part['material_id'],
+                'from':part['start_page'],'to':part['end_page']},
+                Fraction(part['planned_minutes'],part['end_page']-part['start_page']+1)) for part in task.paged]
+        elif len({part['unit_id'] for part in task.paged})==1 and task.pages:
+            factors=[({'unitId':part['unit_id'],'materialId':part['material_id'],
+                'from':part['start_page'],'to':part['end_page']},original/task.pages) for part in task.paged]
+        else:
+            raise ApiError('PLAN_INFEASIBLE','복합 태스크의 과거 분량 기준을 확인할 수 없어요',409)
+    intervals=defaultdict(list)
+    for part,factor in factors:
+        bounds=intersect([PageSpan(part['materialId'],part['from'],part['to'])],
+            [PageSpan(row['materialId'],row['from'],row['to']) for row in remaining
+                if row['unitId']==part['unitId'] and row['from'] is not None])
+        for span in bounds: intervals[span.material_id].append((span.start,span.end,factor))
+    total=Fraction();covered=0
+    for values in intervals.values():
+        boundaries=sorted({point for start,end,_ in values for point in (start,end+1)})
+        for start,end in zip(boundaries,boundaries[1:]):
+            weights={factor for left,right,factor in values if left<=start<=right}
+            if len(weights)>1:
+                raise ApiError('PLAN_INFEASIBLE','겹치는 범위의 과거 분량 기준이 달라요',409)
+            if weights:
+                covered+=end-start;total+=(end-start)*next(iter(weights))
+    expected=page_count(PageSpan(row['materialId'],row['from'],row['to']) for row in remaining if row['from'] is not None)
+    if covered!=expected:
+        raise ApiError('PLAN_INFEASIBLE','남은 범위의 과거 분량 기준을 확인할 수 없어요',409)
+    return total
 
 
 def _move(task,slot,minutes):
@@ -168,7 +217,7 @@ class TodayPlanService:
         subject=data.subject_by_id[task.row['subject_id']]
         if day>=subject['exam_date']: raise ApiError('PLAN_INFEASIBLE','시험일 전으로 배치할 수 없어요',409)
         remaining=page_count(PageSpan(r['materialId'],r['from'],r['to']) for r in _remaining(task) if r['from'] is not None)
-        minutes=Fraction(task.row['estimated_minutes'])*remaining/task.pages if task.pages else Fraction(task.row['estimated_minutes'])
+        minutes=_duration(conn,user,data,task)
         if minutes<15:
             raise ApiError('PLAN_INFEASIBLE','남은 실제 분량이 최소 학습 구간보다 짧아요',409)
         if minutes>60:
@@ -191,7 +240,7 @@ class TodayPlanService:
             and x.row['status'] not in ('carried_over','excluded') and x.row['starts_at']),default=Fraction(23*60))
         moves=[]
         lower=Fraction(8*60)
-        for current,duration in [(task,minutes),*((x,Fraction(x.row['estimated_minutes'])) for x in shifted)]:
+        for current,duration in [(task,minutes),*((x,_duration(conn,user,data,x)) for x in shifted)]:
             slots=free_slots(day,busy)
             slot=next((slot for slot in slots if slot.start>=lower and duration<=slot.minutes
                 and (current is not task or command.action!='postpone' or slot.start+duration<=first_fixed)),None)
