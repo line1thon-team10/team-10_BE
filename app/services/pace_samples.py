@@ -58,6 +58,40 @@ def placement_snapshots(conn, user_id):
     return result
 
 
+def snapshot_for_task(task, tasks, snapshots, at):
+    """Carry/move copies inherit only factors covering the same owned block ranges."""
+    original, seen = task, set()
+    while original is not None and original.id not in seen:
+        seen.add(original.id)
+        available = [value for decided, value in snapshots.get(original.id, []) if decided <= aware(at)]
+        if available:
+            source = available[-1]
+            if original.id == task.id:
+                return source
+            parts=[]
+            try:
+                for row in task.paged:
+                    matching=[part for part in source['parts'] if part['unitId']==row['unit_id']
+                        and part['materialId']==row['material_id'] and part['from']<=row['end_page'] and part['to']>=row['start_page']]
+                    expected=[PageSpan(row['material_id'],row['start_page'],row['end_page'])]
+                    covered=intersect(expected,[PageSpan(row['material_id'],part['from'],part['to']) for part in matching])
+                    factors={(fraction(part['baseline']),fraction(part['multiplier'])) for part in matching}
+                    if page_count(covered)!=page_count(expected) or len(factors)!=1:
+                        return None
+                    baseline,multiplier=factors.pop()
+                    parts.append({'unitId':row['unit_id'],'materialId':row['material_id'],
+                        'from':row['start_page'],'to':row['end_page'],'baseline':encoded(baseline),'multiplier':encoded(multiplier)})
+            except (ValueError,KeyError,TypeError,ZeroDivisionError):
+                return None
+            return {'id':task.id,'parts':parts}
+        parent=tasks.get(original.row['origin_task_id'])
+        if parent is not None and (parent.row['block_id']!=task.row['block_id']
+                or parent.row['subject_id']!=task.row['subject_id'] or parent.row['plan_id']!=task.row['plan_id']):
+            return None
+        original=parent
+    return None
+
+
 def task_factors(task, snapshot):
     """Only snapshots matching the actual immutable task ranges are admissible."""
     parts = snapshot.get('parts')
@@ -130,6 +164,7 @@ def collect_samples(conn, user, subject, today, *, data=None, snapshots=None):
         t.study_sessions.c.excluded_from_calibration.is_(False),
         t.study_sessions.c.study_date >= start, t.study_sessions.c.study_date <= today)).mappings()}
     samples, seen, seconds, pages, weighted = [], set(), 0, 0, Fraction(0)
+    tasks_by_id={task.id:task for task in data.tasks}
     for task in data.tasks:
         record = task.record
         if task.row['subject_id'] != subject['id'] or task.row['status'] == 'excluded' or not record:
@@ -138,11 +173,11 @@ def collect_samples(conn, user, subject, today, *, data=None, snapshots=None):
         if (not session or session['id'] in seen or session['task_id'] != task.id
                 or not session['measured_seconds'] or session['measured_seconds'] <= 0):
             continue
-        available = [(at, value) for at, value in snapshots.get(task.id, []) if at <= aware(session['started_at'])]
-        if not available:
+        snapshot = snapshot_for_task(task,tasks_by_id,snapshots,session['started_at'])
+        if snapshot is None:
             continue
         try:
-            factors = task_factors(task, available[-1][1])
+            factors = task_factors(task, snapshot)
             count, weighted_count = weighted_pages(task, factors, completed=True)
         except (ValueError, KeyError, TypeError, ZeroDivisionError):
             continue
@@ -151,7 +186,7 @@ def collect_samples(conn, user, subject, today, *, data=None, snapshots=None):
         seen.add(session['id'])
         samples.append({'sessionId':session['id'], 'recordId':record['id'], 'taskId':task.id,
             'date':session['study_date'].isoformat(), 'seconds':session['measured_seconds'], 'pages':count,
-            'weightedPages':encoded(weighted_count), 'parts':available[-1][1]['parts']})
+            'weightedPages':encoded(weighted_count), 'parts':snapshot['parts']})
         seconds += session['measured_seconds']; pages += count; weighted += weighted_count
     samples.sort(key=lambda item: (item['date'], item['sessionId']))
     return PaceSamples(tuple(samples), seconds, pages, weighted, exact(subject['minutes_per_page']))

@@ -93,3 +93,24 @@ def test_same_pdf_overlap_deduplicates_but_distinct_pdf_pages_remain(progress_wo
         'baseline':[5,2],'multiplier':[3,2] if u==a else [1,1]} for u,start,end in ((a,1,7),(a,5,10),(b,1,10))]}])
     result=collect(w)
     assert len(result.samples)==1 and result.completed_pages==20 and result.weighted_pages==25
+
+
+@pytest.mark.parametrize('corrupt',[None,'different_block','different_subject','expanded_range','cycle'])
+def test_carried_subset_inherits_only_same_block_factors(progress_world,corrupt):
+    w=progress_world;unit=w.unit(1,20,difficulty='low')
+    source=w.task((unit,1,20),status='carried_over',day=w.day-timedelta(days=3))
+    save_placements(w,[{'id':source,'parts':[{'unitId':unit['id'],'materialId':unit['material_id'],
+        'from':1,'to':20,'baseline':[5,2],'multiplier':[3,2]}]}])
+    child=sample(w,unit,seconds=2250,pages=10,snapshot=False)
+    block=w.conn.scalar(select(t.study_tasks.c.block_id).where(t.study_tasks.c.id==source))
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==child['task']).values(origin_task_id=source,
+        **({} if corrupt=='different_block' else {'block_id':block})))
+    if corrupt=='different_subject':
+        subject=w.conn.scalar(select(t.subjects.c.id).where(t.subjects.c.user_id==w.user,t.subjects.c.id!=w.subject['id']))
+        w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==source).values(subject_id=subject))
+    if corrupt=='expanded_range': w.conn.execute(update(t.study_task_ranges).where(t.study_task_ranges.c.task_id==child['task']).values(end_page=21))
+    if corrupt=='cycle': w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==child['task']).values(origin_task_id=child['task']))
+    measured=collect(w)
+    if corrupt is None:
+        assert len(measured.samples)==1 and measured.weighted_pages==15 and measured.proposed==Fraction(5,2)
+    else: assert measured.samples==()
