@@ -136,7 +136,8 @@ def test_worker_uses_same_image_and_storage_without_publishing_a_port():
     assert worker['command'] == ['python', '-m', 'app.workers.grading', '--loop']
     assert worker['restart'] == 'unless-stopped' and worker['stop_grace_period'] == '35s'
     assert worker['labels']['dev.line1.database-writer'] == 'true'
-    assert worker['healthcheck']['test'] == ['CMD', 'python', '-m', 'app.workers.grading', '--healthcheck']
+    assert worker['healthcheck']['test'][:3] == ['CMD', 'python', '-c']
+    assert worker['healthcheck']['test'][-1] == '/tmp/grading-worker-health.json'
 
 
 def test_exact_project_writers_including_orphans_stop_before_backup(deployment):
@@ -230,7 +231,8 @@ def test_material_worker_shares_owned_storage_and_has_no_listening_port():
     assert worker['command'] == ['python','-m','app.workers.materials','--loop']
     assert worker['stop_grace_period'] == '320s'
     assert worker['labels']['dev.line1.database-writer'] == 'true'
-    assert worker['healthcheck']['test'] == ['CMD','python','-m','app.workers.materials','--healthcheck']
+    assert worker['healthcheck']['test'][:3] == ['CMD', 'python', '-c']
+    assert worker['healthcheck']['test'][-1] == '/tmp/material-worker-health.json'
 
 
 def test_material_image_without_compose_worker_stops_before_writes(deployment):

@@ -74,7 +74,24 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: [CMD, python, -m, app.workers.grading, --healthcheck]
+      test:
+        - CMD
+        - python
+        - -c
+        - &worker_healthcheck |
+          import json, math, os, sys, time
+          try:
+              with open(sys.argv[1]) as source:
+                  value = json.load(source)
+              pid, expires = value['pid'], value['expires_at']
+              if type(pid) is not int or pid <= 0:
+                  raise ValueError('Invalid heartbeat PID')
+              if type(expires) not in (int, float) or not math.isfinite(expires) or time.time() >= expires:
+                  raise ValueError('Invalid or expired heartbeat')
+              os.kill(pid, 0)
+          except (OSError, ValueError, TypeError, KeyError, OverflowError):
+              sys.exit(1)
+        - /tmp/grading-worker-health.json
       interval: 10s
       timeout: 5s
       retries: 3
@@ -90,7 +107,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: [CMD, python, -m, app.workers.materials, --healthcheck]
+      test: [CMD, python, -c, *worker_healthcheck, /tmp/material-worker-health.json]
       interval: 10s
       timeout: 5s
       retries: 3
