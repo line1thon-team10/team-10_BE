@@ -4,6 +4,26 @@
 
 ## 구성
 
+### 기능 PR 검증과 배포 분리
+
+`pr-checks.yml`은 모든 대상 브랜치의 PR 후보 merge를 GitHub-hosted ARM64에서 SQLite/PostgreSQL로 검사한다. BE 후보 SHA의 gitlink에 고정된 AI만 checkout하고 실제 테스트 SHA를 run summary에 남긴다. 이미지 push와 RPI runner 접근은 없다. 비공개 AI 접근이 없는 fork/Dependabot PR은 성공으로 건너뛰지 않고 테스트 미실행 사유를 실패 상태로 남긴다. 필요하면 신뢰할 수 있는 내부 검토 브랜치에서 동일 변경을 검증한다.
+
+이는 GitHub의 [pull_request merge 후보와 fork secret 제한](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)에 따른다. 배포는 별도 `deploy-rpi.yml`의 main/배포 브랜치 push 또는 고정40자리 SHA 수동 실행에서만 수행한다. PR 테스트가 통과했다고 배포되었다고 표시하지 않는다.
+
+배포 manifest는 빌드한 BE SHA, AI gitlink SHA, image digest를 전달한다. RPI4는 pull한 이미지의 두 revision 라벨이 일치하는지 **DB 시작·API 중지·migration 전에** 확인하며 불일치는 기존 서비스를 유지한 채 실패한다. `compose.yml`은 대상 앱 SHA에서, 검증을 수행할 `apply.sh`는 workflow 자체의 `github.workflow_sha`에서 각각 가져온다. 과거 앱으로 돌아갈 때 과거의 검증 없는 스크립트까지 복원하지 않는다. 수동 복구의 digest-only 호출은 기존 호환 경로로 유지한다.
+
+### 신규 AI/업로드 작업의 초기 운영 설정 (POL-02)
+
+| 설정 | 초기값 | 의미 |
+|---|---|---|
+| `MAX_PDF_UPLOAD_BYTES` | 26214400 (25MiB) | PDF 파일 자체의 상한. pinned AI API 기본 상한과 일치 |
+| `AI_REQUEST_BUDGET_SECONDS` | 20 | 동기 요청 전체 예산. 0 초과 25 이하 |
+| `AI_PDF_JOB_BUDGET_SECONDS` | 300 | 접수 후 실행하는 PDF 작업 한 시도의 총 예산 |
+
+이번 값은 요구사항의 수치나 RPI 실측 성능 보장이 아니라 실행을 위한 운영 기본값이다. M-01/AI-01/M-02에서 설정 검증과 경계 처리를 구현하고, AI-02에서 실제 지연을 측정한 뒤 조정한다. 기존 Nginx 50m는 전체 HTTP 본문 제한이며 파일25MiB 검사와 다르다. 프록시 오류도 JSON 오류 계약과 맞춘다. 제한 변경은 환경 설정과 이 표를 함께 갱신하고, 현재 서버에 적용되었다고 표시하려면 배포 SHA와 환경 확인 근거를 남긴다.
+
+## 배포 위치
+
 | 위치 | 역할 |
 | --- | --- |
 | GitHub-hosted `ubuntu-24.04-arm` | PostgreSQL 통합 테스트, AI import 검증, ARM64 이미지 빌드·GHCR push |
@@ -31,7 +51,14 @@ RPI4 Compose 플러그인은 `/home/ubuntu/.docker/cli-plugins/docker-compose`�
 
 ## 실행 및 확인
 
-[workflow](../.github/workflows/deploy-rpi.yml)는 `main`, 초기 배포용 `feat/rpi-deployment` push 또는 수동 실행으로 동작한다. 다른 stacked 브랜치와 PR은 배포하지 않는다. 배포 브랜치 변경은 workflow에서 명시적으로 관리한다.
+[workflow](../.github/workflows/deploy-rpi.yml)는 `main`, 초기 배포용 `feat/rpi-deployment` push 또는 수동 실행으로 동작한다. 다른 stacked 브랜치와 PR의 push는 배포하지 않는다. 수동 실행은 `revision`에 전체 40자리 소문자 commit SHA를 지정하며, workflow 파일이 있는 브랜치와 별개로 해당 SHA의 코드·AI gitlink·Compose를 checkout한다. 이미지 tag와 revision label도 실제 checkout한 SHA를 기록한다. 잘못된 SHA 형식은 checkout 전에 거절한다.
+
+```bash
+gh workflow run deploy-rpi.yml -R line1thon-team10/team-10_BE \
+  --ref <workflow-branch> -f revision=<approved-full-commit-sha>
+```
+
+배포 후 run의 입력과 이미지 revision label이 승인된 SHA인지 확인한다. SHA를 지원하는 수동 workflow가 있는 브랜치를 `--ref`로 지정하고, 그 브랜치의 다른 변경을 앱 이미지에 섞지 않는다.
 
 1. GitHub-hosted에서 테스트 후 `linux/arm64` 이미지를 빌드한다.
 2. 배포 job이 digest로 고정된 이미지를 RPI4에 전달한다. 서버에서는 빌드하지 않는다.

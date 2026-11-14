@@ -8,7 +8,7 @@ from sqlalchemy import update
 
 from app.db import schema as t
 from app.repositories.locking import lock_user
-from app.routers import today
+from app.services import records
 from app.services.study import StudyData
 from tests.test_focus_concurrency import fast_busy
 
@@ -50,14 +50,14 @@ def test_record_write_serializes_competing_requests(
     domain_connection.commit()
     fast_busy(domain_connection)
     entered, release = Event(), Event()
-    real_save = today._save_record
+    real_save = records.save_record
 
     def held(*args, **kwargs):
         entered.set()
         assert release.wait(5)
         return real_save(*args, **kwargs)
 
-    monkeypatch.setattr(today, "_save_record", held)
+    monkeypatch.setattr(records, "save_record", held)
     with ThreadPoolExecutor(max_workers=1) as executor:
         first = executor.submit(api_client.patch, f"/api/tasks/{task.id}/record",
                                 headers=headers(demo_user), json={"toPage": 13})
@@ -83,13 +83,13 @@ def test_record_uses_user_refreshed_under_lock(api_client, demo_user, end_focus,
     task = task_for(domain_connection, demo_user, "AI2")
     new_day = task.row["scheduled_date"] + timedelta(days=1)
     domain_connection.commit()
-    real_lock = today.lock_user
+    real_lock = records.lock_user
 
     def refreshed(conn, user_id):
         conn.execute(update(t.users).where(t.users.c.id == str(user_id)).values(demo_date=new_day))
         return real_lock(conn, user_id)
 
-    monkeypatch.setattr(today, "lock_user", refreshed)
+    monkeypatch.setattr(records, "lock_user", refreshed)
     response = api_client.post("/api/records", headers=headers(demo_user),
                                json={"taskId": task.id, "result": "partial", "toPage": 13})
     assert response.status_code == 200, response.text

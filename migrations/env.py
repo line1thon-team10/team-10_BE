@@ -4,21 +4,30 @@ from sqlalchemy import create_engine, event, pool
 
 from app.config import DATABASE_URL
 from app.db.schema import metadata
+from app.db.sqlite_migrations import sqlite_migration_transaction
 
 config = context.config
 
 
 def configure(connection):
-    context.configure(
-        connection=connection,
-        target_metadata=metadata,
-        compare_type=True,
-        compare_server_default=True,
-        render_as_batch=connection.dialect.name == "sqlite",
-        transaction_per_migration=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
+    sqlite = connection.dialect.name == 'sqlite'
+    def run():
+        context.configure(
+            connection=connection,
+            target_metadata=metadata,
+            compare_type=True,
+            compare_server_default=True,
+            render_as_batch=sqlite,
+            transactional_ddl=True if sqlite else None,
+            transaction_per_migration=not sqlite,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+    if sqlite and not config.attributes.get("preserve_transaction"):
+        with sqlite_migration_transaction(connection):
+            run()
+    else:
+        run()
 
 
 if context.is_offline_mode():

@@ -27,6 +27,9 @@ class FocusTask(BaseModel):
     from_: int | None = Field(alias="from")
     to: int | None
     pages: int = Field(ge=0)
+    donePages: int = Field(default=0, ge=0)
+    doneTo: int | None = None
+    unitNo: int | None = None
     minutes: float = Field(gt=0)
     ranges: list[FocusRange]
 

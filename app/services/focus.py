@@ -15,6 +15,7 @@ from sqlalchemy import Connection, func, select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.repositories.focus import FocusRepository
+from app.services.task_views import TaskView
 from app.domain.focus import quote_for
 from app.repositories.locking import UserBusyError, lock_user
 
@@ -148,19 +149,11 @@ class FocusService:
             raise ApiError("SESSION_NOT_FOUND", "집중 기록을 찾지 못했어요", 404)
         raw_ranges = repo.ranges(task)
         records = repo.record_ranges(task["id"])
-        ranges, pages_by_material = [], {}
-        for r in raw_ranges:
-            if r["start_page"] is None or r["end_page"] is None:
-                continue
-            done = [min(rec["end_page"], r["end_page"]) for rec in records
-                    if rec["unit_id"] == r["unit_id"] and rec["end_page"] is not None
-                    and rec["start_page"] <= r["end_page"] and rec["end_page"] >= r["start_page"]]
-            ranges.append({"id":r["id"], "materialId":r["material_id"], "unitId":r["unit_id"],
-                           "conceptId":r["concept_id"], "from":r["start_page"], "to":r["end_page"],
-                           "doneTo":max(done) if done else None})
-            pages_by_material.setdefault(r["material_id"],set()).update(range(r["start_page"],r["end_page"]+1))
-        first = ranges[0] if len(ranges)==1 else None
-        material = {"id":ranges[0]["materialId"], "page":ranges[0]["from"]} if ranges else None
+        code = self.conn.scalar(select(t.units.c.code).where(
+            t.units.c.id == raw_ranges[0]["unit_id"])) if len(raw_ranges) == 1 else None
+        task_view = TaskView.from_ranges(raw_ranges, records, unit_code=code)
+        first = task_view.ranges[0] if task_view.ranges else None
+        material = {"id": first.material_id, "page": first.start} if first else None
         segs = self._segments(s["id"])
         ended = s["status"] in ("ended", "auto_stopped")
         active = s["measured_seconds"] or 0 if ended else self._elapsed(segs,self.at)
@@ -170,9 +163,7 @@ class FocusService:
         today_minutes, subject_minutes = self._totals(repo, task["subject_id"])
         return {
             "id":s["id"], "taskId":s["task_id"], "subjectId":task["subject_id"], "subjectName":task["subject_name"],
-            "task":{"title":task["title"], "from":first["from"] if first else None, "to":first["to"] if first else None,
-                    "pages":sum(len(pages) for pages in pages_by_material.values()), "ranges":ranges,
-                    "minutes":s["expected_seconds"] / 60},
+            "task":{"title":task["title"], **task_view.as_dict(), "minutes":s["expected_seconds"] / 60},
             "status":FRONT_STATUS[s["status"]], "quote":s["quote"], "material":material,
             "minutes":int(active // 60), "pausedMinutes":int(max(0,wall-active)//60),
             "checkIn":s["status"]=="running" and s["check_prompted_at"] is not None,

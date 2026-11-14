@@ -10,6 +10,8 @@ x-api: &api
     - storage:/app/storage
     - ai_cache:/app/cache
   init: true
+  labels:
+    dev.line1.database-writer: 'true'
   security_opt:
     - no-new-privileges:true
   logging:
@@ -61,6 +63,55 @@ services:
       timeout: 6s
       retries: 12
       start_period: 20s
+  grading-worker:
+    <<: *api
+    command: [python, -m, app.workers.grading, --loop]
+    restart: unless-stopped
+    stop_grace_period: 35s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - &worker_healthcheck |
+          import json, math, os, sys, time
+          try:
+              with open(sys.argv[1]) as source:
+                  value = json.load(source)
+              pid, expires = value['pid'], value['expires_at']
+              if type(pid) is not int or pid <= 0:
+                  raise ValueError('Invalid heartbeat PID')
+              if type(expires) not in (int, float) or not math.isfinite(expires) or time.time() >= expires:
+                  raise ValueError('Invalid or expired heartbeat')
+              os.kill(pid, 0)
+          except (OSError, ValueError, TypeError, KeyError, OverflowError):
+              sys.exit(1)
+        - /tmp/grading-worker-health.json
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  material-worker:
+    <<: *api
+    command: [python, -m, app.workers.materials, --loop]
+    restart: unless-stopped
+    stop_grace_period: 320s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, *worker_healthcheck, /tmp/material-worker-health.json]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 volumes:
   postgres:
   storage:

@@ -7,6 +7,29 @@ const { Parser } = require('@dbml/core');
 const root = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'schema', 'erd.dbml'), 'utf8');
 const schema = new Parser().parse(src, 'dbmlv2').schemas[0];
+const storageConstraints = { checks: [], foreignKeys: {}, serverDefaults: {}, indexes: [] };
+const checkNames = new Set();
+for (const filename of ['quiz-storage-constraints.json', 'proposal-storage-constraints.json', 'contract-invariants.json']) {
+  const configPath = path.join(root, 'schema', filename);
+  if (!fs.existsSync(configPath)) continue;
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  for (const check of config.checks || []) {
+    const key = `${check.table}.${check.name}`;
+    if (checkNames.has(key)) throw new Error(`Duplicate CHECK: ${key}`);
+    checkNames.add(key);
+    storageConstraints.checks.push(check);
+  }
+  for (const [field, options] of Object.entries(config.foreignKeys || {})) {
+    if (Object.hasOwn(storageConstraints.foreignKeys, field)) throw new Error(`Duplicate foreign key: ${field}`);
+    storageConstraints.foreignKeys[field] = options;
+  }
+  storageConstraints.indexes.push(...(config.indexes || []));
+  for (const [field, value] of Object.entries(config.serverDefaults || {})) {
+    if (Object.hasOwn(storageConstraints.serverDefaults, field)) throw new Error(`Duplicate server default: ${field}`);
+    if (typeof value !== 'string' || value.includes('\u0000')) throw new Error(`Unsupported server default: ${field}`);
+    storageConstraints.serverDefaults[field] = value;
+  }
+}
 
 const TYPE = {
   uuid: 'UUID',
@@ -61,7 +84,7 @@ function defaultOf(f) {
 const out = [];
 out.push('# 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.');
 out.push('# 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.');
-out.push('from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,');
+out.push(`from sqlalchemy import (Boolean, ${storageConstraints.checks.length ? 'CheckConstraint, ' : ''}Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,`);
 out.push('                        Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)');
 out.push('from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB');
 out.push('');
@@ -79,17 +102,26 @@ for (const t of schema.tables) {
     const fk = fks[`${t.name}.${f.name}`];
     if (fk) {
       const alter = useAlter.has(`${t.name}.${f.name}`);
-      args.push(`ForeignKey(${py(fk)}${alter ? `, use_alter=True, name=${py(`fk_${t.name}_${f.name}`)}` : ''})`);
+      const ondelete = storageConstraints.foreignKeys[`${t.name}.${f.name}`]?.ondelete;
+      if (ondelete && ondelete !== 'CASCADE') throw new Error(`Unsupported ondelete: ${ondelete}`);
+      args.push(`ForeignKey(${py(fk)}${alter ? `, use_alter=True, name=${py(`fk_${t.name}_${f.name}`)}` : ''}${ondelete ? `, ondelete=${py(ondelete)}` : ''})`);
     }
     if (f.pk) args.push('primary_key=True');
     args.push(`nullable=${f.pk || f.not_null ? 'False' : 'True'}`);
     if (f.unique && !f.pk) args.push('unique=True');
     const d = defaultOf(f);
     if (d !== null) args.push(`default=${d}`);
+    if (Object.hasOwn(storageConstraints.serverDefaults, `${t.name}.${f.name}`)) {
+      // SQLAlchemy quotes this literal string; this is not a raw SQL expression.
+      args.push(`server_default=${py(storageConstraints.serverDefaults[`${t.name}.${f.name}`])}`);
+    }
     out.push(`    Column(${args.join(', ')}),`);
   }
   if (compositePk) {
     out.push(`    PrimaryKeyConstraint(${compositePk.columns.map((c) => py(c.value)).join(', ')}),`);
+  }
+  for (const check of storageConstraints.checks.filter(check => check.table === t.name)) {
+    out.push(`    CheckConstraint(${py(check.sql)}, name=${py(check.name)}),`);
   }
   t.indexes
     .filter((i) => !i.pk)
@@ -101,9 +133,30 @@ for (const t of schema.tables) {
   out.push('');
 }
 
+for (const check of storageConstraints.checks) {
+  if (!schema.tables.some(table => table.name === check.table)) throw new Error(`Unknown CHECK table: ${check.table}`);
+}
+for (const field of Object.keys(storageConstraints.foreignKeys)) {
+  if (!fks[field]) throw new Error(`Unknown foreign key: ${field}`);
+}
+for (const field of Object.keys(storageConstraints.serverDefaults)) {
+  if (!schema.tables.some(table => table.fields.some(column => `${table.name}.${column.name}` === field))) {
+    throw new Error(`Unknown server default column: ${field}`);
+  }
+}
+
 // DBML에서 표현할 수 없는 집중 부분 인덱스도 재생성 시 보존한다.
 const focusIndexes = JSON.parse(fs.readFileSync(path.join(root, 'schema', 'focus-indexes.json'), 'utf8'));
-for (const index of focusIndexes) {
+const indexNames = new Set();
+for (const index of [...focusIndexes, ...storageConstraints.indexes]) {
+  const table = schema.tables.find(table => table.name === index.table);
+  if (!table || !index.columns.length || index.columns.some(column => !table.fields.some(field => field.name === column))) {
+    throw new Error(`Unknown partial index columns: ${index.name}`);
+  }
+  if (indexNames.has(index.name) || typeof index.where !== 'string' || !index.where.trim()) {
+    throw new Error(`Invalid or duplicate partial index: ${index.name}`);
+  }
+  indexNames.add(index.name);
   const columns = index.columns.map(c => `${index.table}.c.${c}`).join(', ');
   out.push(`Index(${py(index.name)}, ${columns}, unique=True,`);
   out.push(`      postgresql_where=text(${py(index.where)}), sqlite_where=text(${py(index.where)}))`);

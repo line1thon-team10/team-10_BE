@@ -25,6 +25,18 @@ Table demo_day_requests {
   indexes { (user_id, idempotency_key) [pk] }
 }
 
+// Optional record request keys; response is committed with the record mutation.
+Table record_requests {
+  user_id uuid [not null, ref: > users.id]
+  method varchar [not null]
+  path varchar [not null]
+  idempotency_key uuid [not null]
+  request_hash varchar [not null]
+  response jsonb [not null]
+  created_at timestamptz [not null]
+  indexes { (user_id, method, path, idempotency_key) [pk] }
+}
+
 Table subjects {
   id uuid [pk]
   user_id uuid [not null, ref: > users.id]
@@ -50,6 +62,10 @@ Table subjects {
   other_exam_info text
   target_score decimal [note: '0~100. A+ 90 / B+ 80 / 통과 60 기본 매핑']
   goal_confirmed_at timestamptz [note: '목표/강조 변경 시 null, 확인/승인 시 설정']
+  onboarding_exam_date_confirmed_at timestamptz [note: 'S1 시험일 명시 확인 시각. 기존 goal_confirmed_at으로 추정하지 않음']
+  onboarding_goal_confirmed_at timestamptz [note: 'S1 목표 학점 명시 확인 시각']
+  onboarding_goal_total_confirmed_at timestamptz [note: 'S1 시험 총 목표 확인 시각. 없음 확인도 기록']
+  onboarding_goal_etc_confirmed_at timestamptz [note: 'S1 기타 정보 확인 시각. 값 null과 확인 여부는 별개']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
   indexes { (user_id, code) [unique] }
@@ -58,12 +74,17 @@ Table subjects {
 Table onboarding_messages {
   id uuid [pk]
   user_id uuid [not null, ref: > users.id]
+  subject_id uuid [ref: > subjects.id, note: '신규 draft 과목 대화 컨텍스트. 최초 온보딩은 null']
   change_request_id uuid [ref: > plan_change_requests.id, note: '계획 중 과목 추가 대화면 연결. 최초 온보딩은 null']
   role varchar [not null, note: 'user / ai']
   text text [not null]
   chips jsonb [note: '빠른 선택 칩 배열']
+  sort_order int [note: '사용자/subject 컨텍스트 내 저장 순서. 이전 대화의 null은 created_at과 id로 정렬하며 새 대화보다 먼저 표시']
   created_at timestamptz [not null]
-  indexes { (user_id, created_at) }
+  indexes {
+    (user_id, created_at)
+    (user_id, subject_id, sort_order)
+  }
 }
 
 // ON-04~08: 승인된 일정과 반복 회차 예외
@@ -204,6 +225,31 @@ Table plan_proposals {
   description text [not null]
   changes jsonb [not null, note: 'PlanChanges 불변 스냅샷: plannedTasks 전체, outlineChanges 전체 구조와 교체 매핑, manualAllocations 수동 배정 분, 일정/범위/목표 patch. 예약 UUID는 승인 전 FK 행으로 저장하지 않음. 차이 배열은 같은 스냅샷에서 계산. 계획 헤더를 포함한 새 도메인 행은 승인 때 원자 생성']
   created_at timestamptz [not null]
+}
+
+Table plan_proposal_states [note: 'SYS-04: previewId는 기존 plan_proposals.id. 새 후보만 완전한 기준/원 응답을 갖추며 legacy의 알 수 없는 값은 null. 시간 만료 없음. changes는 기존 proposal의 불변 스냅샷. 적용은 SYS-05의 사용자 잠금/도메인 변경과 같은 transaction에서 CAS.'] {
+  proposal_id uuid [pk, ref: > plan_proposals.id]
+  user_id uuid [not null, ref: > users.id]
+  kind varchar [not null, note: '원 request.kind와 일치']
+  target jsonb [note: '도메인이 제공한 대상 종류/식별자. 일정 회차 ID 등도 그대로 보존']
+  normalized_input jsonb
+  input_hash varchar [note: '정규화 입력의 canonical JSON SHA256. 문자열 공백과 배열 순서는 도메인이 결정']
+  base_date date
+  base_plan_id uuid [ref: > plans.id]
+  base_plan_revision int
+  base_structure_hash varchar [note: '계획 없는 후보의 자료/목표/일정 구조 해시. 도메인이 입력을 제공']
+  dependency_versions jsonb [note: '참조한 자료/일정/기록/정책 등의 ID와 버전. 원소 해석은 SYS-05와 도메인 책임']
+  status varchar [not null, note: 'ready / applied / cancelled / stale / legacy']
+  state_revision int [not null, note: '0부터 CAS 전이마다 1 증가. 최초 응답 재생은 증가 없음']
+  preview_response jsonb
+  preview_schema_version int
+  result_response jsonb [note: '최초 적용 응답. legacy 적용 사실만 있는 경우 null이며 재실행 허가가 아님']
+  result_schema_version int
+  result_captured_at timestamptz
+  decided_at timestamptz
+  legacy boolean [not null]
+  legacy_snapshot jsonb [note: '이관 당시 request/proposal의 알려진 사실. 누락된 기준값/응답을 추정하지 않음']
+  indexes { (user_id, kind, status) }
 }
 
 Table study_blocks [note: '책 블록의 지속 ID. 같은 작업의 이월·버전 복사는 이 ID 공유. 기록된 블록은 삭제하지 않고 현재 등급으로 표시.'] {
@@ -370,6 +416,26 @@ Table learning_passes [note: 'initial/remedial 자동, full_relearn만 명시적
   }
 }
 
+// S-02: 배정 실패에도 보존하는 채점별 보충 의무와 배정 책 연결
+Table remedial_obligations {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  unit_id uuid [not null, ref: > units.id]
+  quiz_session_id uuid [not null, ref: > quiz_sessions.id]
+  scope_revision varchar [not null]
+  required_ranges jsonb [not null, note: '생성 당시 틀린 개념 페이지 합집합 [[start,end]]. 배정/정정으로 축소하지 않음']
+  not_before date [not null, note: '첫 허용 공부일. 시험 전 배정 불가여도 의무를 삭제하지 않음']
+  created_at timestamptz [not null]
+  indexes { (unit_id, quiz_session_id) [unique] }
+}
+
+Table remedial_obligation_blocks {
+  obligation_id uuid [not null, ref: > remedial_obligations.id]
+  block_id uuid [not null, unique, ref: > study_blocks.id]
+  allocation_snapshot jsonb [note: 'remedial-allocation-v1: 생성시각/태스크ID/일자/정확한시간과범위별기준속도·난이도Fraction. legacy null은속도보정제외']
+  indexes { (obligation_id, block_id) [pk] }
+}
+
 // QZ / RV: 원본 문제, 구성, 확신·채점, 근거
 Table questions [note: '구조 교체 뒤 과거 문항을 새 단원/개념에 재연결하지 않음. 현재 출제 범위·실제 근거가 검증된 문항만 준비도에 포함.'] {
   id uuid [pk]
@@ -473,6 +539,67 @@ Table weak_questions [note: 'API 목록은 questions의 prompt/type/choices를 �
   next_review_date date [note: '그날 과목 퀴즈가 없으면 다음 과목 퀴즈까지 유지']
   last_weak_at timestamptz [not null]
   resolved_at timestamptz
+}
+
+Table quiz_answers [note: '불변 답안 revision. 원문 문자열은 변형하지 않고 choice/text/confidence의 canonical JSON을 hash한다. 삭제 cascade와 CHECK는 quiz-storage-constraints.json. legacy_answer는 과거 선택 문구 원문이며 복원 불가 시 input_recovered=false, answer_hash=null.'] {
+  id uuid [pk]
+  quiz_item_id uuid [not null, ref: > quiz_items.id]
+  revision int [not null]
+  choice int
+  text text
+  confidence varchar [not null]
+  answer_hash varchar
+  input_recovered boolean [not null, default: true]
+  legacy_answer text
+  answered_at timestamptz [not null]
+  answered_date date [not null]
+  indexes { (quiz_item_id, revision) [unique] }
+}
+
+Table quiz_answer_heads [note: '항목별 현재 불변 답안을 가리킨다. answer_id 조건부 교체가 CAS이며 동일 답 재저장은 revision을 늘리지 않는다.'] {
+  quiz_item_id uuid [pk, ref: > quiz_items.id]
+  answer_id uuid [not null, unique, ref: > quiz_answers.id]
+}
+
+Table quiz_answer_receipts [note: '실제 수신한 답 저장 요청의 최초 응답. 동일 답 no-op도 기록하므로 이후 revision 변경 뒤에 원 응답을 재생한다. 이전 revision의 같은 원문이라는 이유만으로 미수신 stale 요청을 재생하지 않는다.'] {
+  quiz_item_id uuid [not null, ref: > quiz_items.id]
+  request_revision int [not null]
+  answer_hash varchar [not null]
+  response_answer_id uuid [not null, ref: > quiz_answers.id]
+  received_at timestamptz [not null]
+  indexes { (quiz_item_id, request_revision, answer_hash) [pk] }
+}
+
+Table quiz_grading_jobs [note: '답안 revision당 하나. lease token은 매 선점마다 바뀌며 현재 answer/head/revision과 소유 token/만료를 모두 확인한 결과만 저장한다. 집계 확정은 별도 Q05.'] {
+  id uuid [pk]
+  answer_id uuid [not null, unique, ref: > quiz_answers.id]
+  answer_revision int [not null]
+  status varchar [not null, default: 'queued']
+  execution_mode varchar [not null, default: 'live', note: 'live / saved / backup. 자동 재선점도 저장된 모드를 따른다. 기존 작업 enqueue는 바꾸지 않고 명시적 retry만 전환한다.']
+  lease_owner varchar
+  lease_token uuid
+  lease_expires_at timestamptz
+  claim_count int [not null, default: 0]
+  result jsonb
+  error_code varchar
+  created_at timestamptz [not null]
+  claimed_at timestamptz
+  finished_at timestamptz
+  indexes { (status, lease_expires_at, created_at) }
+}
+
+Table quiz_submission_states [note: '봉인한 답안 집합과 최초 결과를 저장. legacy_snapshot은 migration 당시 보존 사실이며 실제 과거 응답이 아니다. result_snapshot은 최초 확정 또는 legacy 복구 조회 때만 별도 저장.'] {
+  quiz_session_id uuid [pk, ref: > quiz_sessions.id]
+  sealed_at timestamptz [not null]
+  answer_set_hash varchar
+  input_recovered boolean [not null]
+  sealed_answers jsonb [not null]
+  legacy boolean [not null, default: false]
+  legacy_snapshot jsonb
+  result_snapshot jsonb
+  result_provenance varchar [note: 'submitted / legacy_reconstructed; snapshot 없으면 null']
+  result_schema_version varchar
+  result_captured_at timestamptz
 }
 
 // BK: 날짜·과목·단원·퀴즈별 재노출 방지
@@ -639,6 +766,11 @@ TableGroup quizzes {
   quiz_scopes
   quiz_items
   quiz_attempts
+  quiz_answers
+  quiz_answer_heads
+  quiz_answer_receipts
+  quiz_grading_jobs
+  quiz_submission_states
   weak_questions
 }
 

@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {"table":"plan_proposal_states","name":"ck_proposal_state_status","sql":"status IN ('ready', 'applied', 'cancelled', 'stale', 'legacy') AND state_revision >= 0"},
+    {"table":"plan_proposal_states","name":"ck_proposal_state_hash","sql":"(input_hash IS NULL OR length(input_hash) = 64) AND (base_structure_hash IS NULL OR length(base_structure_hash) = 64)"},
+    {"table":"plan_proposal_states","name":"ck_proposal_state_origin","sql":"(legacy = true AND legacy_snapshot IS NOT NULL AND status IN ('legacy', 'applied')) OR (legacy = false AND legacy_snapshot IS NULL AND status <> 'legacy')"},
+    {"table":"plan_proposal_states","name":"ck_proposal_state_basis","sql":"legacy = true OR (target IS NOT NULL AND normalized_input IS NOT NULL AND input_hash IS NOT NULL AND base_date IS NOT NULL AND dependency_versions IS NOT NULL AND preview_response IS NOT NULL AND preview_schema_version IS NOT NULL AND preview_schema_version > 0 AND ((base_plan_id IS NOT NULL AND base_plan_revision IS NOT NULL AND base_plan_revision > 0 AND base_structure_hash IS NULL) OR (base_plan_id IS NULL AND base_plan_revision IS NULL AND base_structure_hash IS NOT NULL)))"},
+    {"table":"plan_proposal_states","name":"ck_proposal_state_result","sql":"(result_response IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL AND (status <> 'applied' OR legacy = true)) OR (legacy = false AND status = 'applied' AND result_response IS NOT NULL AND result_schema_version IS NOT NULL AND result_schema_version > 0 AND result_captured_at IS NOT NULL AND decided_at IS NOT NULL AND result_captured_at = decided_at)"},
+    {"table":"plan_proposal_states","name":"ck_proposal_state_decision","sql":"legacy = true OR (status = 'ready' AND decided_at IS NULL) OR (status IN ('applied', 'cancelled', 'stale') AND decided_at IS NOT NULL)"}
+  ],
+  "foreignKeys": {
+    "plan_proposal_states.proposal_id":{"ondelete":"CASCADE"}
+  }
+}

@@ -1,6 +1,6 @@
 # 자동 생성 파일 — 직접 고치지 말고 schema/erd.dbml을 고친 뒤 scripts/gen_schema/gen_schema.js를 다시 실행하세요.
 # 원본: 효원님 ERD (OpenAPI 계약 0.7.0). 집중 부분 유일 인덱스는 schema/focus-indexes.json에서 생성.
-from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,
+from sqlalchemy import (Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, MetaData,
                         Numeric, PrimaryKeyConstraint, String, Table, Text, Uuid, text)
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 
@@ -30,6 +30,18 @@ demo_day_requests = Table(
     PrimaryKeyConstraint("user_id", "idempotency_key"),
 )
 
+record_requests = Table(
+    "record_requests", metadata,
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("method", String, nullable=False),
+    Column("path", String, nullable=False),
+    Column("idempotency_key", UUID, nullable=False),
+    Column("request_hash", String, nullable=False),
+    Column("response", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("user_id", "method", "path", "idempotency_key"),
+)
+
 subjects = Table(
     "subjects", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
@@ -56,8 +68,14 @@ subjects = Table(
     Column("other_exam_info", Text, nullable=True),
     Column("target_score", Numeric(asdecimal=False), nullable=True),
     Column("goal_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_exam_date_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_total_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_etc_confirmed_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(minutes_per_page IS NULL OR minutes_per_page >= 0)", name="ck_subjects_nonnegative"),
+    CheckConstraint("(target_score IS NULL OR target_score BETWEEN 0 AND 100) AND (exam_weight_percent IS NULL OR exam_weight_percent BETWEEN 0 AND 100)", name="ck_subjects_scores"),
     Index("ix_subjects_1", "user_id", "code", unique=True),
 )
 
@@ -65,12 +83,16 @@ onboarding_messages = Table(
     "onboarding_messages", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
     Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("subject_id", UUID, ForeignKey("subjects.id"), nullable=True),
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True),
     Column("role", String, nullable=False),
     Column("text", Text, nullable=False),
     Column("chips", JSONB, nullable=True),
+    Column("sort_order", Integer, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_onboarding_messages_nonnegative"),
     Index("ix_onboarding_messages_1", "user_id", "created_at"),
+    Index("ix_onboarding_messages_2", "user_id", "subject_id", "sort_order"),
 )
 
 calendar_events = Table(
@@ -89,6 +111,7 @@ calendar_events = Table(
     Column("deleted_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("ends_at > starts_at AND revision > 0", name="ck_calendar_events_interval"),
     Index("ix_calendar_events_1", "user_id", "starts_at"),
 )
 
@@ -102,6 +125,7 @@ calendar_event_exceptions = Table(
     Column("new_ends_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(kind = 'cancelled' AND new_starts_at IS NULL AND new_ends_at IS NULL) OR (kind = 'moved' AND new_starts_at IS NOT NULL AND new_ends_at IS NOT NULL AND new_ends_at > new_starts_at)", name="ck_calendar_exception_interval"),
     Index("ix_calendar_event_exceptions_1", "event_id", "occurrence_date", unique=True),
 )
 
@@ -128,6 +152,8 @@ materials = Table(
     Column("original_deleted_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(page_count IS NULL OR page_count >= 0)", name="ck_materials_nonnegative"),
+    CheckConstraint("ocr_confidence IS NULL OR ocr_confidence BETWEEN 0 AND 1", name="ck_materials_ocr_confidence"),
     Index("ix_materials_1", "subject_id", "sha256", "analysis_version", unique=True),
 )
 
@@ -155,6 +181,9 @@ units = Table(
     Column("retired_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_units_pages"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0) AND (emphasis_weight IS NULL OR emphasis_weight >= 0)", name="ck_units_nonnegative"),
+    CheckConstraint("mastery_score IS NULL OR mastery_score BETWEEN 0 AND 100", name="ck_units_mastery_score"),
     Index("ix_units_1", "material_id"),
 )
 
@@ -173,6 +202,8 @@ concepts = Table(
     Column("retired_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_concepts_pages"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0) AND (estimated_minutes IS NULL OR estimated_minutes >= 0)", name="ck_concepts_nonnegative"),
     Index("ix_concepts_1", "unit_id"),
 )
 
@@ -183,6 +214,7 @@ plans = Table(
     Column("revision", Integer, nullable=False, default=1),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("approved_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("revision > 0", name="ck_plans_revision"),
 )
 
 plan_change_requests = Table(
@@ -218,6 +250,38 @@ plan_proposals = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+plan_proposal_states = Table(
+    "plan_proposal_states", metadata,
+    Column("proposal_id", UUID, ForeignKey("plan_proposals.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("kind", String, nullable=False),
+    Column("target", JSONB, nullable=True),
+    Column("normalized_input", JSONB, nullable=True),
+    Column("input_hash", String, nullable=True),
+    Column("base_date", Date, nullable=True),
+    Column("base_plan_id", UUID, ForeignKey("plans.id"), nullable=True),
+    Column("base_plan_revision", Integer, nullable=True),
+    Column("base_structure_hash", String, nullable=True),
+    Column("dependency_versions", JSONB, nullable=True),
+    Column("status", String, nullable=False),
+    Column("state_revision", Integer, nullable=False),
+    Column("preview_response", JSONB, nullable=True),
+    Column("preview_schema_version", Integer, nullable=True),
+    Column("result_response", JSONB, nullable=True),
+    Column("result_schema_version", Integer, nullable=True),
+    Column("result_captured_at", DateTime(timezone=True), nullable=True),
+    Column("decided_at", DateTime(timezone=True), nullable=True),
+    Column("legacy", Boolean, nullable=False),
+    Column("legacy_snapshot", JSONB, nullable=True),
+    CheckConstraint("status IN ('ready', 'applied', 'cancelled', 'stale', 'legacy') AND state_revision >= 0", name="ck_proposal_state_status"),
+    CheckConstraint("(input_hash IS NULL OR length(input_hash) = 64) AND (base_structure_hash IS NULL OR length(base_structure_hash) = 64)", name="ck_proposal_state_hash"),
+    CheckConstraint("(legacy = true AND legacy_snapshot IS NOT NULL AND status IN ('legacy', 'applied')) OR (legacy = false AND legacy_snapshot IS NULL AND status <> 'legacy')", name="ck_proposal_state_origin"),
+    CheckConstraint("legacy = true OR (target IS NOT NULL AND normalized_input IS NOT NULL AND input_hash IS NOT NULL AND base_date IS NOT NULL AND dependency_versions IS NOT NULL AND preview_response IS NOT NULL AND preview_schema_version IS NOT NULL AND preview_schema_version > 0 AND ((base_plan_id IS NOT NULL AND base_plan_revision IS NOT NULL AND base_plan_revision > 0 AND base_structure_hash IS NULL) OR (base_plan_id IS NULL AND base_plan_revision IS NULL AND base_structure_hash IS NOT NULL)))", name="ck_proposal_state_basis"),
+    CheckConstraint("(result_response IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL AND (status <> 'applied' OR legacy = true)) OR (legacy = false AND status = 'applied' AND result_response IS NOT NULL AND result_schema_version IS NOT NULL AND result_schema_version > 0 AND result_captured_at IS NOT NULL AND decided_at IS NOT NULL AND result_captured_at = decided_at)", name="ck_proposal_state_result"),
+    CheckConstraint("legacy = true OR (status = 'ready' AND decided_at IS NULL) OR (status IN ('applied', 'cancelled', 'stale') AND decided_at IS NOT NULL)", name="ck_proposal_state_decision"),
+    Index("ix_plan_proposal_states_1", "user_id", "kind", "status"),
+)
+
 study_blocks = Table(
     "study_blocks", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
@@ -244,6 +308,8 @@ study_tasks = Table(
     Column("placement_reason", Text, nullable=True),
     Column("status", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(estimated_minutes IS NULL OR estimated_minutes >= 0)", name="ck_study_tasks_nonnegative"),
+    CheckConstraint("(starts_at IS NULL AND ends_at IS NULL) OR (starts_at IS NOT NULL AND ends_at IS NOT NULL AND ends_at > starts_at)", name="ck_study_tasks_interval"),
     Index("ix_study_tasks_1", "plan_id", "scheduled_date"),
     Index("ix_study_tasks_2", "plan_id", "block_id"),
     Index("ix_study_tasks_3", "origin_task_id"),
@@ -259,6 +325,8 @@ study_task_ranges = Table(
     Column("end_page", Integer, nullable=True),
     Column("planned_minutes", Integer, nullable=True),
     Column("sort_order", Integer, nullable=False),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_study_task_ranges_pages"),
+    CheckConstraint("(planned_minutes IS NULL OR planned_minutes >= 0) AND (sort_order IS NULL OR sort_order >= 0)", name="ck_study_task_ranges_nonnegative"),
     Index("ix_study_task_ranges_1", "task_id", "sort_order", unique=True),
 )
 
@@ -274,6 +342,7 @@ daily_plan_totals = Table(
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     PrimaryKeyConstraint("user_id", "subject_id", "study_date"),
+    CheckConstraint("(planned_new_pages IS NULL OR planned_new_pages >= 0) AND (planned_total_pages IS NULL OR planned_total_pages >= 0) AND (planned_unpaged_minutes IS NULL OR planned_unpaged_minutes >= 0)", name="ck_daily_plan_totals_nonnegative"),
 )
 
 study_sessions = Table(
@@ -293,6 +362,8 @@ study_sessions = Table(
     Column("expected_seconds", Integer, nullable=True),
     Column("quote", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(last_confirmed_elapsed_seconds IS NULL OR last_confirmed_elapsed_seconds >= 0) AND (measured_seconds IS NULL OR measured_seconds >= 0) AND (expected_seconds IS NULL OR expected_seconds >= 0)", name="ck_study_sessions_nonnegative"),
+    CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="ck_study_sessions_interval"),
     Index("ix_study_sessions_1", "user_id", "study_date"),
 )
 
@@ -303,6 +374,8 @@ study_session_segments = Table(
     Column("sort_order", Integer, nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("ended_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="ck_study_segments_interval"),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_study_session_segments_nonnegative"),
     Index("ix_study_session_segments_1", "session_id", "sort_order", unique=True),
 )
 
@@ -329,6 +402,8 @@ study_record_ranges = Table(
     Column("start_page", Integer, nullable=True),
     Column("end_page", Integer, nullable=True),
     Column("completed_planned_minutes", Integer, nullable=True),
+    CheckConstraint("(start_page IS NULL AND end_page IS NULL) OR (start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page)", name="ck_study_record_ranges_pages"),
+    CheckConstraint("(completed_planned_minutes IS NULL OR completed_planned_minutes >= 0)", name="ck_study_record_ranges_nonnegative"),
     Index("ix_study_record_ranges_1", "record_id"),
 )
 
@@ -347,6 +422,8 @@ speed_calibrations = Table(
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True, unique=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("decided_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(measured_seconds IS NULL OR measured_seconds >= 0) AND (completed_pages IS NULL OR completed_pages >= 0) AND (previous_minutes_per_page IS NULL OR previous_minutes_per_page >= 0) AND (proposed_minutes_per_page IS NULL OR proposed_minutes_per_page >= 0)", name="ck_speed_calibrations_nonnegative"),
+    CheckConstraint("window_end >= window_start", name="ck_speed_calibration_window"),
     Index("ix_speed_calibrations_1", "subject_id", "notice_date", unique=True),
 )
 
@@ -364,6 +441,8 @@ mastery_history = Table(
     Column("daily_increase_limit", Integer, nullable=True),
     Column("recorded_date", Date, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(previous_score IS NULL OR previous_score BETWEEN 0 AND 100) AND raw_score BETWEEN 0 AND 100 AND score BETWEEN 0 AND 100", name="ck_mastery_history_scores"),
+    CheckConstraint("(daily_increase_limit IS NULL OR daily_increase_limit >= 0)", name="ck_mastery_history_nonnegative"),
     Index("ix_mastery_history_1", "unit_id", "quiz_session_id", unique=True),
     Index("ix_mastery_history_2", "unit_id", "recorded_date"),
 )
@@ -381,8 +460,30 @@ learning_passes = Table(
     Column("completed_date", Date, nullable=False),
     Column("invalidated_at", DateTime(timezone=True), nullable=True),
     Column("note", Text, nullable=True),
+    CheckConstraint("pass_number > 0", name="ck_learning_pass_number"),
     Index("ix_learning_passes_1", "unit_id", "pass_number", unique=True),
     Index("ix_learning_passes_2", "unit_id", "completion_kind", "evidence_key", unique=True),
+)
+
+remedial_obligations = Table(
+    "remedial_obligations", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("unit_id", UUID, ForeignKey("units.id"), nullable=False),
+    Column("quiz_session_id", UUID, ForeignKey("quiz_sessions.id"), nullable=False),
+    Column("scope_revision", String, nullable=False),
+    Column("required_ranges", JSONB, nullable=False),
+    Column("not_before", Date, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_remedial_obligations_1", "unit_id", "quiz_session_id", unique=True),
+)
+
+remedial_obligation_blocks = Table(
+    "remedial_obligation_blocks", metadata,
+    Column("obligation_id", UUID, ForeignKey("remedial_obligations.id"), nullable=False),
+    Column("block_id", UUID, ForeignKey("study_blocks.id"), nullable=False, unique=True),
+    Column("allocation_snapshot", JSONB, nullable=True),
+    PrimaryKeyConstraint("obligation_id", "block_id"),
 )
 
 questions = Table(
@@ -414,6 +515,7 @@ question_sources = Table(
     Column("end_page", Integer, nullable=False),
     Column("quote", Text, nullable=True),
     Column("highlight", JSONB, nullable=True),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_question_sources_pages"),
     Index("ix_question_sources_1", "question_id"),
 )
 
@@ -436,6 +538,7 @@ quiz_sessions = Table(
     Column("submitted_at", DateTime(timezone=True), nullable=True),
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("graded_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(requested_question_count IS NULL OR requested_question_count >= 0) AND (current_position IS NULL OR current_position >= 0)", name="ck_quiz_sessions_nonnegative"),
     Index("ix_quiz_sessions_1", "user_id", "quiz_date", "type"),
 )
 
@@ -447,6 +550,7 @@ quiz_scopes = Table(
     Column("concept_id", UUID, ForeignKey("concepts.id"), nullable=True),
     Column("start_page", Integer, nullable=False),
     Column("end_page", Integer, nullable=False),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_quiz_scopes_pages"),
     Index("ix_quiz_scopes_1", "quiz_session_id"),
 )
 
@@ -459,6 +563,7 @@ quiz_items = Table(
     Column("sort_order", Integer, nullable=False),
     Column("inclusion_reason", String, nullable=False),
     Column("original_quiz_date", Date, nullable=True),
+    CheckConstraint("(sort_order IS NULL OR sort_order >= 0)", name="ck_quiz_items_nonnegative"),
     Index("ix_quiz_items_1", "quiz_session_id", "sort_order", unique=True),
     Index("ix_quiz_items_2", "quiz_session_id", "question_id", unique=True),
 )
@@ -480,6 +585,7 @@ quiz_attempts = Table(
     Column("finalized_at", DateTime(timezone=True), nullable=True),
     Column("graded_at", DateTime(timezone=True), nullable=True),
     Column("mastery_applied_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("essay_score IS NULL OR essay_score BETWEEN 0 AND 100", name="ck_quiz_attempt_essay_score"),
 )
 
 weak_questions = Table(
@@ -490,6 +596,87 @@ weak_questions = Table(
     Column("next_review_date", Date, nullable=True),
     Column("last_weak_at", DateTime(timezone=True), nullable=False),
     Column("resolved_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(review_step IS NULL OR review_step >= 0)", name="ck_weak_questions_nonnegative"),
+)
+
+quiz_answers = Table(
+    "quiz_answers", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("choice", Integer, nullable=True),
+    Column("text", Text, nullable=True),
+    Column("confidence", String, nullable=False),
+    Column("answer_hash", String, nullable=True),
+    Column("input_recovered", Boolean, nullable=False, default=True),
+    Column("legacy_answer", Text, nullable=True),
+    Column("answered_at", DateTime(timezone=True), nullable=False),
+    Column("answered_date", Date, nullable=False),
+    CheckConstraint("revision > 0", name="ck_quiz_answer_revision"),
+    CheckConstraint("confidence IN ('sure', 'unsure')", name="ck_quiz_answer_confidence"),
+    CheckConstraint("choice IS NULL OR choice >= 0", name="ck_quiz_answer_choice"),
+    CheckConstraint("(input_recovered = true AND answer_hash IS NOT NULL AND ((choice IS NOT NULL AND text IS NULL) OR (choice IS NULL AND text IS NOT NULL))) OR (input_recovered = false AND legacy_answer IS NOT NULL AND choice IS NULL AND text IS NULL AND answer_hash IS NULL)", name="ck_quiz_answer_payload"),
+    CheckConstraint("answer_hash IS NULL OR length(answer_hash) = 64", name="ck_quiz_answer_hash"),
+    Index("ix_quiz_answers_1", "quiz_item_id", "revision", unique=True),
+)
+
+quiz_answer_heads = Table(
+    "quiz_answer_heads", metadata,
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False, unique=True),
+)
+
+quiz_answer_receipts = Table(
+    "quiz_answer_receipts", metadata,
+    Column("quiz_item_id", UUID, ForeignKey("quiz_items.id", ondelete="CASCADE"), nullable=False),
+    Column("request_revision", Integer, nullable=False),
+    Column("answer_hash", String, nullable=False),
+    Column("response_answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False),
+    Column("received_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("quiz_item_id", "request_revision", "answer_hash"),
+    CheckConstraint("request_revision >= 0", name="ck_quiz_receipt_revision"),
+    CheckConstraint("length(answer_hash) = 64", name="ck_quiz_receipt_hash"),
+)
+
+quiz_grading_jobs = Table(
+    "quiz_grading_jobs", metadata,
+    Column("id", UUID, primary_key=True, nullable=False),
+    Column("answer_id", UUID, ForeignKey("quiz_answers.id", ondelete="CASCADE"), nullable=False, unique=True),
+    Column("answer_revision", Integer, nullable=False),
+    Column("status", String, nullable=False, default="queued"),
+    Column("execution_mode", String, nullable=False, default="live", server_default="live"),
+    Column("lease_owner", String, nullable=True),
+    Column("lease_token", UUID, nullable=True),
+    Column("lease_expires_at", DateTime(timezone=True), nullable=True),
+    Column("claim_count", Integer, nullable=False, default=0),
+    Column("result", JSONB, nullable=True),
+    Column("error_code", String, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("claimed_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("answer_revision > 0 AND claim_count >= 0", name="ck_quiz_job_revision"),
+    CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')", name="ck_quiz_job_status"),
+    CheckConstraint("execution_mode IN ('live', 'saved', 'backup')", name="ck_quiz_job_execution_mode"),
+    CheckConstraint("(status = 'running' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND claimed_at IS NOT NULL AND lease_expires_at > claimed_at) OR (status <> 'running' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)", name="ck_quiz_job_lease"),
+    CheckConstraint("(status = 'succeeded' AND result IS NOT NULL) OR (status <> 'succeeded' AND result IS NULL)", name="ck_quiz_job_result"),
+    Index("ix_quiz_grading_jobs_1", "status", "lease_expires_at", "created_at"),
+)
+
+quiz_submission_states = Table(
+    "quiz_submission_states", metadata,
+    Column("quiz_session_id", UUID, ForeignKey("quiz_sessions.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column("sealed_at", DateTime(timezone=True), nullable=False),
+    Column("answer_set_hash", String, nullable=True),
+    Column("input_recovered", Boolean, nullable=False),
+    Column("sealed_answers", JSONB, nullable=False),
+    Column("legacy", Boolean, nullable=False, default=False),
+    Column("legacy_snapshot", JSONB, nullable=True),
+    Column("result_snapshot", JSONB, nullable=True),
+    Column("result_provenance", String, nullable=True),
+    Column("result_schema_version", String, nullable=True),
+    Column("result_captured_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(answer_set_hash IS NULL OR length(answer_set_hash) = 64) AND (input_recovered = false OR answer_set_hash IS NOT NULL)", name="ck_quiz_submission_hash"),
+    CheckConstraint("(result_snapshot IS NULL AND result_provenance IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL) OR (result_snapshot IS NOT NULL AND result_provenance IS NOT NULL AND result_provenance IN ('submitted', 'legacy_reconstructed') AND result_schema_version IS NOT NULL AND result_captured_at IS NOT NULL AND result_captured_at >= sealed_at)", name="ck_quiz_snapshot_metadata"),
 )
 
 user_notices = Table(
@@ -533,6 +720,7 @@ tutor_sources = Table(
     Column("start_page", Integer, nullable=False),
     Column("end_page", Integer, nullable=False),
     Column("quote", Text, nullable=True),
+    CheckConstraint("start_page IS NOT NULL AND end_page IS NOT NULL AND start_page >= 1 AND end_page >= start_page", name="ck_tutor_sources_pages"),
     Index("ix_tutor_sources_1", "message_id"),
 )
 
@@ -550,6 +738,7 @@ reflection_reports = Table(
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True),
     Column("is_fallback", Boolean, nullable=False, default=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("period_end >= period_start", name="ck_reflection_report_period"),
 )
 
 ai_saved_results = Table(
@@ -587,6 +776,7 @@ ai_jobs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("finished_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint("(retry_count IS NULL OR retry_count >= 0)", name="ck_ai_jobs_nonnegative"),
     Index("ix_ai_jobs_1", "user_id", "idempotency_key", unique=True),
     Index("ix_ai_jobs_2", "user_id", "kind", "status"),
     Index("ix_ai_jobs_3", "input_hash"),
@@ -608,6 +798,7 @@ ai_usage_logs = Table(
     Column("latency_ms", Integer, nullable=True),
     Column("status", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("(input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0) AND (estimated_cost IS NULL OR estimated_cost >= 0) AND (latency_ms IS NULL OR latency_ms >= 0)", name="ck_ai_usage_logs_nonnegative"),
     Index("ix_ai_usage_logs_1", "created_at"),
 )
 
@@ -615,3 +806,11 @@ Index("uq_focus_active_user", study_sessions.c.user_id, unique=True,
       postgresql_where=text("status IN ('running', 'paused')"), sqlite_where=text("status IN ('running', 'paused')"))
 Index("uq_focus_open_segment", study_session_segments.c.session_id, unique=True,
       postgresql_where=text("ended_at IS NULL"), sqlite_where=text("ended_at IS NULL"))
+Index("uq_units_current_order", units.c.material_id, units.c.sort_order, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_concepts_current_code", concepts.c.unit_id, concepts.c.code, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_concepts_current_order", concepts.c.unit_id, concepts.c.sort_order, unique=True,
+      postgresql_where=text("retired_at IS NULL"), sqlite_where=text("retired_at IS NULL"))
+Index("uq_study_tasks_active_block", study_tasks.c.plan_id, study_tasks.c.block_id, unique=True,
+      postgresql_where=text("status IN ('planned', 'partial')"), sqlite_where=text("status IN ('planned', 'partial')"))

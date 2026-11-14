@@ -62,7 +62,7 @@
 | `NO_TASK`             | `POST /api/plan/today/preview`                                                                                   | 보임    |
 | `NO_UNITS`            | `POST /api/review/custom-quiz`                                                                                   | 보임    |
 | `OTHER_ACTIVE`        | `POST /api/study/sessions` (집중 모드 시작 오류 화면 설명)                                                       | 보임    |
-| `PARSE_FAILED`        | `POST /api/schedules/voice`                                                                                      | 보임    |
+| `PARSE_FAILED`        | `POST /api/schedules/voice` · `POST /api/records/interpret`                                                     | 보임    |
 | `SCHEDULE_NOT_FOUND`  | `DELETE /api/schedules/:id`                                                                                      | 보임    |
 | `SESSION_NOT_FOUND`   | `GET /api/study/sessions/:id` (안 보임) · `POST …/:id/pause\|resume\|end` (보임)                                 | 보임    |
 | `SUBJECT_NOT_FOUND`   | `GET /api/units` (안 보임) · `POST /api/review/custom-quiz` (보임)                                               | 보임    |

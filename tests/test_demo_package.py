@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import func, select
 
+from app.ai.metrics_adapter import calculate_learning_metrics
 from app.db import schema as t
 from app.repositories.users import UserRepository
 from app.seed import package
@@ -43,10 +44,11 @@ def test_package_state_metrics_and_learning_evidence(api_client, demo_user, doma
     assert [(x.first,x.last,x.row["estimated_minutes"]) for x in tasks] == [(12,20,25)] * 3
     assert data.progress(date(2026,11,9))["donePages"] == 18
     user = UserRepository(conn).get(UUID(demo_user))
-    metrics = package.engine.module("learning_metrics").calculate_learning_metrics(
+    metrics = calculate_learning_metrics(
         QuizService(conn,user.to_mapping(),date(2026,11,9))._metrics_input())
-    stored = {u["code"]:u["mastery_score"] for u in data.units.values() if u["mastery_score"] is not None}
-    assert stored == {u["unit"]:u["score"] for u in metrics["units"]}
+    stored = {u["id"]:u["mastery_score"] for u in data.units.values() if u["mastery_score"] is not None}
+    assert stored == {u.unit_id:u.score for u in metrics.units}
+    assert {data.units[u.unit_id]["code"]:u.score for u in metrics.units} == {"AI1":90,"DB1":40,"OS1":80}
     records = set(conn.scalars(select(t.study_records.c.id)))
     passes = conn.execute(select(t.learning_passes)).mappings().all()
     assert len(passes) == 5
@@ -55,7 +57,7 @@ def test_package_state_metrics_and_learning_evidence(api_client, demo_user, doma
     assert conn.scalar(select(func.count()).select_from(t.questions)) == 45
 
 
-def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_focus):
+def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_focus, domain_connection):
     headers = auth(demo_user)
     before = api_client.get("/api/today",headers=headers).json()["data"]
     assert before["progress"] == {"doneCount":2,"totalCount":3,"donePages":18,"totalPages":27,"rate":67}
@@ -74,8 +76,15 @@ def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_f
     assert quiz.status_code == 200 and len(quiz.json()["data"]["questions"]) == 6
     questions = quiz.json()["data"]["questions"]
     assert any(q["type"] == "essay" for q in questions)
-    # 이번 시연에서 새 문항은 실제 기록한 AI2 p.12–13만 사용한다.
-    assert all(12 <= int(q["page"].removeprefix("p.")) <= 13 for q in questions if q["tag"] is None)
+    assert all("page" not in q for q in questions)
+    # 풀이 응답에서 근거를 숨겨도 출제 범위는 실제 기록한 AI2 p.12–13이어야 한다.
+    fresh_ids = [q["id"] for q in questions if q["tag"] is None]
+    pages = domain_connection.scalars(
+        select(t.question_sources.c.start_page)
+        .join(t.quiz_items, t.quiz_items.c.question_id == t.question_sources.c.question_id)
+        .where(t.quiz_items.c.id.in_(fresh_ids))).all()
+    assert len(pages) == len(fresh_ids) > 0
+    assert all(12 <= page <= 13 for page in pages)
 
 
 def test_overdue_has_no_focus_and_requests_replan(api_client, demo_user):
