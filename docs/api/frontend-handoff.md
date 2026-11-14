@@ -2,7 +2,7 @@
 
 [PR #3](https://github.com/line1thon-team10/team-10_BE/pull/3)에서 시작한 **FE 연동 계약**입니다. FE 기본 계약을 유지하되 요구사항/와이어 충돌은 기존 BE 명세로 보완하고, BE에도 오류/누락이 있으면 새로 정의했습니다. 아래 C01~C22는 최종 계약의 변경 근거이며 **각 항목의 구현·배포 완료를 의미하지 않습니다**. FE 런타임 연결은 후속 FE task로 진행합니다.
 
-기준 FE: `c8e250d9484a03eac005e12c24d1b703fc105626`(원격 main/dev 재확인). BE 통합 확인: `9d1ddd7a40e37f74823950038581b18e1134fc58`, 전체 SQLite+PostgreSQL **2123 passed, 4 skipped**. 운영 앱은 별도 고정 SHA `4c20454fef5382e7e97232f93e02e1637a235583`이며 [배포 기록](../releases/2026-11-14-checkpoint-01.md)을 따릅니다. AI pin은 `6d74ffb6c455a306e912252013d76f93e30a6210`입니다.
+최초 대조 FE는 `c8e250d9484a03eac005e12c24d1b703fc105626`이며, 이후 담당자의 원격 main/dev `49c95c9eb8f7eadc80836fee7b8b6a65e696233e`를 재확인하고 인계 브랜치에 정상 병합했습니다. BE 통합 확인: `9d1ddd7a40e37f74823950038581b18e1134fc58`, 전체 SQLite+PostgreSQL **2123 passed, 4 skipped**. 운영 앱은 별도 고정 SHA `4c20454fef5382e7e97232f93e02e1637a235583`이며 [배포 기록](../releases/2026-11-14-checkpoint-01.md)을 따릅니다. AI pin은 `6d74ffb6c455a306e912252013d76f93e30a6210`입니다.
 
 아래 '기존 BE 초안'은 PR #3 교정 전 Markdown을, 'BE 0.7'은 main `3475cf2` 당시 저장된 `schema/openapi-0.7.0.json`을 뜻합니다. 과거 OpenAPI로 현재 client를 생성하지 않습니다. PDF 파일명 v3/본문 v2의 차이와 원문 확인 범위는 [출처 기록](source-audit.md)에 있습니다.
 
@@ -13,6 +13,10 @@
 - 문항 저장/worker/최종 제출(Q-03~06), 미리보기 승인(SYS-05), PDF 분석·첫 계획·관리·캘린더·복습·튜터 및 FE 연결은 [task registry](../development-tasks.json)의 실제 상태를 확인합니다. Q-03 단독 배포는 기존 submit 경쟁 때문에 금지하며 Q-05의 실제 HTTP 동시성 검증과 함께 출고합니다.
 - FE 전용 [변경 위치·기준 문서](https://github.com/line1thon-team10/team-10_FE/blob/docs/api-contract-handoff/docs/api-contract-handoff.md)와 [로컬 HTTP fixture](https://github.com/line1thon-team10/team-10_FE/tree/docs/api-contract-handoff/docs/api-fixtures)에 C01~C22를 화면/adapter/hook 및 후속 task와 연결했습니다. fixture는 임시 SQLite에서 얻은 응답이고 운영 검증 자료와 구분합니다.
 - 사용자가 기준을 확정한 사실을 G-2 근거로 기록했습니다. FE 담당자가 별도로 승인했다고 주장하지 않습니다. 실제 FE 연결 시 큰 API 수정 전 보관 브랜치를 만들고 G-1의 흑백 상태 구분을 유지합니다.
+
+최신 FE에는 firstExam=null 처리, 익명 세션 재발급, mock/hybrid/server 모드, 개발 프록시·Vercel rewrite, AI/DB/OS 목업 시드가 반영됐습니다. 해당 작업을 다시 구현하지 않고 FE-08/09에서 실제 계약·배포를 검증합니다. hybrid의22개 서버 경로와 목업 계획 승인 시 day9 시드 연결을 실제 첫 계획 승인·전체 실서버 연동 완료로 보지 않습니다. C01~C22는 과거 오류와 최종 규칙을 기록한 표이며 최신 변경 중 해결된 항목까지 모두 미구현이라고 해석하지 않습니다.
+
+독립 HTTP 검증에서 기록 요청의 명시적 `sessionId:null`은422, 필드 생략은200임을 확인했습니다. FE는 연결할 종료 세션이 없으면 필드를 생략하고 있으면 반환 UUID를 전달합니다. 미사용 toPage/completedRanges도 null 대신 생략합니다. 최신 FE의 기본 과목 코드 `ai`/`os`도 실제 과목 UUID가 아니므로 과목이 없는 경우 선택 화면으로 안내해야 합니다.
 
 ## 유지하는 계약
 
