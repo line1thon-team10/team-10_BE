@@ -118,3 +118,40 @@ def test_custom_bank_never_crosses_actual_evidence_identity(api_client,progress_
     result=post(api_client,w.user,'/api/review/custom-quiz',body);assert result.status_code==200,result.text
     selected=set(w.conn.scalars(select(t.quiz_items.c.question_id).where(t.quiz_items.c.quiz_session_id==result.json()['data']['quizId'])))
     assert selected=={valid}
+
+
+def test_direct_history_is_invalidated_and_restored_through_discoverable_books_task(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,12);w.concept(unit,1,4);w.concept(unit,9,12)
+    headers={'X-Anonymous-Id':w.user};key=str(uuid4());body={'subjectId':w.subject['id'],'unitId':unit['id']}
+    w.conn.commit()
+    before_tasks=api_client.get('/api/today',headers=headers).json()['data']['tasks']
+    response=post(api_client,w.user,'/api/review/relearn',body,key);assert response.status_code==200,response.text
+    original=dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id'])).mappings().one())
+    def book():
+        w.conn.commit()
+        result=api_client.get('/api/books',headers=headers);assert result.status_code==200,result.text
+        return next(u for s in result.json()['data']['subjects'] for u in s['units'] if u['id']==unit['id'])
+    entry=book();assert entry['round']==1
+    task=entry['blocks'][0]['task'];assert task['id']==original['source_task_id'] and task['pages']==8
+    path=f"/api/tasks/{task['id']}/record"
+    ranges=task['ranges'];assert [(r['from'],r['to']) for r in ranges]==[(1,4),(9,12)]
+    old_record=dict(w.conn.execute(select(t.study_records).where(t.study_records.c.task_id==task['id'])).mappings().one())
+    w.conn.execute(update(t.users).where(t.users.c.id==w.user).values(demo_date=w.day+timedelta(days=1)));w.conn.commit()
+    partial=api_client.patch(path,headers=headers,json={'completedRanges':[{'rangeId':ranges[1]['id'],'toPage':10}]})
+    assert partial.status_code==200,partial.text
+    entry=book();assert entry['round']==0 and entry['blocks'][0]['state']=='doing'
+    invalid=dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.id==original['id'])).mappings().one())
+    assert invalid['invalidated_at'] is not None
+    assert {**invalid,'invalidated_at':None}==original
+    w.conn.commit()
+    restored=api_client.patch(path,headers=headers,json={'completedRanges':[{'rangeId':r['id'],'toPage':r['to']} for r in ranges]})
+    assert restored.status_code==200,restored.text
+    assert book()['round']==1
+    assert dict(w.conn.execute(select(t.learning_passes).where(t.learning_passes.c.id==original['id'])).mappings().one())==original
+    record=dict(w.conn.execute(select(t.study_records).where(t.study_records.c.task_id==task['id'])).mappings().one())
+    for field in ('id','task_id','session_id','recorded_at','study_date'):assert record[field]==old_record[field]
+    assert w.conn.scalar(select(func.count()).select_from(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id']))==1
+    w.conn.commit()
+    assert post(api_client,w.user,'/api/review/relearn',body,key).json()==response.json()
+    w.conn.execute(update(t.users).where(t.users.c.id==w.user).values(demo_date=w.day));w.conn.commit()
+    assert api_client.get('/api/today',headers=headers).json()['data']['tasks']==before_tasks
