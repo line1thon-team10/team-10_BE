@@ -63,7 +63,8 @@ try:
 except ModuleNotFoundError as error:
     if error.name in ("app.workers", "app.workers.materials"):
         sys.exit(42)
-    raise'
+    raise
+importlib.import_module("app.services.material_analysis")'
 if docker run --rm --entrypoint python "$image" -c "$material_probe"; then
   material_worker_available=1
 else

@@ -209,6 +209,10 @@ def test_actual_probe_distinguishes_old_module_absence_from_import_failure(tmp_p
             content = {'missing_dependency': 'import absent_grading_dependency\n',
                        'broken_module': 'raise RuntimeError("broken worker")\n', 'valid': ''}[kind]
             (workers / (worker_module + '.py')).write_text(content)
+    services = app / 'services'
+    services.mkdir()
+    (services / '__init__.py').write_text('')
+    (services / 'material_analysis.py').write_text('')
     source = (ROOT / 'deploy/apply.sh').read_text()
     prefix = "material_probe='" if worker_module == "materials" else "probe='"
     probe = source.split(prefix, 1)[1].split("'\nif docker run", 1)[0]
