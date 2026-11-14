@@ -31,6 +31,32 @@ class PendingObligations(PlanInputError):
 
 
 
+def _pending_targets(connection, user_id, today):
+    """Keep the first pre-change target until tomorrow, including later previews."""
+    state, proposal, request = t.plan_proposal_states, t.plan_proposals, t.plan_change_requests
+    rows = connection.execute(select(proposal.c.changes).join(state, state.c.proposal_id == proposal.c.id)
+        .join(request, request.c.id == proposal.c.request_id).where(
+            state.c.user_id == user_id, state.c.kind == 'subject_settings', state.c.status == 'applied',
+            state.c.base_date == today, state.c.legacy.is_(False), request.c.user_id == user_id,
+            request.c.kind == 'subject_settings', request.c.accepted_proposal_id == proposal.c.id)
+        .order_by(state.c.decided_at, state.c.base_plan_revision, proposal.c.id)).scalars()
+    result = {}
+    for changes in rows:
+        if not isinstance(changes, dict) or not isinstance(changes.get('values'), dict):
+            raise PlanInputError('승인된 목표 변경의 시행일 정보를 확인해 주세요')
+        if not {'target_score', 'target_grade'} & changes['values'].keys():
+            continue
+        try:
+            day = date.fromisoformat(changes['goalEffectiveDate'])
+            identifier = str(UUID(changes['subjectId']))
+            previous = changes['previousTargetScore']
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise PlanInputError('승인된 목표 변경의 시행일 정보를 확인해 주세요') from None
+        if day > today and identifier not in result:
+            result[identifier] = (day, previous)
+    return result
+
+
 def _page_bounds(start, end, maximum):
     if (type(start) is not int or type(end) is not int or type(maximum) is not int
             or not 1 <= start <= end <= maximum):
@@ -44,7 +70,8 @@ def initial_allocation_input(connection, user_id: str, *, today: date,
 
 
 def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None,
-                      subject_overrides=None, calendar_event_overrides=None, calendar_exception_overrides=None):
+                      subject_overrides=None, calendar_event_overrides=None, calendar_exception_overrides=None,
+                      goal_effective_day=None):
     """Resolve owned draft subjects, concept unions and actual calendar intervals.
 
     quiz_enabled is deliberately not an admission condition: a manual outline
@@ -76,6 +103,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     overrides = {} if subject_overrides is None else subject_overrides
     if not isinstance(overrides, dict) or not set(overrides) <= {row['id'] for row in rows}:
         raise PlanInputError('본인의 선택된 과목만 변경할 수 있어요')
+    pending_targets = _pending_targets(connection, user_id, today) if existing else {}
     for row in rows:
         values = overrides.get(row['id'], {})
         if not isinstance(values, dict) or not set(values) <= {'exam_date', 'target_grade', 'target_score', 'minutes_per_page'}:
@@ -84,6 +112,8 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
             raise PlanInputError('시험일은 오늘보다 뒤여야 해요')
         if 'target_grade' in values and (type(values['target_grade']) is not str or not values['target_grade'].strip()):
             raise PlanInputError('목표 학점을 확인해 주세요')
+        if {'target_grade', 'target_score'} & values.keys() and goal_effective_day is not None and goal_effective_day > today:
+            pending_targets[row['id']] = (goal_effective_day, pending_targets.get(row['id'], (None, row['target_score']))[1])
         row.update(values)
     if existing:
         rows = [row for row in rows if row['status'] == 'draft' or
@@ -99,7 +129,9 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
             raise PlanInputError("시험일은 오늘보다 뒤여야 해요")
         try:
             subjects.append(Subject(row["id"], row["exam_date"], row["target_score"], True, True,
-                                    row["minutes_per_page"]))
+                                    row["minutes_per_page"],
+                                    target_effective_date=pending_targets.get(row["id"], (None, None))[0],
+                                    previous_target_score=pending_targets.get(row["id"], (None, None))[1]))
         except ValueError as exc:
             raise PlanInputError("목표 점수와 기준 속도를 확인해 주세요") from exc
     selected = tuple(row["id"] for row in rows)
@@ -274,7 +306,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     request = _allocation_input(connection, user_id, today=today, timezone_name=timezone_name,
                                 subject_ids=subject_ids, existing=True, material_structure_overrides=material_structure_overrides,
                                 subject_overrides=subject_overrides, calendar_event_overrides=calendar_event_overrides,
-                                calendar_exception_overrides=calendar_exception_overrides)
+                                calendar_exception_overrides=calendar_exception_overrides, goal_effective_day=earliest_day)
     from app.services.study import StudyData
     data = StudyData(connection, user_id)
     included = {subject.id for subject in request.subjects}
