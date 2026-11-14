@@ -1,32 +1,35 @@
 """홈 S6 · 공부 기록 S7 — 프론트 EP.today / EP.records / EP.tasks"""
-import uuid
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import Connection, select
 
 from app.core.auth import current_user
-from app.core.clock import now_utc, today_for
+from app.core.clock import now_utc
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
 from app.schemas.records import FixIn, RecordIn, UUIDString
 from app.repositories.record_requests import RecordRequestRepository, record_request_key
+from app.services.day_notices import day_summary
 from app.services.planner import Planner
 from app.services import records
-from app.services.study import OPEN_RATE, StudyData, unit_no
+from app.services.study import StudyData, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
 
 
 @router.get("/today")
 def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    user = records.lock_record_user(conn, user)
+    at = now_utc()
     data = StudyData(conn, user["id"])
     if not data.plan:
         raise ApiError("NO_PLAN", "아직 계획이 없어요. 계획을 먼저 만들어 주세요", 404)
-    today = today_for(user)
+    today = records.record_date(user, at)
     prog = data.progress(today)
     return ok({
         "date": today.isoformat(),
+        "event": day_summary(conn, user, data, today, at),
         "subjects": [{"id": s["id"], "name": s["name"], "color": s["color"],
                       "examDate": s["exam_date"].isoformat() if s["exam_date"] else None} for s in data.subjects],
         "tasks": [data.task_view(x) for x in data.tasks_on(today)],
@@ -88,36 +91,22 @@ def _post_record(body, user, conn):
     task = records.owned_task(data, body.taskId)
     ranges = records.post_ranges(task, body)
     session_id = records.check_session(conn, task, body.sessionId, user_id=user["id"])
-    before = data.progress(today)
+    before_quiz = data.quiz_progress(today)
     records.save_record(conn, task, body.result, ranges, today, session_id, user_id=user["id"], at=at)
 
     after_data = StudyData(conn, user["id"])
     after = after_data.progress(today)
     rate = after["rate"]
 
-    # 하루 마무리 박스 (BK-03): 오늘 태스크를 다 기록했고 70% 이상이면 하루 한 번
-    # TODO(백엔드 A): 23:30이 지났을 때 조건은 데모 시각을 정한 뒤 추가
-    dedupe = f"day_summary:{today.isoformat()}"
-    shown = conn.execute(select(t.user_notices.c.id).where(
-        t.user_notices.c.user_id == user["id"], t.user_notices.c.dedupe_key == dedupe)).first()
-    if after["recordedAll"] and rate >= OPEN_RATE and not shown:
-        counts = after_data.quiz_counts(today)
-        was = {sid for sid, r in before["subjectRates"].items() if r >= OPEN_RATE}
-        opened = [{"subjectId": sid, "count": counts.get(sid, 0)}
-                  for sid, r in after["subjectRates"].items() if r >= OPEN_RATE and sid not in was]
-        event = {"type": "box", "reason": "dayClose", "rate": rate,
-                 "recordedCount": sum(1 for x in after_data.tasks_on(today) if x.row["status"] != "planned"),
-                 "totalCount": after["totalCount"], "donePages": after["donePages"],
-                 "totalPages": after["totalPages"], "opened": opened}
-        conn.execute(t.user_notices.insert().values(
-            id=str(uuid.uuid4()), user_id=user["id"], dedupe_key=dedupe, notice_type="day_summary",
-            notice_date=today, status="shown", payload={"percent": rate}, created_at=at, shown_at=at))
+    event = day_summary(conn, user, after_data, today, at, before_quiz=before_quiz)
+    if event is not None:
         return ok({"event": event})
     if body.result == "none":
         return ok({"event": None})
 
     unit = data.unit_of(task)
-    crossed = before["rate"] < OPEN_RATE <= rate
+    after_quiz = after_data.quiz_progress(today)
+    crossed = not before_quiz["open"] and after_quiz["open"]
     label = f"{unit_no(unit['code'])}단원 " if unit else ""
     return ok({"event": {
         "type": "toast", "reason": "rate70" if crossed else "record", "rate": rate,
