@@ -286,6 +286,46 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     return AllocationInput(today, tuple(subjects), tuple(scopes), tuple(busy))
 
 
+
+def _unallocated_obligations(connection, user_id, included, catalog):
+    """Unallocated obligations remain owed even after their unit is retired."""
+    rows = connection.execute(select(t.remedial_obligations, t.materials.c.subject_id,
+        t.quiz_sessions.c.user_id.label('quiz_owner'), t.quiz_sessions.c.subject_id.label('quiz_subject'),
+        t.subjects.c.user_id.label('unit_owner'))
+        .join(t.units, t.units.c.id == t.remedial_obligations.c.unit_id)
+        .join(t.materials, t.materials.c.id == t.units.c.material_id)
+        .join(t.subjects, t.subjects.c.id == t.materials.c.subject_id)
+        .join(t.quiz_sessions, t.quiz_sessions.c.id == t.remedial_obligations.c.quiz_session_id)
+        .where(t.remedial_obligations.c.user_id == user_id)
+        .order_by(t.remedial_obligations.c.created_at, t.remedial_obligations.c.id)).mappings()
+    result = []
+    for row in rows:
+        if row['unit_owner'] != user_id or row['quiz_owner'] != user_id or row['quiz_subject'] != row['subject_id']:
+            raise PlanInputError('보충 의무의 과목 소유권을 확인해 주세요')
+        if row['subject_id'] not in included:
+            continue
+        links = connection.execute(select(t.study_blocks).join(t.remedial_obligation_blocks,
+            t.remedial_obligation_blocks.c.block_id == t.study_blocks.c.id)
+            .where(t.remedial_obligation_blocks.c.obligation_id == row['id'])).mappings().all()
+        if any(link['subject_id'] != row['subject_id'] or link['task_type'] != 'remedial' for link in links):
+            raise PlanInputError('보충 의무의 책 연결 소속을 확인해 주세요')
+        if links:
+            continue
+        unit = catalog.get(row['unit_id'])
+        if unit is None:
+            raise PlanInputError('보충 의무의 원래 단원 정보를 확인해 주세요')
+        ranges = row['required_ranges']
+        if (not isinstance(ranges, list) or not ranges or any(not isinstance(span, list) or len(span) != 2
+                or any(type(page) is not int for page in span) for span in ranges)):
+            raise PlanInputError('보충 의무의 원래 페이지 범위를 확인해 주세요')
+        try:
+            parts = tuple(ScopePart(unit.id, PageSpan(unit.material_id, *span)) for span in ranges)
+            result.append(WorkRequirement(row['id'], row['subject_id'], 'remedial', parts, row['not_before']))
+        except ValueError:
+            raise PlanInputError('보충 의무의 원래 페이지 범위를 확인해 주세요') from None
+    return result
+
+
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
                               subject_overrides=None, earliest_day=None, movable_task_ids=(),
@@ -333,6 +373,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     if len(movable) != len(movable_task_ids) or not movable <= {task.id for task in data.tasks if task.row['subject_id'] in affected}:
         raise PlanInputError('본인의 재배분 대상 태스크만 중복 없이 이동할 수 있어요')
     learned, fixed, supersede, requirements = defaultdict(list), [], [], []
+    requirements.extend(_unallocated_obligations(connection, user_id, included, catalog))
     pending_fixed = []
     for task in data.tasks:
         if task.row['subject_id'] not in included:
