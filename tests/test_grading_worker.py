@@ -57,9 +57,9 @@ def worker_case(domain_connection):
     return case
 
 
-def queue(conn, case, kind="essay", **changes):
+def queue(conn, case, kind="essay", *, mode=None, **changes):
     answer = save(QuizAnswerRepository(conn), case, kind=kind, **changes).answer
-    job = GradingJobRepository(conn).enqueue(case["user"], case["quiz"], case[f"{kind}_item"], revision=answer["revision"], now=NOW)
+    job = GradingJobRepository(conn).enqueue(case["user"], case["quiz"], case[f"{kind}_item"], revision=answer["revision"], now=NOW, mode=mode)
     conn.commit()
     return job
 
@@ -229,7 +229,7 @@ def test_missing_key_fails_once_and_automatic_poll_never_retries_failed_job(doma
 def test_saved_mode_miss_cannot_initialize_provider_or_credentials(domain_connection, worker_engine, worker_case, monkeypatch, mode):
     conn, case = domain_connection, worker_case
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    job = queue(conn, case)
+    job = queue(conn, case, mode=mode)
     forbidden = ProviderSpec(FunctionRef("module_that_must_not_be_imported", "provider"))
     outcome = service(worker_engine, provider=forbidden).run_job(case["user"], job["id"], mode=mode)
     assert outcome.state == "failed" and job_row(conn, job)["result"] is None
@@ -250,7 +250,7 @@ def test_real_gateway_fake_transport_records_null_ai_job_and_keyless_cache_reuse
         type="practice", quiz_date=DAY, status="ready", created_at=NOW))
     conn.execute(t.quiz_items.insert().values(id=second["essay_item"], quiz_session_id=second["quiz"],
         question_id=case["essay"], sort_order=1, inclusion_reason="practice"))
-    new_job = queue(conn, second, text="valid")
+    new_job = queue(conn, second, text="valid", mode="saved")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     cached = service(worker_engine, provider=ProviderSpec(FunctionRef("do_not_import_this", "provider"))).run_job(
         case["user"], new_job["id"], mode="saved")

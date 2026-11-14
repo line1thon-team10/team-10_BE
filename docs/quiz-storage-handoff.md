@@ -28,9 +28,13 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 
 ## 채점 작업 연산
 
-`GradingJobRepository.enqueue(user_id, quiz_id, item_id, revision=..., now=...)`는 현재 답안에 대한 유일 작업을 반환한다. `available(user_id, now=..., limit=100)`은 queued/failed 또는 lease가 만료된 현재 revision 작업을 찾는다. limit는 작업자 batch 크기이며 사용자 답안 개수 제한이 아니다.
+`GradingJobRepository.enqueue(user_id, quiz_id, item_id, revision=..., now=..., mode=None)`는 현재 답안에 대한 유일 작업을 반환한다. Q-04의 `0008_grading_execution_mode`는 `live/saved/backup` 실행 의도를 작업에 저장한다. 새 작업의 mode=None은 live이며, 기존 작업에 mode=None을 전달하면 저장된 mode를 그대로 유지한다. 명시한 mode가 기존과 다르면 내부 `ExecutionModeConflict`다. enqueue가 기존 saved/backup을 live로 승격하지 않는다. Q-03은 답안 저장과 enqueue를 같은 transaction에 두고, Q-05의 신규 saved bulk 제출은 enqueue(mode="saved")를 같은 transaction에 포함한다.
+
+자동 worker는 `pending(now=..., limit=100)`으로 queued 또는 lease가 만료된 running만 찾고 저장 mode를 따른다. `available(user_id, now=..., limit=100)`은 기존 수동 재시도 후보 조회 호환을 위해 failed를 포함하므로 자동 polling에 사용하지 않는다. limit는 작업자 batch 크기이며 사용자 답안 개수 제한이 아니다.
 
 `claim(user_id, job_id, owner=..., now=..., lease_for=timedelta(...))`는 선점한 작업(새 lease_token 포함) 또는 None을 반환한다. 호출자는 claim을 commit하고 DB transaction 밖에서 AI를 호출한 뒤 새 transaction에서 `complete` 또는 `fail`을 호출한다. 이 연산은 owner/token/revision/now를 모두 받고 현재 답안과 만료 여부까지 조건부 갱신하여 성공 여부 bool을 반환한다. 같은 worker 이름으로 재선점해도 token이 바뀌므로 이전 결과는 반영되지 않는다. `renew`도 같은 자격을 확인하며 기존 lease를 줄이지 않는다.
+
+Q-04 자동 실행은 `claim(..., retry_failed=False, mode=None)`을 사용한다. 명시적 retry만 `retry_failed=True, mode=...`로 queued/failed/expired-running의 mode와 token을 원자적으로 바꿀 수 있다. 유효 running lease는 mode를 바꾸지 않고 None/처리 중을 반환한다. 이미 나간 이전 live 요청을 취소하거나 과금이 없었다고 보장하지 않는다. 오래된 token의 결과는 폐기하며 crash 후 saved/backup 재선점은 외부 요청을 시작하지 않는다. 서비스의 typed `MODE_CONFLICT`는 내부 결과이고 공개 HTTP 매핑은 Q-05에서 결정한다. low-level claim의 retry_failed 기본 True는 기존 명시적 claim 호출 호환용이며 자동 worker는 반드시 False를 전달한다.
 
 실패는 답안 원문을 유지하고 result=null로 남긴다. 저장된 채점 결과는 `is_correct`, `essay_score`, `feedback`, `got_points`, `missing_points`, `grading_status`를 가진다. 서술형 점수는 정수 0..100이며 85점 정오 경계를 검증한다. 이 연산은 quiz_attempts/숙달도/취약 문항을 확정하지 않는다. JSON 결과를 지울 때 SQL NULL을 사용하며 JSON 리터럴 null을 채점 성공으로 취급하지 않는다.
 

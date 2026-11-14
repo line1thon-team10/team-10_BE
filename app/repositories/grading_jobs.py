@@ -26,6 +26,19 @@ def _owner(owner):
     return owner
 
 
+def execution_mode(value):
+    if value is not None and (type(value) is not str or value not in ("live", "saved", "backup")):
+        raise ApiError("INVALID_INPUT", "채점 실행 모드가 올바르지 않아요", 422)
+    return value
+
+
+class ExecutionModeConflict(Exception):
+    """Internal outcome. Q-05 decides the HTTP mapping, without an implicit upgrade."""
+    def __init__(self, stored_mode, requested_mode):
+        self.stored_mode, self.requested_mode = stored_mode, requested_mode
+        super().__init__("An explicit retry is required to change a grading execution mode")
+
+
 class GradingJobRepository:
     def __init__(self, connection: Connection):
         self.connection = connection
@@ -62,7 +75,8 @@ class GradingJobRepository:
             t.quiz_answer_heads.c.quiz_item_id == job["quiz_item_id"],
             t.quiz_answer_heads.c.answer_id == job["answer_id"]))
 
-    def enqueue(self, user_id, quiz_id, item_id, *, revision: int, now: datetime) -> dict:
+    def enqueue(self, user_id, quiz_id, item_id, *, revision: int, now: datetime, mode: str | None = None) -> dict:
+        mode = execution_mode(mode)
         if type(revision) is not int or revision < 1:
             raise ApiError("INVALID_INPUT", "저장된 답안 revision이 필요해요", 422)
         now = aware_time(now)
@@ -76,10 +90,14 @@ class GradingJobRepository:
             existing = self.connection.scalar(select(t.quiz_grading_jobs.c.id).where(
                 t.quiz_grading_jobs.c.answer_id == answer["id"]))
             if existing:
-                return self.get(user_id, existing)
+                job = self.get(user_id, existing)
+                if mode is not None and job["execution_mode"] != mode:
+                    raise ExecutionModeConflict(job["execution_mode"], mode)
+                return job
             job_id = str(uuid4())
             self.connection.execute(t.quiz_grading_jobs.insert().values(
-                id=job_id, answer_id=answer["id"], answer_revision=revision, status="queued", claim_count=0, created_at=now))
+                id=job_id, answer_id=answer["id"], answer_revision=revision, status="queued", execution_mode=mode or "live",
+                claim_count=0, created_at=now))
             return self.get(user_id, job_id)
 
     def available(self, user_id, *, now: datetime, limit: int = 100) -> list[dict]:
@@ -122,20 +140,31 @@ class GradingJobRepository:
                     and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now)))
             .order_by(t.quiz_grading_jobs.c.created_at, t.quiz_grading_jobs.c.id).limit(limit)).mappings()]
 
-    def claim(self, user_id, job_id, *, owner: str, now: datetime, lease_for: timedelta, retry_failed: bool = True) -> dict | None:
+    def claim(self, user_id, job_id, *, owner: str, now: datetime, lease_for: timedelta,
+              retry_failed: bool = True, mode: str | None = None) -> dict | None:
         if type(retry_failed) is not bool:
             raise ApiError("INVALID_INPUT", "재시도 여부가 올바르지 않아요", 422)
+        mode = execution_mode(mode)
         now, owner = aware_time(now), _owner(owner)
         expires = _expiry(now, lease_for)
         job = self._locked(user_id, job_id)
         if not self._is_current(job):
             return None
+        if job["status"] in ("succeeded", "cancelled") or (job["status"] == "running" and job["lease_expires_at"] > now):
+            return None
+        if job["status"] == "failed" and not retry_failed:
+            return None
+        if mode is not None and mode != job["execution_mode"] and not retry_failed:
+            raise ExecutionModeConflict(job["execution_mode"], mode)
         eligible = or_(t.quiz_grading_jobs.c.status.in_(("queued", "failed") if retry_failed else ("queued",)),
                        and_(t.quiz_grading_jobs.c.status == "running", t.quiz_grading_jobs.c.lease_expires_at <= now))
         changed = self.connection.execute(update(t.quiz_grading_jobs).where(
             t.quiz_grading_jobs.c.id == job["id"], t.quiz_grading_jobs.c.answer_revision == job["stored_revision"],
+            t.quiz_grading_jobs.c.status == job["status"], t.quiz_grading_jobs.c.lease_token == job["lease_token"],
+            t.quiz_grading_jobs.c.execution_mode == job["execution_mode"],
             self._current_condition(job), eligible).values(
             status="running", lease_owner=owner, lease_token=str(uuid4()), lease_expires_at=expires,
+            execution_mode=mode or job["execution_mode"],
             claim_count=t.quiz_grading_jobs.c.claim_count + 1, claimed_at=now, finished_at=None,
             result=null(), error_code=None))
         return self.get(user_id, job_id) if changed.rowcount == 1 else None

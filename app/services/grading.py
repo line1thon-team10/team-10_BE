@@ -1,6 +1,7 @@
 """Restartable per-answer grading. Q-05 alone finalizes attempts and mastery."""
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from enum import StrEnum
 import hashlib
 import math
 import time
@@ -14,7 +15,7 @@ from app.ai.settings import AiSettings
 from app.core.clock import now_utc
 from app.core.responses import ApiError
 from app.db import schema as t
-from app.repositories.grading_jobs import GradingJobRepository
+from app.repositories.grading_jobs import ExecutionModeConflict, GradingJobRepository, execution_mode
 from app.repositories.quiz_answers import canonical_hash, normalized_uuid
 
 
@@ -55,6 +56,7 @@ class GradingSnapshot:
     token: str
     owner: str
     revision: int
+    mode: str
     payload_json: str
 
     @property
@@ -69,12 +71,35 @@ class GradingSnapshot:
                 "source_hash": _hash(data["sources"]), "material_hash": _hash(data["material_context"])}
 
 
+class GradingState(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    STALE = "stale"
+    NOT_CLAIMED = "not_claimed"
+    MODE_CONFLICT = "mode_conflict"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    IDLE = "idle"
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class GradingRun:
     job_id: str | None
-    state: str
+    state: GradingState
     result: dict | None = None
     error_code: str | None = None
+    stored_mode: str | None = None
+    requested_mode: str | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "state", GradingState(self.state))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PreparedGrading:
+    snapshot: GradingSnapshot
+    request: GatewayRequest | None
+    deterministic_json: str | None
+    budget: GradingBudget
 
 
 def _hash(value):
@@ -125,7 +150,7 @@ def capture_snapshot(connection, user_id, job):
     if question["type"] not in ("choice", "ox", "short", "essay") or not question["correct_answer"].strip():
         raise InvalidOutput("A supported question with a correct answer is required")
     return GradingSnapshot(normalized_uuid(user_id), job["id"], job["lease_token"], job["lease_owner"],
-                           job["answer_revision"], canonical_json(data))
+                           job["answer_revision"], job["execution_mode"], canonical_json(data))
 
 
 def _deterministic(data):
@@ -205,38 +230,87 @@ class GradingService:
         self.settings = settings or AiSettings.from_environment()
         self.gateway_factory, self.provider = gateway_factory, provider
 
-    def run_job(self, user_id, job_id, *, retry_failed=False, mode="live", budget=None):
-        if mode not in ("live", "saved", "backup") or type(retry_failed) is not bool:
-            raise ValueError("Use a known mode and explicit boolean retry policy")
+    def prepare(self, connection, user_id, job_id, *, retry_failed=False, mode=None, budget=None):
+        """Caller commits this transaction before execute(); mode is durable even after a crash."""
+        execution_mode(mode)
+        if type(retry_failed) is not bool:
+            raise ValueError("Use an explicit boolean retry policy")
         budget = budget or GradingBudget.start(self.settings.request_budget_seconds)
         if not isinstance(budget, GradingBudget):
             raise TypeError("Pass the same GradingBudget for every item of a submit")
         if not budget.remaining:
             return GradingRun(str(job_id), "budget_exhausted", error_code="AI_FAILED")
-        with self.engine.begin() as conn:
-            repo = GradingJobRepository(conn)
+        repo = GradingJobRepository(connection)
+        try:
             lease = repo.claim(user_id, job_id, owner=self.owner, now=self.clock(),
-                lease_for=timedelta(seconds=self.settings.request_budget_seconds + 10), retry_failed=retry_failed)
-            if lease is None:
-                return GradingRun(str(job_id), "not_claimed")
-            try:
-                snapshot = capture_snapshot(conn, user_id, lease)
-                deterministic = _deterministic(snapshot.data)
-                request = None if deterministic is not None else essay_request(snapshot)
-            except (InvalidOutput, ValueError, TypeError):
-                repo.fail(user_id, job_id, owner=self.owner, token=lease["lease_token"], revision=lease["answer_revision"],
-                          now=self.clock(), error_code="INVALID_GRADING_INPUT")
-                return GradingRun(str(job_id), "failed", error_code="INVALID_GRADING_INPUT")
+                lease_for=timedelta(seconds=self.settings.request_budget_seconds + 10), retry_failed=retry_failed, mode=mode)
+        except ExecutionModeConflict as conflict:
+            return GradingRun(str(job_id), "mode_conflict", stored_mode=conflict.stored_mode, requested_mode=conflict.requested_mode)
+        if lease is None:
+            return GradingRun(str(job_id), "not_claimed")
+        try:
+            snapshot = capture_snapshot(connection, user_id, lease)
+            deterministic = _deterministic(snapshot.data)
+            request = None if deterministic is not None else essay_request(snapshot)
+        except (InvalidOutput, ValueError, TypeError):
+            repo.fail(user_id, job_id, owner=self.owner, token=lease["lease_token"], revision=lease["answer_revision"],
+                      now=self.clock(), error_code="INVALID_GRADING_INPUT")
+            return GradingRun(str(job_id), "failed", error_code="INVALID_GRADING_INPUT")
+        return PreparedGrading(snapshot, request, canonical_json(deterministic) if deterministic is not None else None, budget)
+
+    def run_job(self, user_id, job_id, *, retry_failed=False, mode=None, budget=None):
+        with self.engine.begin() as conn:
+            prepared = self.prepare(conn, user_id, job_id, retry_failed=retry_failed, mode=mode, budget=budget)
+        return prepared if isinstance(prepared, GradingRun) else self.execute(prepared)
+
+    def _recheck(self, connection, snapshot):
+        repo = GradingJobRepository(connection)
+        try:
+            job = repo._locked(snapshot.user_id, snapshot.job_id)
+        except ApiError as exc:
+            if exc.status == 404:
+                return GradingRun(snapshot.job_id, "stale")
+            raise
+        if (job["status"] != "running" or job["lease_token"] != snapshot.token or job["lease_owner"] != snapshot.owner
+                or job["answer_revision"] != snapshot.revision or job["execution_mode"] != snapshot.mode):
+            return GradingRun(snapshot.job_id, "stale")
+        try:
+            current = capture_snapshot(connection, snapshot.user_id, job)
+            changed = current.payload_json != snapshot.payload_json
+        except (InvalidOutput, ValueError, TypeError):
+            changed = True
+        now = self.clock()
+        if job["lease_expires_at"] <= now:
+            return GradingRun(snapshot.job_id, "stale")
+        if changed:
+            failed = repo.fail(snapshot.user_id, snapshot.job_id, owner=snapshot.owner, token=snapshot.token,
+                revision=snapshot.revision, now=now, error_code="GRADING_INPUT_CHANGED")
+            return GradingRun(snapshot.job_id, "failed" if failed else "stale", error_code="GRADING_INPUT_CHANGED")
+        return None
+
+    def execute(self, prepared):
+        if not isinstance(prepared, PreparedGrading):
+            raise TypeError("A server-created prepared grading snapshot is required")
+        snapshot, budget = prepared.snapshot, prepared.budget
+        user_id, job_id = snapshot.user_id, snapshot.job_id
+        # A prepared batch might wait before execute, so recheck before spending
+        # any provider budget as well as after the external execution.
+        with self.engine.begin() as conn:
+            stale = self._recheck(conn, snapshot)
+            if stale is not None:
+                return stale
         # Claim + owned immutable snapshot are now committed. No connection or
         # user/quiz lock remains while a provider or cached validator executes.
         failure = None
-        if deterministic is not None:
-            result = deterministic | {"provenance": snapshot.hashes | _versions(True) | {"saved_result_id": None}}
+        if prepared.deterministic_json is not None:
+            result = parse_json(prepared.deterministic_json) | {"provenance": snapshot.hashes | _versions(True) | {"saved_result_id": None}}
+        elif not budget.remaining:
+            failure = "AI_FAILED"
         else:
             try:
                 gateway = self.gateway_factory(self.engine, settings=self.settings)
                 gateway.executor = _BoundExecutor(gateway.executor, budget)
-                evaluated = gateway.run(request, validator=VALIDATOR, provider=self.provider, mode=mode)
+                evaluated = gateway.run(prepared.request, validator=VALIDATOR, provider=self.provider, mode=snapshot.mode)
                 value = evaluated.data
                 result = {"is_correct": value["score"] >= 85, "essay_score": value["score"], "feedback": value["feedback"],
                     "got_points": value["strengths"], "missing_points": value["missing_points"],
@@ -248,22 +322,10 @@ class GradingService:
                 failure = "AI_FAILED"
         with self.engine.begin() as conn:
             repo = GradingJobRepository(conn)
-            try:
-                job = repo._locked(user_id, job_id)
-            except ApiError as exc:
-                if exc.status == 404:
-                    return GradingRun(str(job_id), "stale")
-                raise
+            stale = self._recheck(conn, snapshot)
+            if stale is not None:
+                return stale
             now = self.clock()
-            if (job["status"] != "running" or job["lease_token"] != snapshot.token or job["lease_owner"] != snapshot.owner
-                    or job["answer_revision"] != snapshot.revision or job["lease_expires_at"] <= now):
-                return GradingRun(str(job_id), "stale")
-            try:
-                current = capture_snapshot(conn, user_id, job)
-                if current.payload_json != snapshot.payload_json:
-                    failure = "GRADING_INPUT_CHANGED"
-            except (InvalidOutput, ValueError, TypeError):
-                failure = "GRADING_INPUT_CHANGED"
             args = {"owner": snapshot.owner, "token": snapshot.token, "revision": snapshot.revision, "now": now}
             if failure:
                 changed = repo.fail(user_id, job_id, error_code=failure, **args)
@@ -271,12 +333,12 @@ class GradingService:
             changed = repo.complete(user_id, job_id, result=result, **args)
             return GradingRun(str(job_id), "succeeded" if changed else "stale", result=result if changed else None)
 
-    def run_next(self, *, mode="live"):
+    def run_next(self):
         with self.engine.connect() as conn:
             candidates = GradingJobRepository(conn).pending(now=self.clock())
         for candidate in candidates:
             try:
-                outcome = self.run_job(candidate["user_id"], candidate["id"], mode=mode)
+                outcome = self.run_job(candidate["user_id"], candidate["id"])
             except ApiError as exc:
                 if exc.code in ("REQUEST_IN_PROGRESS", "NO_QUIZ"):
                     continue
