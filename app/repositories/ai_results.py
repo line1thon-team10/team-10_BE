@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Connection, Engine, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.responses import ApiError
@@ -61,7 +61,14 @@ class AiResultRepository:
             return SavedAiResult(row["id"], row["result"], source) if row else None
 
     def save(self, request, result, *, demo_approval=None) -> str:
+        with self.engine.begin() as conn:
+            return self.save_in_transaction(conn, request, result, demo_approval=demo_approval)
+
+    def save_in_transaction(self, conn, request, result, *, demo_approval=None) -> str:
+        """Save validated setup data without committing or closing the caller."""
         from app.ai.gateway import DemoApproval, canonical_json, parse_json
+        if not isinstance(conn, Connection):
+            raise TypeError("Pass the caller's transaction Connection")
         if type(result) not in (dict, list):
             raise ValueError("A validated AI result must be an object or array")
         snapshot = parse_json(canonical_json(result))
@@ -71,12 +78,11 @@ class AiResultRepository:
                 raise ValueError("Shared cache is restricted to the exact approved self-authored demo")
             owner_id = None
         result_id, now = str(uuid4()), datetime.now(timezone.utc)
-        with self.engine.begin() as conn:
-            self._assert_owner(conn, request)
-            conn.execute(t.ai_saved_results.insert().values(
-                id=result_id, user_id=owner_id, scenario_key=identity.scenario_key, kind=identity.kind,
-                input_hash=identity.input_hash, schema_version=identity.schema_version, result=snapshot,
-                validated_at=now, created_at=now))
+        self._assert_owner(conn, request)
+        conn.execute(t.ai_saved_results.insert().values(
+            id=result_id, user_id=owner_id, scenario_key=identity.scenario_key, kind=identity.kind,
+            input_hash=identity.input_hash, schema_version=identity.schema_version, result=snapshot,
+            validated_at=now, created_at=now))
         return result_id
 
     def record_usage(self, request, usage) -> None:

@@ -16,7 +16,7 @@ from app.core.clock import now_utc
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.repositories.grading_jobs import ExecutionModeConflict, GradingJobRepository, execution_mode
-from app.repositories.quiz_answers import QuizAnswerRepository, canonical_hash, normalized_uuid
+from app.repositories.quiz_answers import QuizAnswerRepository, answer_payload, canonical_hash, normalized_uuid
 
 
 RULE_VERSION = "deterministic-grade-v1"
@@ -66,9 +66,7 @@ class GradingSnapshot:
 
     @property
     def hashes(self):
-        data = self.data
-        return {"answer_hash": data["answer"]["answer_hash"], "question_hash": _hash(data["question"]),
-                "source_hash": _hash(data["sources"]), "material_hash": _hash(data["material_context"])}
+        return _input_hashes(self.data)
 
 
 class GradingState(StrEnum):
@@ -106,6 +104,11 @@ def _hash(value):
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _input_hashes(data):
+    return {"answer_hash": data["answer"]["answer_hash"], "question_hash": _hash(data["question"]),
+            "source_hash": _hash(data["sources"]), "material_hash": _hash(data["material_context"])}
+
+
 def _json_row(row):
     return {str(key): ((value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
                   if isinstance(value, datetime) else value.isoformat() if isinstance(value, date) else value)
@@ -123,7 +126,16 @@ def capture_snapshot(connection, user_id, job):
         "choice": answer["choice"], "text": answer["text"], "confidence": answer["confidence"],
     }):
         raise InvalidOutput("The stored answer hash does not describe its original input")
-    question = connection.execute(select(t.questions).where(t.questions.c.id == item["question_id"])).mappings().one()
+    data = {"quiz_id": job["quiz_session_id"], "item_id": job["quiz_item_id"], "answer": _json_row(answer),
+            **capture_question_context(connection, user_id, item["question_id"])}
+    return GradingSnapshot(normalized_uuid(user_id), job["id"], job["lease_token"], job["lease_owner"],
+                           job["answer_revision"], job["execution_mode"], canonical_json(data))
+
+
+def capture_question_context(connection, user_id, question_id):
+    """One owned input format for worker claims and explicit seed registration."""
+    question = connection.execute(select(t.questions).where(
+        t.questions.c.id == normalized_uuid(question_id))).mappings().one()
     unit = connection.execute(select(t.units).where(t.units.c.id == question["unit_id"])).mappings().one()
     sources = [dict(row) for row in connection.execute(select(t.question_sources)
         .where(t.question_sources.c.question_id == question["id"]).order_by(t.question_sources.c.id)).mappings()]
@@ -142,15 +154,12 @@ def capture_snapshot(connection, user_id, job):
         if raw is None:
             raise InvalidOutput("The concept must belong to this question's unit")
         concept = {key: raw[key] for key in ("id", "unit_id", "start_page", "end_page", "in_scope", "retired_at")}
-    data = {"quiz_id": job["quiz_session_id"], "item_id": job["quiz_item_id"], "answer": _json_row(answer),
-            "question": _json_row(question), "sources": [_json_row(row) for row in sources],
+    if question["type"] not in ("choice", "ox", "short", "essay") or not question["correct_answer"].strip():
+        raise InvalidOutput("A supported question with a correct answer is required")
+    return {"question": _json_row(question), "sources": [_json_row(row) for row in sources],
             "material_context": {"materials": [_json_row(row) for row in materials],
                 "unit": _json_row({key: unit[key] for key in unit_fields}),
                 "concept": _json_row(concept) if concept else None}}
-    if question["type"] not in ("choice", "ox", "short", "essay") or not question["correct_answer"].strip():
-        raise InvalidOutput("A supported question with a correct answer is required")
-    return GradingSnapshot(normalized_uuid(user_id), job["id"], job["lease_token"], job["lease_owner"],
-                           job["answer_revision"], job["execution_mode"], canonical_json(data))
 
 
 def _deterministic(data):
@@ -187,7 +196,17 @@ def _versions(deterministic):
 
 
 def essay_request(snapshot):
-    data = snapshot.data
+    return _essay_request(snapshot.user_id, snapshot.data)
+
+
+def essay_request_for_input(user_id, question_context, *, text, confidence):
+    """Register an exact authored answer without inventing an answer/job row."""
+    answer = answer_payload(choice=None, text=text, confidence=confidence)
+    return _essay_request(user_id, {**question_context, "answer": {
+        **answer, "answer_hash": canonical_hash(answer)}})
+
+
+def _essay_request(user_id, data):
     question, sources = data["question"], data["sources"]
     materials = data["material_context"]["materials"]
     evidence = {"question_id": question["id"], "sources": sources, "materials": materials}
@@ -196,11 +215,11 @@ def essay_request(snapshot):
     text = "\n\n".join(f"[{source['material_id']} p.{source['start_page']}-{source['end_page']}]\n{source['quote']}" for source in quoted)
     payload = {"question": {"id": question["id"], "question": question["prompt"], "answer": question["correct_answer"],
                 "source_page": quoted[0]["start_page"], "source_text": text}, "answer": data["answer"]["text"],
-               "fingerprints": snapshot.hashes}
+               "fingerprints": _input_hashes(data)}
     identity = ResultIdentity.create(kind="essay_grade", provider="groq", **_versions(False), input=payload,
         validation_context=evidence, materials=tuple(MaterialRevision(row["id"], _hash(row)) for row in materials))
     # quiz_grading_jobs and ai_jobs have unrelated UUID namespaces/FKs.
-    return GatewayRequest(snapshot.user_id, identity, job_id=None)
+    return GatewayRequest(user_id, identity, job_id=None)
 
 
 def validated_completed_result(connection, user_id, job_id):
