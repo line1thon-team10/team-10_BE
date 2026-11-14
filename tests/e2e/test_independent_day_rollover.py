@@ -186,3 +186,28 @@ def test_overlapping_arrivals_do_not_close_any_date_twice(api_client,ordinary_ca
         assert first.result(timeout=15).status_code==200
     assert get(api_client,w.user).status_code==200
     assert seen==[date(2026,11,9),date(2026,11,10)]
+
+
+@pytest.mark.parametrize('paused',[False,True])
+def test_focus_started_through_http_keeps_identity_across_ordinary_midnight(api_client,progress_world,end_focus,clock,paused):
+    w=progress_world;unit=w.unit(1,100);task=w.task((unit,1,10))
+    w.conn.commit();end_focus(w.user);ordinary(w,zone='UTC')
+    clock[0]=datetime(2026,11,9,23,55,tzinfo=timezone.utc)
+    headers={'X-Anonymous-Id':w.user}
+    response=api_client.post('/api/study/sessions',headers=headers,json={'taskId':task})
+    assert response.status_code==200,response.text
+    sid=response.json()['data']['id']
+    if paused:
+        clock[0]+=timedelta(minutes=3)
+        response=api_client.post('/api/study/sessions/'+sid+'/pause',headers=headers)
+        assert response.status_code==200,response.text
+    clock[0]=datetime(2026,11,10,0,10,tzinfo=timezone.utc)
+    response=api_client.get('/api/study/sessions/active',headers=headers)
+    assert response.status_code==200,response.text
+    view=response.json()['data']
+    assert (view['id'],view['taskId'])==(sid,task)
+    assert (view['minutes'],view['todayMinutes'])==((3,0) if paused else (15,10))
+    assert view['status']==('paused' if paused else 'active')
+    assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==task))=='planned'
+    assert not w.conn.execute(select(t.study_tasks.c.id).where(t.study_tasks.c.origin_task_id==task)).first()
+    assert w.conn.scalar(select(t.users.c.last_assessed_date).where(t.users.c.id==w.user))==w.day
