@@ -5,7 +5,7 @@
     "state": "executing",
     "code_base_sha": "f47eac601d56d4767b4d82ec13c109550be9d1ff",
     "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
-    "fe_base_sha": "21481d494ae1bad3a0d4cbfbf196d2a5786c1220",
+    "fe_base_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
     "proposed_integration_branch": "integration/contract-v1",
     "max_workers": 3,
@@ -55,7 +55,7 @@
         "id": "FLOW-DAY9",
         "title": "day9 집중 종료 → 기록 → 퀴즈 저장/제출 → 결과 재조회",
         "state": "in_progress",
-        "implemented_checkpoint": "FE focus end and page recording merged to dev21481d4. Durable answer API/worker independently reviewed, required CI running. Finalization approved atbcac9f4; owned saved grading fixtures and FE submit/result connection in progress. No new release beyond4c20454.",
+        "implemented_checkpoint": "FE focus/record and answer save/recovery merged to dev1edf606. BE answer API and worker integrated; Q05/Q06 reviewed and day9 API connection passed, PR32 mandatory CI running. FE final submission/result wiring in progress. Current deployment remains4c20454.",
         "required_tasks": [
           "FE-02A",
           "Q-03",
@@ -998,7 +998,7 @@
       "id": "Q-03",
       "title": "문항별 답안 저장·복구 API",
       "lane": "quiz",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "Q-02"
@@ -1040,7 +1040,8 @@
       "validation_evidence": [
         "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed.",
         "Independent review found 3 P2 categories: Unicode/NUL storage divergence, invalid concept-unit linkage, and receipt replay after metadata changes. Root fixed each atomically (7d1f49d/83acd27/4022fa7). Original independent22 and additional70 SQLite+PG passed at immutable4022fa7; no remaining findings in changed code. Documentation-only0f746ed. Legacy submit deployment gate remains Q-05.",
-        "Required CI43554966252:1 failed/2348 passed/4 skipped1239.53s. Only existing normal-result ProcessExecutor test exceeded its arbitrary4s cold-spawn budget. Separate test-only17c16c1 uses contract20s for result/telemetry checks; explicit deadline/termination tests unchanged. Focused original+deadline5 passed4.24s; CI rerun pending."
+        "Required CI43554966252:1 failed/2348 passed/4 skipped1239.53s. Only existing normal-result ProcessExecutor test exceeded its arbitrary4s cold-spawn budget. Separate test-only17c16c1 uses contract20s for result/telemetry checks; explicit deadline/termination tests unchanged. Focused original+deadline5 passed4.24s; CI rerun pending.",
+        "Required CI43557318303 passed2349/4 skipped, candidateebc3244; merged PR29 asac1d912. Deployment still requires finalization flow PR32."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1049,13 +1050,16 @@
       "worktree": "BE-task-quiz-answers",
       "deployment_requires": [
         "Q-05"
-      ]
+      ],
+      "integration_sha": "ac1d912e613d875fcde3905ef91e45c9ac84d9ad",
+      "ci_run_id": 43557318303,
+      "review_status": "approved"
     },
     {
       "id": "Q-04",
       "title": "재시작 가능한 채점 실행기",
       "lane": "quiz",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "Q-02",
@@ -1109,11 +1113,15 @@
         "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally.",
         "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05.",
         "Immutable92cd382 independent706 passed plus2 failed: corrupt whole-quiz ownership could starve later healthy jobs behind LIMIT100. Fixed by keyset scan/shared items validation/cache/cursor/deadline in3ba6cae, handoffb6f3a3d. Author361 regression and original2 passed; independent delta review pending.",
-        "Second P2: continuous tail arrivals hid earlier expired/repaired jobs. High-water mark fix650ac84; Astra reran both unchanged repro files,6 passed SQLite/PG4.33s. Review closed; required CI pending. No whole review restart."
+        "Second P2: continuous tail arrivals hid earlier expired/repaired jobs. High-water mark fix650ac84; Astra reran both unchanged repro files,6 passed SQLite/PG4.33s. Review closed; required CI pending. No whole review restart.",
+        "Required CI43557324498 passed2385/4 skipped, candidate3200d65; merged PR31 as69ce3d6. Preview-service integration is included in next full flow PR32 CI."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-grading-worker"
+      "worktree": "BE-task-grading-worker",
+      "integration_sha": "69ce3d6804a77fb78a8cac7f8ce42e0ac69d39ff",
+      "ci_run_id": 43557324498,
+      "review_status": "approved"
     },
     {
       "id": "S-01",
@@ -1208,7 +1216,7 @@
       "branch": "feat/quiz-finalization",
       "base_sha": "08df82ea0d9a971831cf75f862f377bd454a3a4d",
       "head_sha": "bcac9f4298c106150274175001b9ef64e3918328",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
       "validation_evidence": [
         "User reprioritized end-to-end flow. Start from reviewed fixed Q03+Q04 normal merge08df82 while mandatory parent CI runs. Minimal grading retry CAS/auth-header parsing leases; no schema change. Data loss, duplicate scores, ownership, save/submit races receive focused validation.",
         "Immutablebcac9f4 independent review approved: original more snapshot repro SQLite/PG2 passed, core24 passed earlier. Scoped validation cache fixed quadratic1001-answer path. POST exact original replay; GET frozen parent plus completed owned child snapshots. Existing day9 demo2 failures remain until Q06 owned cache seed; Q05/Q06 ship together, never hide failures."
@@ -1228,7 +1236,7 @@
       "id": "Q-06",
       "title": "저장 채점 전용 경로",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-05"
@@ -1260,14 +1268,16 @@
       "optional": false,
       "branch": "feat/saved-quiz-grading",
       "base_sha": "bcac9f4298c106150274175001b9ef64e3918328",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "34a790a700d86f96f2e08232e5c7a4814746e810",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
       "validation_evidence": [
-        "Reuse strict owned gateway cache; seed exact demo fixture by question/answer/evidence/material hash and versions inside caller transaction. Lease save_in_transaction helper only, preserving owner checks and rollback. Zero provider calls for saved match/mismatch; restore existing demo200 tests unchanged."
+        "Reuse strict owned gateway cache; seed exact demo fixture by question/answer/evidence/material hash and versions inside caller transaction. Lease save_in_transaction helper only, preserving owner checks and rollback. Zero provider calls for saved match/mismatch; restore existing demo200 tests unchanged.",
+        "Independent immutable34a790a approved:12 focused boundaries and2 SQLite/PG connected day9 API cases passed. Original day9 success2 restored; owned fixture exactly matches and external provider0. Root preserved independent connected flow test inefbb524; ready PR32 starts mandatory CI once, no draft-ready duplicate."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-saved-grading"
+      "worktree": "BE-task-saved-grading",
+      "review_status": "approved"
     },
     {
       "id": "Q-07",
@@ -1780,8 +1790,8 @@
       "id": "M-01",
       "title": "PDF 업로드·저장·목록·다운로드",
       "lane": "materials",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02",
         "POL-02"
@@ -1790,7 +1800,8 @@
         "BE/app/repositories/materials.py",
         "BE/app/services/material_storage.py",
         "BE/app/routers/materials.py",
-        "BE/tests/test_material_storage.py"
+        "BE/tests/test_material_storage.py",
+        "BE/app/schemas/materials.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -1808,15 +1819,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/material-storage",
+      "base_sha": "b0dd061",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-material-storage"
     },
     {
       "id": "M-02",
@@ -3656,7 +3670,7 @@
       "id": "FE-03A",
       "title": "퀴즈 문항 저장·새로고침 복구 흐름",
       "lane": "frontend",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "FE-01",
@@ -3685,18 +3699,21 @@
       "optional": false,
       "branch": "feat/quiz-answer-flow",
       "base_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
-      "head_sha": "6f61b7aa1d632374ccf18db9f489d57917354599",
-      "pr_url": null,
+      "head_sha": "ca8a9a3de9a7774d43913512b93331d4bb048bb4",
+      "pr_url": "https://github.com/line1thon-team10/team-10_FE/pull/6",
       "validation_evidence": [
         "Starts against reviewed immutable Q03 contract while its unrelated test-budget CI repair runs. Distinct worktree/file ownership from FE02A review. Minimal mock PUT/recovery compatibility permitted; no seed/scoring rewrite.",
-        "Node26 and npm check passed. API-only independent P2: canceled unpinned GET writes older revision into pinned cache after successful PUT. Preserved actual-hook reproduction /private/tmp/team10-fe03a-edge-review.yr35qs65/tests/test-independent-quiz-stale-get.mjs; author fixing before FE03B."
+        "Node26 and npm check passed. API-only independent P2: canceled unpinned GET writes older revision into pinned cache after successful PUT. Preserved actual-hook reproduction /private/tmp/team10-fe03a-edge-review.yr35qs65/tests/test-independent-quiz-stale-get.mjs; author fixing before FE03B.",
+        "Original stale GET repro byte-identical final recheck1 passed324ms atca8a9a3, no remaining findings. Author17 changed-risk cases/npm check passed. PR6 merged to dev1edf606."
       ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
       ],
       "validation_mode": "risk-focused-impact-and-required-ci",
-      "worktree": "FE-task-quiz-answers"
+      "worktree": "FE-task-quiz-answers",
+      "integration_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
+      "review_status": "approved"
     },
     {
       "id": "FE-03B",
@@ -3741,8 +3758,8 @@
       "id": "QA-DAY9",
       "title": "day9 학습·퀴즈 사용자 흐름 통합 검증",
       "lane": "quality",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/astra_edge_review",
       "depends_on": [
         "FE-02A",
         "FE-03B",
@@ -3765,11 +3782,13 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "branch": "feat/saved-quiz-grading",
+      "base_sha": "34a790a700d86f96f2e08232e5c7a4814746e810",
+      "head_sha": "efbb524483125f0fb7ccd6019b41d2dfae8916f3",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/32",
+      "validation_evidence": [
+        "API-only connected flow2 SQLite/PG passed at34a790a, preserved verbatim inefbb524:focus end,p13,PUT answers,GET recovery,saved submit,result GET,identical replay; no answer/head loss or duplicate attempts/mastery,owned cache,provider0. FE03B impact review and mandatory CI still pending; no screen verification."
+      ],
       "integration_only_paths": [],
       "validation_mode": "risk-focused-impact-and-required-ci"
     }
