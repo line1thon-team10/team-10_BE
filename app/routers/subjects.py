@@ -7,6 +7,9 @@ from app.core.auth import current_user
 from app.core.responses import ok
 from app.db.session import get_conn
 from app.services.subjects import SubjectService
+from app.schemas.subject_changes import SubjectChange
+from app.schemas.plan_draft import PlanApproval
+from app.services.subject_changes import SubjectChangeService
 from app.services.subject_archive import SubjectArchiveService
 
 router = APIRouter(prefix='/api/subjects', tags=['과목'])
@@ -25,6 +28,20 @@ def list_subjects(user: dict = Depends(current_user), conn: Connection = Depends
 @router.post('')
 def create_subject(body: SubjectCreate, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     return ok(SubjectService(conn, user).create(body.name))
+
+
+@router.patch('/{subject_id}/preview')
+def preview_subject(subject_id: UUID, body: SubjectChange, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    engine = conn.engine
+    conn.close()
+    return ok(SubjectChangeService(engine).preview(user['id'], str(subject_id), body))
+
+
+@router.patch('/{subject_id}')
+def apply_subject(subject_id: UUID, body: PlanApproval, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    engine = conn.engine
+    conn.close()
+    return ok(SubjectChangeService(engine).apply(user['id'], str(subject_id), str(body.previewId)))
 
 
 @router.delete('/{subject_id}/preview')
