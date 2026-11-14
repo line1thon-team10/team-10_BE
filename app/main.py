@@ -13,7 +13,7 @@ from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
 from app.core.cache import ApiNoStoreMiddleware
 from app.core.responses import install_error_handlers, ok
 from app.db.session import check_db_revision
-from app.routers import books, demo, onboarding, plan, quiz, session, study, today
+from app.routers import books, demo, onboarding, onboarding_events, plan, quiz, session, study, today
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ install_error_handlers(app)
 app.include_router(session.router)
 app.include_router(demo.router)
 app.include_router(onboarding.router)
+app.include_router(onboarding_events.router)
 app.include_router(today.router)
 app.include_router(books.router)
 app.include_router(quiz.router)

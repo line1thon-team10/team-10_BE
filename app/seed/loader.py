@@ -1,7 +1,7 @@
 """시드를 DB에 넣어요. 한 사용자의 데이터만 지우고 다시 넣어서 다른 사용자에게 영향이 없어요."""
 import uuid
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Connection, delete, select, update
@@ -21,7 +21,7 @@ def _id() -> str:
 
 def _at(day, hhmm: str) -> datetime:
     h, m = map(int, hhmm.split(":"))
-    return datetime.combine(day, time(h, m), KST)
+    return datetime.combine(day, time(h, m), KST).astimezone(timezone.utc)
 
 
 # 사용자 데이터를 지우는 순서 (자식 → 부모). user_id가 직접 없는 표는 소속 ID로 지워요
