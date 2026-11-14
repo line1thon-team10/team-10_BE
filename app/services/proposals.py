@@ -9,7 +9,7 @@ from enum import Enum
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, select, update
 
 from app.core.clock import now_utc
 from app.core.responses import ApiError
@@ -17,7 +17,8 @@ from app.db import schema as t
 from app.domain.user import User
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.proposals import (
-    ProposalConflict, ProposalNotFound, ProposalRepository, canonical_object,
+    LegacyProposalUnavailable, LegacyResponseUnavailable, ProposalConflict,
+    ProposalNotFound, ProposalRepository, canonical_object,
 )
 
 
@@ -147,6 +148,10 @@ class ProposalService:
             raise ApiError("REQUEST_IN_PROGRESS", "다른 요청이 처리 중이에요. 잠시 후 다시 시도해 주세요", 409) from None
         except ProposalNotFound as error:
             raise ApiError("NO_PREVIEW", "미리보기를 찾지 못했어요", 404 if error.foreign else 400) from None
+        except LegacyResponseUnavailable:
+            raise ApiError("PREVIEW_STALE", "이미 적용된 과거 이력이지만 최초 응답을 보관하지 않아 복원할 수 없어요. 다시 적용하지 않았어요", 409) from None
+        except LegacyProposalUnavailable:
+            raise ApiError("PREVIEW_STALE", "과거 미리보기의 기준을 확인할 수 없어요. 새 미리보기를 확인해 주세요", 409) from None
         except ProposalConflict:
             raise _stale() from None
 
@@ -211,3 +216,78 @@ class ProposalService:
                 base_structure_hash=snapshot.basis.structure_hash, request_id=request_id, request_text=request_text,
                 proposal_id=identifier, preview_schema_version=preview_schema_version)
             return canonical_object(stored["preview_response"])
+
+    @staticmethod
+    def _preview_id(value) -> str:
+        if value is None:
+            raise ApiError("PREVIEW_REQUIRED", "적용할 미리보기 ID를 보내 주세요", 409)
+        try:
+            return str(value if isinstance(value, UUID) else UUID(value))
+        except (ValueError, TypeError, AttributeError):
+            raise ApiError("NO_PREVIEW", "미리보기 ID가 올바르지 않아요", 400) from None
+
+    def _candidate(self, context: PreviewContext, identifier: str, domain: PreviewDomain, target_json: str) -> dict:
+        state = self.repository.get(context.user.id, identifier)
+        if state["kind"] != domain.kind:
+            raise ApiError("NO_PREVIEW", "이 작업의 미리보기가 아니에요", 404)
+        if state["target"] is not None and _json(state["target"]) != target_json:
+            raise ApiError("NO_PREVIEW", "이 대상의 미리보기가 아니에요", 404)
+        # Legacy targets can be unknown. That is never permission to execute,
+        # and a known past success must retain its more specific explanation.
+        if state["legacy"]:
+            if state["status"] == "applied":
+                raise LegacyResponseUnavailable()
+            raise LegacyProposalUnavailable()
+        if state["target"] is None:
+            raise ProposalConflict("The candidate has no verifiable target")
+        return state
+
+    @staticmethod
+    def _require_fresh(state: dict, current: PreviewSnapshot) -> None:
+        if (state["base_date"], state["base_plan_id"], state["base_plan_revision"], state["base_structure_hash"]) != (
+                current.base_date, current.base_plan_id, current.base_plan_revision, current.basis.structure_hash):
+            raise _stale()
+        if _json(state["dependency_versions"]) != current.basis._versions_json:
+            raise _stale()
+
+    def apply(self, user_id, preview_id, *, domain: PreviewDomain, target: dict | str) -> dict:
+        """Apply only saved changes and commit no transaction on behalf of callers."""
+        identifier, target_json = self._preview_id(preview_id), self._target(target)
+        with self._transaction(user_id) as context:
+            state = self._candidate(context, identifier, domain, target_json)
+            if state["status"] == "applied":
+                if state["request_status"] != "accepted" or state["accepted_proposal_id"] != identifier:
+                    raise ProposalConflict("The applied candidate has no matching accepted request")
+                # Replay precedes live plan/date/dependency checks, including
+                # plan creation/deletion or domain callbacks that no longer work.
+                return canonical_object(state["result_response"])
+            if (state["status"] != "ready" or state["request_status"] != "ready"
+                    or state["accepted_proposal_id"] is not None):
+                raise _stale()
+            context, current = self._snapshot(context, domain, target_json)
+            self._require_fresh(state, current)
+
+            if domain.plan_effect is PlanEffect.CREATE:
+                initial = PlanState(str(uuid4()), 1, context.now, context.now)
+                self.connection.execute(t.plans.insert().values(id=initial.id, user_id=context.user.id,
+                    revision=1, created_at=initial.created_at, approved_at=initial.approved_at))
+                context = replace(context, plan=initial)
+            response = canonical_object(domain.apply_changes(self.connection, context, canonical_object(state["changes"])))
+            if self._plan(context.user.id) != context.plan:
+                raise ProposalConflict("The domain callback changed a service-owned plan header")
+
+            if domain.plan_effect is PlanEffect.UPDATE:
+                changed = self.connection.execute(update(t.plans).where(
+                    t.plans.c.id == context.plan.id, t.plans.c.user_id == context.user.id,
+                    t.plans.c.revision == context.plan.revision).values(revision=context.plan.revision + 1))
+                expected_plan = replace(context.plan, revision=context.plan.revision + 1)
+                if changed.rowcount != 1 or self._plan(context.user.id) != expected_plan:
+                    raise ProposalConflict("The plan revision compare-and-set failed")
+            applied = self.repository.mark_applied(context.user.id, identifier,
+                expected_revision=state["state_revision"], response=response, now=context.now,
+                schema_version=domain.result_schema_version)
+            if not applied.changed:
+                # Normal concurrent retries replay before executing the domain.
+                # A late state change must not commit the domain a second time.
+                raise ProposalConflict("The candidate changed after its domain callback")
+            return canonical_object(applied.proposal["result_response"])
