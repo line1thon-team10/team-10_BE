@@ -158,3 +158,31 @@ def test_explicit_korean_and_numeric_coordinates_can_be_saved(api_client, dialog
     response = voice(api_client, case, text=text)
     assert response.status_code == 200, response.text
     assert response.json()['data']['events'] == [{'id': response.json()['data']['addedId'], **event, 'added': True}]
+
+
+@pytest.mark.parametrize('suffix', [
+    '약속은 취소됐어', '약속은 없으니 추가하지마', '약속을 등록하지 말아 줘',
+    '약속은 안 해', '약속을 잡지 마', '약속을 삭제해 줘', '약속은 아직 미정이야',
+    '약속이 있으면 추가해 줘', '약속이 가능한지 알려 줘', '약속을 추가하는 게 아니야',
+    '약속을 추가할까?', '',
+])
+def test_non_creation_intent_never_creates_a_confirmed_model_event(api_client, domain_connection, dialogue_case, suffix):
+    case, conn = dialogue_case, domain_connection
+    event = {**EVENT, 'kind': 'meet', 'title': '약속', 'days': None, 'date': '2026-11-16',
+             'start': '15:00', 'end': '16:00'}
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text='2026-11-16 15:00부터 16:00까지 ' + suffix)
+    assert response.status_code == 400 and response.json()['error']['code'] == 'PARSE_FAILED', response.text
+    assert conn.scalar(select(func.count()).select_from(t.calendar_events)) == 0
+    assert conn.scalar(select(func.count()).select_from(t.onboarding_messages)) == 0
+
+
+@pytest.mark.parametrize('suffix', ['약속이 있어', '약속을 추가해 줄래?', '일정에 등록해 주세요'])
+def test_definite_event_or_explicit_polite_creation_request_is_accepted(api_client, dialogue_case, suffix):
+    case = dialogue_case
+    event = {**EVENT, 'kind': 'meet', 'title': '약속', 'days': None, 'date': '2026-11-16',
+             'start': '15:00', 'end': '16:00'}
+    case['model'].transform = lambda *_: result(event)
+    response = voice(api_client, case, text='2026-11-16 15:00부터 16:00까지 ' + suffix)
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['addedId'] is not None
