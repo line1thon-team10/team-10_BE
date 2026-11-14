@@ -15,7 +15,7 @@ from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.materials import MaterialRepository
 from app.services.material_storage import MaterialStorageService
 
-STEPS = ['PDF 읽기', '자료 분석', '저장']
+STEPS = ['파일 확인', '자료 분석', '결과 저장']
 ENVELOPE = 'material-job-v1'
 
 
@@ -121,11 +121,16 @@ class MaterialAnalysisService:
             if job is None:
                 return None
             material = self._current_material(conn, job)
+        path, _ = self.storage.original_file(claim['user_id'], material['id'])
+        with self.engine.begin() as conn:
+            job = self._owned_lease(conn, claim)
+            if job is None:
+                return None
+            material = self._current_material(conn, job)
             envelope = {**job['result'], 'current': 1}
             conn.execute(update(t.ai_jobs).where(t.ai_jobs.c.id == job['id']).values(stage='analyzing', result=envelope))
             conn.execute(update(t.materials).where(t.materials.c.id == material['id']).values(
                 analysis_status='running', analysis_stage='analyzing', error_message=None, updated_at=self.clock()))
-        path, _ = self.storage.original_file(claim['user_id'], material['id'])
         context = {'sourceSha256': material['sha256'], 'analysisVersion': material['analysis_version'],
                    'totalPages': material['page_count']}
         identity = ResultIdentity.create(kind='pdf_analysis', provider='groq-upstage', model_version=MODEL_VERSION,
@@ -133,6 +138,15 @@ class MaterialAnalysisService:
             validation_context=context, materials=(MaterialRevision(material['id'],
                 material['sha256'] + ':' + material['analysis_version']),))
         return GatewayRequest(claim['user_id'], identity, job_id=claim['id'], pdf_job=True), context
+
+    def _mark_saving(self, claim):
+        with self.engine.begin() as conn:
+            job = self._owned_lease(conn, claim)
+            if job is None:
+                return False
+            conn.execute(update(t.ai_jobs).where(t.ai_jobs.c.id == job['id']).values(
+                stage='saving', result={**job['result'], 'current': 2}))
+        return True
 
     def _finish(self, claim, outcome, context):
         result = validate_material_result(outcome.data, context)
@@ -199,6 +213,8 @@ class MaterialAnalysisService:
                 return False
             request, context = prepared
             outcome = self.gateway.run(request, validator=VALIDATOR, provider=PROVIDER)
+            if not self._mark_saving(claim):
+                return False
             return self._finish(claim, outcome, context)
         except CleanupFailed:
             raise

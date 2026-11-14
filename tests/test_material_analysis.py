@@ -118,3 +118,35 @@ def test_expired_claim_cannot_finish_after_reclaim(api_client, material_case, do
     job = conn.execute(select(t.ai_jobs)).mappings().one()
     assert job['status'] == 'succeeded' and job['retry_count'] == 2
     assert len(conn.execute(select(t.units)).all()) == 1
+
+
+def test_missing_original_fails_file_step_without_calling_ai(api_client, material_case, domain_connection):
+    case, conn = material_case, domain_connection
+    accepted = upload(api_client, case, pdf_bytes()).json()['data']
+    material = conn.execute(select(t.materials)).mappings().one()
+    conn.commit()
+    (case['root'] / material['original_storage_key']).unlink()
+    worker, gateway = service(case)
+    assert worker.run_next() and gateway.calls == 0
+    result = api_client.get(f"/api/materials/jobs/{accepted['jobId']}", headers=case['headers']).json()['data']
+    assert result['status'] == 'failed' and result['failedStep'] == 0
+
+
+def test_save_failure_rolls_back_structure_and_reports_save_step(api_client, material_case, domain_connection):
+    from sqlalchemy import event
+    from app.db.session import engine
+    case, conn = material_case, domain_connection
+    accepted = upload(api_client, case, pdf_bytes()).json()['data']
+    def fail_units(db_conn, cursor, statement, parameters, context, many):
+        if context.isinsert and getattr(context.compiled.statement.table, 'name', None) == 'concepts':
+            raise RuntimeError('Injected save failure after unit insert')
+    event.listen(engine, 'before_cursor_execute', fail_units)
+    try:
+        worker, _ = service(case)
+        assert worker.run_next()
+    finally:
+        event.remove(engine, 'before_cursor_execute', fail_units)
+    result = api_client.get(f"/api/materials/jobs/{accepted['jobId']}", headers=case['headers']).json()['data']
+    assert result['status'] == 'failed' and result['failedStep'] == 2
+    assert conn.execute(select(t.units)).first() is None
+    assert conn.execute(select(t.concepts)).first() is None
