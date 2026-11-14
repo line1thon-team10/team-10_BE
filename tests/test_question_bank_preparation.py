@@ -112,3 +112,29 @@ def test_live_claim_cannot_duplicate_and_expired_claim_cannot_publish(domain_con
     assert not bank._finish(claim, outcome, context)
     assert conn.scalar(select(func.count()).select_from(t.questions)) == 10
     assert bank_jobs(conn)[0]['retry_count'] == 2
+
+
+@pytest.mark.parametrize('when', ['before_admission', 'after_claim', 'after_provider'])
+def test_archived_subject_never_gets_a_new_bank(domain_connection,prepared_material,when):
+    case, ids, worker, bank = prepared_material; conn = domain_connection
+    if when != 'before_admission':
+        user, identifier = bank._discover(lambda: False)
+        claim = bank._claim(user, identifier)
+        if when == 'after_provider':
+            request, context = bank._prepare(claim)
+            outcome = bank.gateway.run(request, validator=bank.validator, provider=bank.provider)
+    conn.execute(update(t.subjects).where(t.subjects.c.id == case['subject']).values(status='archived'))
+    conn.commit()
+    if when == 'before_admission':
+        assert not bank.run_next()
+        assert bank_jobs(conn) == []
+    else:
+        with pytest.raises(ApiError) as error:
+            if when == 'after_claim': bank._prepare(claim)
+            else: bank._finish(claim, outcome, context)
+        assert error.value.code == 'QUESTION_BANK_STALE'
+        bank._fail(claim, error.value)
+        assert bank_jobs(conn)[0]['status'] == 'failed'
+        conn.commit()
+        with pytest.raises(ApiError): bank.retry(user, identifier)
+    assert conn.scalar(select(func.count()).select_from(t.questions)) == 0

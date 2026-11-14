@@ -35,7 +35,8 @@ class QuestionBankService(MaterialAnalysisService):
     def _snapshot(self, conn, user_id, unit_id, difficulty):
         unit = conn.execute(select(t.units).join(t.materials, t.units.c.material_id == t.materials.c.id)
             .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id).where(t.units.c.id == unit_id,
-                t.subjects.c.user_id == user_id, t.units.c.in_scope.is_(True), t.units.c.retired_at.is_(None))).mappings().first()
+                t.subjects.c.user_id == user_id, t.subjects.c.status.in_(('draft', 'active')),
+                t.units.c.in_scope.is_(True), t.units.c.retired_at.is_(None))).mappings().first()
         if unit is None or not unit['evidence']:
             raise ApiError('QUESTION_BANK_STALE', '문항 준비 범위가 변경됐어요', 409)
         repo = MaterialRepository(conn)
@@ -67,7 +68,8 @@ class QuestionBankService(MaterialAnalysisService):
             units = conn.execute(select(t.units.c.id, t.subjects.c.user_id)
                 .join(t.materials, t.units.c.material_id == t.materials.c.id)
                 .join(t.subjects, t.subjects.c.id == t.materials.c.subject_id)
-                .where(t.materials.c.analysis_status == 'succeeded', t.materials.c.quiz_enabled.is_(True),
+                .where(t.subjects.c.status.in_(('draft', 'active')),
+                       t.materials.c.analysis_status == 'succeeded', t.materials.c.quiz_enabled.is_(True),
                        t.units.c.in_scope.is_(True), t.units.c.retired_at.is_(None))
                 .order_by(t.materials.c.created_at, t.units.c.sort_order, t.units.c.id)).all()
         # Prioritize the first-round bank for every unit before advanced banks.
@@ -131,7 +133,8 @@ class QuestionBankService(MaterialAnalysisService):
                     type={'multiple_choice': 'choice', 'short_answer': 'short', 'essay': 'essay'}[question['type']],
                     difficulty=context['difficulty'], prompt=question['question'],
                     choices=[{'text': option} for option in question['options']], correct_answer=question['answer'],
-                    explanation=question['explanation'], origin='pregenerated', generation_version=PROMPT_VERSION,
+                    explanation=question['explanation'], origin='pregenerated',
+                    generation_version=f"{SCHEMA_VERSION}:{job['id']}",
                     created_at=now))
                 source = sources[question['evidence_id']]
                 conn.execute(t.question_sources.insert().values(id=str(uuid4()), question_id=question_id,

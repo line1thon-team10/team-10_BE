@@ -67,3 +67,17 @@ raise SystemExit(main([],service_factory=Worker))
     result = subprocess.run([sys.executable,'-c',source],cwd=ROOT,capture_output=True,text=True,timeout=10)
     assert result.returncode == 1 and 'CleanupFailed' in result.stderr
     assert 'secret-api-key' not in result.stdout+result.stderr
+
+
+@pytest.mark.parametrize('arguments', [
+    ['--retry-bank-job', '00000000-0000-0000-0000-000000000001'],
+    ['--user-id', '00000000-0000-0000-0000-000000000001'],
+    ['--retry-bank-job', 'invalid', '--user-id', '00000000-0000-0000-0000-000000000001'],
+    ['--loop', '--retry-bank-job', '00000000-0000-0000-0000-000000000001',
+     '--user-id', '00000000-0000-0000-0000-000000000001'],
+])
+def test_bank_retry_cli_rejects_ambiguous_or_invalid_admission_without_database(arguments):
+    result = subprocess.run([sys.executable, '-m', 'app.workers.materials', *arguments], cwd=ROOT,
+        env={**os.environ, 'DATABASE_URL': 'invalid'}, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2 and 'error:' in result.stderr
+    assert 'Traceback' not in result.stderr

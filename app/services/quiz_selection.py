@@ -89,12 +89,42 @@ class QuizSelection:
         concepts = {r['id']:dict(r) for r in self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(units))).mappings()}
         questions = [dict(r) for r in self.conn.execute(select(t.questions).where(t.questions.c.unit_id.in_(units))
             .order_by(t.questions.c.code, t.questions.c.id)).mappings()]
+        bank_ids = set()
+        for question in questions:
+            version = question['generation_version'] or ''
+            if version.startswith('question-bank-v1:'):
+                try:
+                    bank_ids.add(str(UUID(version.split(':', 1)[1])))
+                except ValueError:
+                    pass
+        banks = {row['id']: row for row in self.conn.execute(select(t.ai_jobs).where(
+            t.ai_jobs.c.user_id == self.user['id'], t.ai_jobs.c.id.in_(bank_ids),
+            t.ai_jobs.c.kind == 'question_pregenerate', t.ai_jobs.c.target_type == 'unit',
+            t.ai_jobs.c.status == 'succeeded')).mappings()}
+        analyses = {}
+        for row in self.conn.execute(select(t.ai_jobs).where(t.ai_jobs.c.user_id == self.user['id'],
+            t.ai_jobs.c.kind == 'pdf_analysis', t.ai_jobs.c.target_type == 'material',
+            t.ai_jobs.c.target_id.in_(materials)).order_by(t.ai_jobs.c.created_at.desc(), t.ai_jobs.c.id.desc())).mappings():
+            analyses.setdefault(row['target_id'], row)
         sources = defaultdict(list)
         for row in self.conn.execute(select(t.question_sources).where(t.question_sources.c.question_id.in_([q['id'] for q in questions]))).mappings():
             sources[row['question_id']].append(dict(row))
         valid = []
         for question in questions:
             uid = question['unit_id']; unit = units[uid]
+            version = question['generation_version'] or ''
+            if version.startswith('question-bank-v1:'):
+                bank = banks.get(version.split(':', 1)[1])
+                material = materials[unit['material_id']]
+                analysis = analyses.get(unit['material_id'])
+                payload = bank['input_payload'] if bank else {}
+                if (not bank or bank['target_id'] != uid or not analysis or analysis['status'] != 'succeeded'
+                    or material['analysis_status'] != 'succeeded' or payload.get('unitId') != uid
+                    or payload.get('materialId') != material['id'] or payload.get('difficulty') != question['difficulty']
+                    or payload.get('sourceSha256') != material['sha256']
+                    or payload.get('analysisVersion') != material['analysis_version']
+                    or payload.get('analysisJobId') != analysis['id']):
+                    continue
             if difficulty is not None and question['difficulty'] != difficulty:
                 continue
             if question['type'] not in ('choice','ox','short','essay') or not (question['prompt'] or '').strip() or not (question['explanation'] or '').strip() or not (question['correct_answer'] or '').strip():

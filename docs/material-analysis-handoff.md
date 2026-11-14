@@ -25,3 +25,22 @@ SIGTERM/SIGINT는 현재 작업의 제한된 gateway 실행이 끝난 뒤 새 �
 시간 예산을 늘리는 운영 설정은 종료 유예도 함께 조정해야 한다. 이전 앱에 worker 모듈이 없는
 경우는 API만 시작할 수 있으나, 존재하는 worker의 import 실패나 Compose 누락은 배포 전 오류다.
 현재 신규 API의 운영 배포 동결은 유지한다.
+# 문항 준비 worker
+
+자료 분석 worker는 대기 중인 PDF 분석을 처리한 뒤, 분석이 성공한 draft/active 과목의 근거 있는 단원에서 `question_pregenerate` 작업을 발견하고 실행한다. 문항 준비 실패는 PDF 분석 성공을 취소하지 않는다. 생성 상태와 오류는 `ai_jobs.kind='question_pregenerate'` 행에 남고, 실제 검증·저장된 문항만 퀴즈 카드와 출제에 포함된다.
+
+현재 준비 묶음은 pinned AI bank의 6객관식+3단답+1서술 구성을 재사용하여 단원/난이도마다 10개를 요청한다. 일일 5개와 더 풀기 5개를 준비하기 위한 bounded 운영 묶음이며 제품 문항 상한이나 AI 품질 보장으로 정의하지 않는다. low를 모든 단원에 먼저 준비하고 mid/high를 뒤이어 준비한다. 각 작업은 일반 AI 요청 예산(기본20초, 최대25초)을 따르며 GET 부족 응답은 추가 AI 호출을 시작하지 않는다. 외부 키나 유효한 응답이 없으면 실패로 남는다.
+
+실패 작업은 자동 polling으로 재호출하지 않는다. 운영자는 원인 복구 뒤 다음 조회에서 소유자와 실패 작업을 확인하고 명시적으로 재접수할 수 있다. 재접수는 외부 호출 없이 queued 상태만 커밋하고 기존 worker loop가 처리한다.
+
+```sql
+SELECT id, user_id, target_id, status, error_code
+FROM ai_jobs WHERE kind = 'question_pregenerate' AND status = 'failed';
+```
+
+```sh
+python -m app.workers.materials --retry-bank-job <job-uuid> --user-id <owner-uuid>
+python -m app.workers.materials --loop
+```
+
+소유자가 다르거나 원문/단원 snapshot이 바뀐 작업은 재접수하지 않는다. 새 분석이나 구조 변경은 새 snapshot 작업으로 준비한다. 같은 snapshot은 고유 key와 lease로 중복 저장을 막고, 채택할 때 최신 소유·원문·구조를 다시 확인한다. 새 bank 질문은 생성 job ID를 보존하여 원문 분석 버전이 달라진 뒤 기존 bank에서 새 문제를 발급하지 않는다. 이미 저장된 풀이·완료 결과는 덮어쓰지 않는다.
