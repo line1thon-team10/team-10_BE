@@ -10,9 +10,28 @@ class RecordRepository:
     def __init__(self, connection):
         self.conn = connection
 
-    def session(self, session_id):
+    def task_context(self, task_id, user_id):
+        return self.conn.execute(select(t.study_tasks.c.id, t.subjects.c.name.label("subject_name"))
+            .join(t.subjects, t.study_tasks.c.subject_id == t.subjects.c.id)
+            .join(t.plans, t.study_tasks.c.plan_id == t.plans.c.id)
+            .where(t.study_tasks.c.id == task_id, t.subjects.c.user_id == user_id,
+                   t.plans.c.user_id == user_id)).mappings().first()
+
+    def ranges(self, task_id):
+        return [dict(row) for row in self.conn.execute(
+            select(t.study_task_ranges, t.units.c.material_id,
+                   t.materials.c.subject_id.label("range_subject_id"),
+                   t.concepts.c.unit_id.label("concept_unit_id"))
+            .join(t.units, t.study_task_ranges.c.unit_id == t.units.c.id)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .outerjoin(t.concepts, t.study_task_ranges.c.concept_id == t.concepts.c.id)
+            .where(t.study_task_ranges.c.task_id == task_id)
+            .order_by(t.study_task_ranges.c.sort_order, t.study_task_ranges.c.id)).mappings()]
+
+    def session(self, session_id, user_id):
         return self.conn.execute(select(t.study_sessions).where(
-            t.study_sessions.c.id == session_id)).mappings().first()
+            t.study_sessions.c.id == session_id,
+            t.study_sessions.c.user_id == user_id)).mappings().first()
 
     def session_record(self, session_id):
         return self.conn.scalar(select(t.study_records.c.id).where(

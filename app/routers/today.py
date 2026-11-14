@@ -1,6 +1,5 @@
 """홈 S6 · 공부 기록 S7 — 프론트 EP.today / EP.records / EP.tasks"""
 import uuid
-from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -11,11 +10,13 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError, ok
 from app.db import schema as t
 from app.db.session import get_conn
+from app.schemas.records import RecordIn
 from app.services.planner import Planner
 from app.services import records
 from app.services.study import OPEN_RATE, StudyData, unit_no
 
 router = APIRouter(prefix="/api", tags=["홈·기록"])
+
 
 @router.get("/today")
 def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
@@ -68,31 +69,17 @@ def _notice(conn: Connection, user: dict, today) -> dict | None:
     return None
 
 
-class RecordIn(BaseModel):
-    taskId: str
-    result: Literal["done", "partial", "none"]
-    toPage: int | None = None
-    sessionId: str | None = None
-
-
 @router.post("/records")
 def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     user = records.lock_record_user(conn, user)
-    today = today_for(user)
+    at = now_utc()
+    today = records.record_date(user, at)
     data = StudyData(conn, user["id"])
-    task = records.find_task(data, body.taskId)
-    if body.result == "partial":
-        if body.toPage is None or task.first is None or not (task.first <= body.toPage <= task.last):
-            raise ApiError("BAD_PAGE", f"p.{task.first}부터 p.{task.last} 사이로 적어 주세요")
-        ranges = records.ranges_until(task, body.toPage)
-    elif body.result == "done":
-        ranges = [{"unit_id": r["unit_id"], "start_page": r["start_page"], "end_page": r["end_page"]}
-                  for r in task.paged]
-    else:
-        ranges = []
-    session_id = records.check_session(conn, task, body.sessionId)
+    task = records.owned_task(data, body.taskId)
+    ranges = records.post_ranges(task, body)
+    session_id = records.check_session(conn, task, body.sessionId, user_id=user["id"])
     before = data.progress(today)
-    records.save_record(conn, task, body.result, ranges, today, session_id, user_id=user["id"])
+    records.save_record(conn, task, body.result, ranges, today, session_id, user_id=user["id"], at=at)
 
     after_data = StudyData(conn, user["id"])
     after = after_data.progress(today)
@@ -114,18 +101,17 @@ def post_record(body: RecordIn, user: dict = Depends(current_user), conn: Connec
                  "totalPages": after["totalPages"], "opened": opened}
         conn.execute(t.user_notices.insert().values(
             id=str(uuid.uuid4()), user_id=user["id"], dedupe_key=dedupe, notice_type="day_summary",
-            notice_date=today, status="shown", payload={"percent": rate}, created_at=now_utc(), shown_at=now_utc()))
+            notice_date=today, status="shown", payload={"percent": rate}, created_at=at, shown_at=at))
         return ok({"event": event})
     if body.result == "none":
         return ok({"event": None})
 
-    subject = data.subject_by_id[task.row["subject_id"]]
     unit = data.unit_of(task)
     crossed = before["rate"] < OPEN_RATE <= rate
     label = f"{unit_no(unit['code'])}단원 " if unit else ""
     return ok({"event": {
         "type": "toast", "reason": "rate70" if crossed else "record", "rate": rate,
-        "message": f"{subject['name']} {label}한 권 쌓았어요",
+        "message": f"{task.row['subject_name']} {label}한 권 쌓았어요",
         "detail": f"오늘 {rate}%" + (" · 오늘의 퀴즈가 열렸어요" if crossed else ""),
     }})
 

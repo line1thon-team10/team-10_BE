@@ -1,8 +1,10 @@
 """Record mutations and existing learning-pass evidence use one transaction."""
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.core.clock import now_utc
 from app.core.responses import ApiError
+from app.domain.ranges import PageSpan, page_count
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.records import RecordRepository
 from app.services.learning_evidence import revalidate_record_passes
@@ -28,6 +30,78 @@ def find_task(data: StudyData, task_id: str) -> Task:
     return task
 
 
+def owned_task(data: StudyData, task_id: str) -> Task:
+    repository = RecordRepository(data.conn)
+    context = repository.task_context(task_id, data.user_id)
+    if context is None:
+        raise ApiError("TASK_NOT_FOUND", "태스크를 찾지 못했어요", 404)
+    task = find_task(data, task_id)
+    ranges = repository.ranges(task_id)
+    if any(item["range_subject_id"] != task.row["subject_id"] or (
+        item["concept_id"] is not None and item["concept_unit_id"] != item["unit_id"]
+    ) for item in ranges):
+        raise ApiError("TASK_NOT_FOUND", "태스크의 자료 범위를 찾지 못했어요", 404)
+    task.ranges = ranges
+    task.row["subject_name"] = context["subject_name"]
+    return task
+
+
+def record_date(user, at):
+    return user.get("demo_date") or at.astimezone(ZoneInfo(user.get("timezone") or "Asia/Seoul")).date()
+
+
+def _invalid(message):
+    return ApiError("INVALID_INPUT", message, 422)
+
+
+def requested_ranges(task: Task, body) -> list[dict]:
+    """Resolve range IDs only against this task, without retaining omitted ranges."""
+    if body.toPage is not None:
+        if len(task.ranges) != 1 or not task.paged:
+            raise _invalid("여러 범위는 completedRanges로 기록해 주세요")
+        selections = [(task.ranges[0], body.toPage)]
+    elif body.completedRanges is not None:
+        by_id = {item["id"]: item for item in task.paged}
+        selections = []
+        for selected in body.completedRanges:
+            if selected.rangeId not in by_id:
+                raise _invalid("이 태스크에 속한 페이지 범위를 보내 주세요")
+            selections.append((by_id[selected.rangeId], selected.toPage))
+    else:
+        raise _invalid("완료한 범위를 보내 주세요")
+    ranges = []
+    for item, end in selections:
+        if not item["start_page"] <= end <= item["end_page"]:
+            raise _invalid("완료 페이지가 태스크 범위를 벗어났어요")
+        ranges.append({"unit_id": item["unit_id"], "material_id": item["material_id"],
+                       "start_page": item["start_page"], "end_page": end})
+    return ranges
+
+
+def range_pages(ranges) -> int:
+    return page_count(PageSpan(item["material_id"], item["start_page"], item["end_page"])
+                      for item in ranges if item["start_page"] is not None)
+
+
+def post_ranges(task: Task, body) -> list[dict]:
+    if not task.paged and body.result == "partial":
+        raise ApiError("BAD_PAGE", "페이지 없는 태스크는 완료 또는 미완료로 기록해 주세요")
+    if body.toPage is not None or body.completedRanges is not None:
+        ranges = requested_ranges(task, body)
+    elif body.result == "done":
+        ranges = task.paged
+    elif body.result == "none":
+        ranges = []
+    else:
+        raise _invalid("부분 완료에는 완료한 범위가 필요해요")
+    total, completed = range_pages(task.paged), range_pages(ranges)
+    if total:
+        actual = "none" if completed == 0 else "done" if completed == total else "partial"
+        if body.result != actual:
+            raise _invalid("완료한 페이지 수에 맞는 결과를 보내 주세요")
+    return ranges
+
+
 def ranges_until(task: Task, to_page: int) -> list[dict]:
     ranges = []
     for item in task.paged:
@@ -39,21 +113,19 @@ def ranges_until(task: Task, to_page: int) -> list[dict]:
 
 
 def save_record(conn, task: Task, result: str, ranges: list[dict], study_date, session_id=None,
-                *, user_id: str) -> None:
-    at = now_utc()
+                *, user_id: str, at=None) -> None:
+    at = at or now_utc()
     status = RESULT_TO_DB[result]
-    if result == "partial" and task.last is not None and ranges and ranges[-1]["end_page"] >= task.last:
-        status = "completed"
     record_id = RecordRepository(conn).replace(
         task, RESULT_TO_DB[result], status, ranges, study_date, session_id, at)
     revalidate_record_passes(conn, user_id, record_id, at)
 
 
-def check_session(conn, task: Task, session_id: str | None) -> str | None:
+def check_session(conn, task: Task, session_id: str | None, *, user_id: str) -> str | None:
     if not session_id:
         return None
     repository = RecordRepository(conn)
-    session = repository.session(session_id)
+    session = repository.session(session_id, user_id)
     if not session or session["task_id"] != task.id:
         raise ApiError("SESSION_NOT_FOUND", "이 태스크의 집중 기록을 찾지 못했어요", 404)
     if session["status"] not in ("ended", "auto_stopped"):
