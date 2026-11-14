@@ -175,3 +175,17 @@ def test_timezone_midnight_controls_future_visibility_without_read_writes(progre
     assert totals(w) == original
     finalized = svc.snapshot(w.day, finalize=True, at=local_midnight)
     assert finalized[w.subject['id']]['planned_total_pages'] == 10
+
+
+def test_close_does_not_count_records_excluded_before_snapshot(api_client, progress_world, end_focus):
+    w = progress_world
+    unit, _ = prepare(w, end_focus)
+    excluded = w.task((unit, 11, 20), done=[(unit, 11, 20)], status='excluded')
+    w.conn.commit()
+    assert (service(w).view(w.day)['plan'], service(w).view(w.day)['done']) == (10, 4)
+    w.conn.commit()
+    response = close(api_client, w.user)
+    assert response.status_code == 200, response.text
+    assert service(w).view(w.day)['plan'] == 10
+    assert service(w).view(w.day)['done'] == 4
+    assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id == excluded)) == 'excluded'
