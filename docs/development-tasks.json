@@ -209,8 +209,8 @@
       "id": "POL-01",
       "title": "계획 배분 수치 정책 확정",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "review",
+      "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
@@ -232,10 +232,10 @@
         "근거에 없는 제품 정책은 실행 시 결정 필요"
       ],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
+      "branch": "integration/contract-v1",
+      "base_sha": "a4cc838",
+      "head_sha": "8f0bac8",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
       "validation_evidence": [],
       "integration_only_paths": [],
       "validation_mode": "document-review"
@@ -244,8 +244,8 @@
       "id": "POL-02",
       "title": "업로드 한도·AI 처리 시간 예산 확정",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "review",
+      "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
@@ -269,10 +269,10 @@
         "근거가 없는 운영 한도는 실행 시 확인"
       ],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
+      "branch": "integration/contract-v1",
+      "base_sha": "a4cc838",
+      "head_sha": "8f0bac8",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
       "validation_evidence": [],
       "integration_only_paths": [],
       "validation_mode": "document-review"
@@ -317,7 +317,7 @@
       "id": "R-01",
       "title": "자료별 범위 합집합·차집합 계산",
       "lane": "study",
-      "status": "running",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "SYS-02"
@@ -341,9 +341,12 @@
       "optional": false,
       "branch": "feat/study-range-algebra",
       "base_sha": "e0c71053c1769ba70bb8e8926a0421b7b294779d",
-      "head_sha": null,
-      "pr_url": null,
-      "validation_evidence": [],
+      "head_sha": "d4dc56336db4b5ad3276b9d11673ffa085d54127",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/15",
+      "validation_evidence": [
+        "HEAD d4dc563: 154 passed; Astra-max independent oracle 65536 exhaustive pairs + 10000 random pairs; no findings",
+        "Integration 85a32738706e15945270c8818c50d2f90f2a54d3: python -m pytest -q tests/test_ranges.py -> 154 passed"
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
     },
@@ -983,7 +986,8 @@
       "deliverable": "확신도·난이도·최근 풀이·하루 상한과 등급 제한을 확정 사실 입력으로 계산하고 다른 PDF의 code 충돌을 제거한다.",
       "acceptance": [
         "최근9/10/19/20건·49/50/79/80·99상한·HALF_UP",
-        "날짜별+5/+15·한 단계 상승·같은 code의 다른 자료/단원 구분"
+        "날짜별+5/+15·한 단계 상승·같은 code의 다른 자료/단원 구분",
+        "Q-01에서 개념 없는 문항과 유개념 문항 오답이 섞이면 vendor learning_metrics sorted(wrong.items())의 None/str 비교 오류 확인; 혼합 fixture로 회귀 검증"
       ],
       "operations": [],
       "external_gates": [],
@@ -3326,8 +3330,8 @@
       "id": "POL-03",
       "title": "OCR 품질 출력·quizless 판정 기준 확정",
       "lane": "orchestrator",
-      "status": "planned",
-      "assignee": null,
+      "status": "review",
+      "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
@@ -3349,10 +3353,10 @@
         "AI 품질 신호와 판정 기준이 불명확하면 해당 부분만 결정 필요"
       ],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
-      "pr_url": null,
+      "branch": "integration/contract-v1",
+      "base_sha": "a4cc838",
+      "head_sha": "8f0bac8",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/14",
       "validation_evidence": [],
       "integration_only_paths": [],
       "validation_mode": "document-review"
