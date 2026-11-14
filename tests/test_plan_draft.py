@@ -39,9 +39,9 @@ def prepare(conn, case, **options):
     return initial_allocation_input(conn, case["user"], today=TODAY, timezone_name="Asia/Seoul", **options)
 
 
-def concept(conn, unit, start, end, **values):
+def concept(conn, unit, start, end, *, sort_order=1, **values):
     identifier = str(uuid4())
-    conn.execute(t.concepts.insert().values(id=identifier, unit_id=unit, code=identifier, title="개념", sort_order=1,
+    conn.execute(t.concepts.insert().values(id=identifier, unit_id=unit, code=identifier, title="개념", sort_order=sort_order,
         start_page=start, end_page=end, created_at=NOW, updated_at=NOW, **values))
     return identifier
 
@@ -64,8 +64,8 @@ def test_manual_quizless_pages_allocate_without_mutating_active_or_creating_plan
 def test_concept_union_and_different_pdf_identity_are_preserved(domain_connection, plan_case):
     conn, case = domain_connection, plan_case
     concept(conn, case["unit"], 1, 8)
-    concept(conn, case["unit"], 5, 12)
-    concept(conn, case["unit"], 13, 20, in_scope=False)
+    concept(conn, case["unit"], 5, 12, sort_order=2)
+    concept(conn, case["unit"], 13, 20, sort_order=3, in_scope=False)
     concept(conn, case["unit"], 1, 20, retired_at=NOW)
     material = dict(conn.execute(select(t.materials).where(t.materials.c.id == case["material"])).mappings().one())
     unit = dict(conn.execute(select(t.units).where(t.units.c.id == case["unit"])).mappings().one())
@@ -110,10 +110,10 @@ def test_invalid_or_empty_page_structure_is_rejected(domain_connection, plan_cas
         concept(conn, case["unit"], 1, 21)
     elif kind == "unit_overlap":
         row = dict(conn.execute(select(t.units).where(t.units.c.id == case["unit"])).mappings().one())
-        conn.execute(t.units.insert().values(**{**row, "id": str(uuid4()), "code": "unit2", "start_page": 20}))
+        conn.execute(t.units.insert().values(**{**row, "id": str(uuid4()), "code": "unit2", "sort_order": 2, "start_page": 20}))
     else:
         concept(conn, case["unit"], 1, 20, in_scope=False)
-    with pytest.raises(PlanInputError):
+    with pytest.raises(PlanInputError, match="같은 PDF의 단원 범위가 겹쳐요" if kind == "unit_overlap" else None):
         prepare(conn, case)
 
 
