@@ -309,6 +309,7 @@ class ProviderContext:
     def __init__(self, identity, deadline, emit):
         self.identity, self.deadline, self._emit = identity, deadline, emit
         self._started = {}
+        self._completed = []
 
     @property
     def remaining_seconds(self):
@@ -333,6 +334,7 @@ class ProviderContext:
                     "provider_request_id": provider_request_id, "input_tokens": input_tokens,
                     "output_tokens": output_tokens, "estimated_cost": estimated_cost,
                     "currency": currency, "latency_ms": max(0, int((time.monotonic() - started) * 1000))})
+        self._completed.append(status)
 
 
 # Operational IPC guards, not PDF/product limits. Large or unbounded child output
@@ -362,7 +364,10 @@ def _execution_child(connection, identity, provider, validator, cached_json, dea
             context = ProviderContext(identity, deadline, emit)
             for attempt in range(2):
                 context.remaining_seconds
+                completed_before = len(context._completed)
                 raw = invoke(ProviderCall(identity, bool(attempt)), context)
+                if context._started or "succeeded" not in context._completed[completed_before:]:
+                    raise InvalidOutput("Each result attempt requires a completed successful transport request")
                 try:
                     value = parse_json(raw) if type(raw) is str else raw
                     canonical_json(value)

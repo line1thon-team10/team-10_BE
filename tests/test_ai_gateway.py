@@ -379,6 +379,12 @@ def test_failed_transport_cannot_be_disguised_as_success_with_a_fabricated_answe
     assert len(output.usage) == 1 and output.usage[0].status == "failed"
 
 
+def test_failed_transport_with_malformed_body_does_not_trigger_json_retry():
+    output = execute_fake({"behavior": "syntax_always", "measurements": {"status": "failed"}})
+    assert output.data is None and output.failure is not None
+    assert len(output.usage) == 1 and output.usage[0].status == "failed"
+
+
 @pytest.mark.parametrize("retries", [1, 6, True, None])
 def test_sdk_automatic_retries_are_forbidden(retries):
     with pytest.raises(ValueError):
