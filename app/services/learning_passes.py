@@ -17,6 +17,18 @@ def scope_revision(conn, unit):
                           "analysis_version": material["analysis_version"]}, concepts).revision
 
 
+def consumed_evidence(conn, unit_id):
+    """Invalidation reserves the original proof for restoration of that pass."""
+    record_ids, session_ids = set(), set()
+    for snapshot in conn.scalars(select(t.learning_passes.c.evidence_snapshot).where(
+            t.learning_passes.c.unit_id == unit_id)):
+        record_ids.update(snapshot.get("recordIds", []))
+        session_ids.update(snapshot.get("sessionIds", []))
+    session_ids.update(conn.scalars(select(t.study_records.c.session_id).where(
+        t.study_records.c.id.in_(record_ids), t.study_records.c.session_id.is_not(None))))
+    return record_ids, session_ids
+
+
 def create_initial_passes(conn, user_id, task, record_id, at):
     """Only actual study pages can establish the unit's first completion.
 
@@ -33,6 +45,7 @@ def create_initial_passes(conn, user_id, task, record_id, at):
                 t.learning_passes.c.completion_kind == "initial")):
             continue
         unit = data.units[unit_id]
+        consumed_records, consumed_sessions = consumed_evidence(conn, unit_id)
         evidence = conn.execute(select(
             t.study_records.c.id, t.study_records.c.session_id, t.study_records.c.study_date,
             t.study_record_ranges.c.start_page, t.study_record_ranges.c.end_page)
@@ -46,8 +59,9 @@ def create_initial_passes(conn, user_id, task, record_id, at):
                    t.study_record_ranges.c.end_page.is_not(None))
             .order_by(t.study_records.c.study_date, t.study_records.c.recorded_at, t.study_records.c.id)
         ).mappings().all()
-        evidence = [row for row in evidence if any(
-            row["start_page"] <= end and start <= row["end_page"] for start, end in required)]
+        evidence = [row for row in evidence if row["id"] not in consumed_records
+                    and row["session_id"] not in consumed_sessions and any(
+                        row["start_page"] <= end and start <= row["end_page"] for start, end in required)]
         if record_id not in {row["id"] for row in evidence} or not _covers(
                 required, [(row["start_page"], row["end_page"]) for row in evidence]):
             continue
