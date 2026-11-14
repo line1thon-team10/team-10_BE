@@ -160,3 +160,19 @@ def test_prepared_bank_requires_gradable_answers_and_physical_pdf_bounds(api_cli
         w.conn.execute(update(t.materials).where(t.materials.c.id==unit['material_id']).values(page_count=9))
     response=get(api_client,w)
     assert response.status_code==404 and response.json()['error']['code']=='NO_QUESTIONS'
+
+
+@pytest.mark.parametrize('source_range,expected', [((1,2),200), ((2,3),404), ((8,8),404)])
+def test_every_source_stays_inside_its_own_concept(api_client,progress_world,source_range,expected):
+    w=progress_world;unit=w.unit(1,10)
+    concept=w.concept(unit,1,2)
+    w.concept(unit,3,10)
+    w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    for _ in range(4):add_question(w,unit,page=1,concept_id=concept['id'])
+    qid=add_question(w,unit,page=1,concept_id=concept['id'])
+    w.conn.execute(t.question_sources.insert().values(id=str(uuid4()),question_id=qid,
+        material_id=unit['material_id'],start_page=source_range[0],end_page=source_range[1],quote='추가 근거'))
+    response=get(api_client,w)
+    assert response.status_code==expected,response.text
+    if expected==404:
+        assert response.json()['error']['code']=='NO_QUESTIONS'

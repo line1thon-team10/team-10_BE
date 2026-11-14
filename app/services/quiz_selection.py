@@ -99,9 +99,14 @@ class QuizSelection:
                 continue
             if question['type'] not in ('choice','ox','short','essay') or not (question['prompt'] or '').strip() or not (question['explanation'] or '').strip() or not (question['correct_answer'] or '').strip():
                 continue
+            concept_scope = None
             if question['concept_id'] is not None:
                 concept = concepts.get(question['concept_id'])
                 if concept is None or concept['unit_id'] != uid or not concept['in_scope'] or concept['retired_at'] is not None:
+                    continue
+                try:
+                    concept_scope = [PageSpan(unit['material_id'], concept['start_page'], concept['end_page'])]
+                except ValueError:
                     continue
             elif question['origin']=='generated':
                 continue
@@ -126,6 +131,7 @@ class QuizSelection:
                     acceptable=False; break
                 pages=materials[unit['material_id']]['page_count']
                 if (source['material_id']!=unit['material_id'] or pages is None or span.end>pages or subtract([span], scopes[uid])
+                    or (concept_scope is not None and subtract([span], concept_scope))
                     or not isinstance(source['quote'],str) or not source['quote'].strip()):
                     acceptable=False; break
             if acceptable:
