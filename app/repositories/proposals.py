@@ -115,6 +115,10 @@ class ProposalConflict(RuntimeError):
 class LegacyProposalUnavailable(ProposalConflict):
     """A legacy candidate has no complete basis and cannot be executed."""
 
+    def __init__(self, message="", *, known_kind=None):
+        super().__init__(message)
+        self.known_kind = known_kind
+
 
 class LegacyResponseUnavailable(LegacyProposalUnavailable):
     """Application is known, but its original response was never stored."""
@@ -180,7 +184,8 @@ class ProposalRepository:
     @staticmethod
     def _snapshot_query():
         request, proposal, state = t.plan_change_requests, t.plan_proposals, t.plan_proposal_states
-        return select(state, request.c.id.label("request_id"), request.c.status.label("request_status"),
+        return select(state, proposal.c.id.label("_proposal_id"),
+            request.c.id.label("request_id"), request.c.status.label("request_status"),
             request.c.accepted_proposal_id, request.c.user_id.label("_request_owner"),
             request.c.kind.label("_request_kind"), request.c.base_plan_id.label("_request_plan"),
             request.c.base_plan_revision.label("_request_revision"), proposal.c.proposal_type,
@@ -195,10 +200,13 @@ class ProposalRepository:
         state = _row(row)
         if state.pop("_request_owner") != user_id:
             raise ProposalNotFound(foreign=True)
+        proposal_id = state.pop("_proposal_id")
         request_kind = state.pop("_request_kind")
         request_basis = (state.pop("_request_plan"), state.pop("_request_revision"))
         if state["proposal_id"] is None:
-            raise LegacyProposalUnavailable("The candidate predates complete preview metadata")
+            if state["request_status"] == "accepted" and state["accepted_proposal_id"] == proposal_id:
+                raise LegacyResponseUnavailable("The selected legacy success has no stored response", known_kind=request_kind)
+            raise LegacyProposalUnavailable("The candidate predates complete preview metadata", known_kind=request_kind)
         if state["user_id"] != user_id or state["kind"] != request_kind:
             raise ProposalConflict("Candidate owner or kind does not match its request")
         if not state["legacy"] and (state["base_plan_id"], state["base_plan_revision"]) != request_basis:
