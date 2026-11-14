@@ -118,6 +118,7 @@ def test_outer_rollback_removes_answer_and_head(domain_connection, storage_case)
     conn.rollback()
     assert conn.execute(select(t.quiz_answers)).first() is None
     assert conn.execute(select(t.quiz_answer_heads)).first() is None
+    assert conn.execute(select(t.quiz_answer_receipts)).first() is None
 
 
 def test_changed_answer_cancels_old_running_job_without_touching_old_answer(domain_connection, storage_case):
@@ -345,7 +346,8 @@ def test_seal_freezes_exact_revisions_and_replays_original_state(domain_connecti
     replay = repo.seal(case["user"], case["quiz"], now=NOW + timedelta(days=1),
                        expected_revisions={case["essay_item"]: 1, case["choice_item"]: 1})
     assert replay == state
-    assert not save(repo, case, revision=1).created
+    assert not save(repo, case, revision=0).created  # actual pre-seal receipt may replay
+    error("QUIZ_FINALIZED", lambda: save(repo, case, revision=1))  # even a new no-op needs an existing receipt
     error("QUIZ_FINALIZED", lambda: save(repo, case, revision=1, text="봉인 뒤 변경"))
     error("QUIZ_FINALIZED", lambda: repo.seal(case["user"], case["quiz"], now=NOW,
           expected_revisions={case["essay_item"]: 2, case["choice_item"]: 1}))
@@ -460,3 +462,84 @@ def test_rollback_does_not_publish_a_seal_or_snapshot(domain_connection, storage
     conn.rollback()
     assert repo.submission(case["user"], case["quiz"]) is None
     assert repo.list_current(case["user"], case["quiz"]) == []
+
+
+def test_noop_receipt_replays_after_later_edit_and_seal(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    first = save(repo, case)
+    noop = save(repo, case, revision=1, now=NOW + timedelta(seconds=1))
+    assert noop.answer == first.answer and not noop.created
+    second = save(repo, case, revision=1, text="새 답안", now=NOW + timedelta(seconds=2))
+    conn.commit()
+    repo = QuizAnswerRepository(conn)
+    replay = save(repo, case, revision=1)
+    assert replay.answer == first.answer and not replay.created and not replay.is_current
+    assert repo.current(case["user"], case["quiz"], case["essay_item"]) == second.answer
+    save(repo, case, kind="choice")
+    repo.seal(case["user"], case["quiz"], now=NOW + timedelta(seconds=3),
+              expected_revisions={case["essay_item"]: 2, case["choice_item"]: 1})
+    assert save(repo, case, revision=1).answer == first.answer
+    assert save(repo, case, revision=1, text="새 답안").answer == second.answer
+    error("QUIZ_FINALIZED", lambda: save(repo, case, revision=2, text="새 답안"))
+    assert len(conn.execute(select(t.quiz_answer_receipts)).all()) == 4
+
+
+def test_unreceived_stale_noop_is_not_inferred_from_old_answer(domain_connection, storage_case):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    first = save(repo, case)
+    second = save(repo, case, revision=1, text="새 답안")
+    error("ANSWER_CONFLICT", lambda: save(repo, case, revision=1))
+    assert save(repo, case, revision=0).answer == first.answer
+    assert repo.current(case["user"], case["quiz"], case["essay_item"]) == second.answer
+    assert len(conn.execute(select(t.quiz_answer_receipts)).all()) == 2
+
+
+@pytest.mark.parametrize("same", [True, False], ids=["same-input", "different-input"])
+def test_competing_saves_retry_against_committed_receipt(api_client, domain_connection, storage_case, same):
+    from app.db import session
+    conn, case = domain_connection, storage_case
+    first = save(QuizAnswerRepository(conn), case)
+    with session.engine.connect() as competitor:
+        if competitor.dialect.name == "sqlite":
+            competitor.exec_driver_sql("PRAGMA busy_timeout=20")
+            competitor.commit()
+        competing = QuizAnswerRepository(competitor)
+        changes = {} if same else {"text": "경합한 다른 답"}
+        error("REQUEST_IN_PROGRESS", lambda: save(competing, case, **changes))
+        competitor.rollback()
+        conn.commit()
+        if same:
+            replay = save(competing, case)
+            assert replay.answer == first.answer and not replay.created
+        else:
+            error("ANSWER_CONFLICT", lambda: save(competing, case, **changes))
+        competitor.commit()
+    assert len(conn.execute(select(t.quiz_answers)).all()) == 1
+    assert len(conn.execute(select(t.quiz_answer_receipts)).all()) == 1
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["first-answer", "changed-answer"])
+def test_receipt_failure_rolls_back_answer_head_and_job_invalidation(domain_connection, storage_case, monkeypatch, existing):
+    conn, case = domain_connection, storage_case
+    repo = QuizAnswerRepository(conn)
+    if existing:
+        first = save(repo, case)
+        job = GradingJobRepository(conn).enqueue(case["user"], case["quiz"], case["essay_item"], revision=1, now=NOW)
+        conn.commit()
+    remember = repo._remember_request
+    def fail(*args):
+        remember(*args)
+        raise RuntimeError("receipt persistence failure")
+    monkeypatch.setattr(repo, "_remember_request", fail)
+    with pytest.raises(RuntimeError, match="receipt persistence"):
+        save(repo, case, revision=1 if existing else 0, text="변경할 답")
+    conn.commit()
+    if existing:
+        assert repo.current(case["user"], case["quiz"], case["essay_item"]) == first.answer
+        assert GradingJobRepository(conn).get(case["user"], job["id"])["status"] == "queued"
+    else:
+        assert repo.current(case["user"], case["quiz"], case["essay_item"]) is None
+    assert len(conn.execute(select(t.quiz_answers)).all()) == int(existing)
+    assert len(conn.execute(select(t.quiz_answer_receipts)).all()) == int(existing)

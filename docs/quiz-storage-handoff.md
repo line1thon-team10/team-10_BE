@@ -20,7 +20,9 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 
 `QuizAnswerRepository(connection).save(user_id, quiz_id, item_id, revision=0, choice=None, text=None, confidence=..., now=..., answered_date=...)`는 `AnswerSave(answer, created, is_current)`를 반환한다. 최초 저장 revision은 1이며 다음 변경은 반환된 revision으로 요청한다. `current`/`list_current`는 소유권을 검증한 현재 답안만 반환한다.
 
-같은 입력은 revision/답변 시각을 늘리지 않는다. 예전 요청 revision과 같은 입력을 다시 보내면 그 요청이 처음 만든 답안 revision을 반환하며 현재 head를 되돌리지 않는다. 이 경우 `is_current=false`일 수 있으므로 Q-03은 예전 답안으로 새 채점 작업을 접수하면 안 된다. 다른 입력의 오래된 revision은 `ANSWER_CONFLICT`, 봉인 뒤 변경은 `QUIZ_FINALIZED`다. 봉인 뒤에도 이미 저장된 동일 요청의 응답 재생은 가능하다.
+같은 입력은 revision/답변 시각을 늘리지 않는다. 실제 수신한 예전 요청 revision과 같은 입력을 다시 보내면 receipt의 최초 답안 revision을 반환하며 현재 head를 되돌리지 않는다. 이 경우 `is_current=false`일 수 있으므로 Q-03은 예전 답안으로 새 채점 작업을 접수하면 안 된다. 같은 원문이 과거 답안에 있다는 이유만으로 미수신 stale 요청을 재생하지 않는다. receipt와 answer/head 변경은 같은 transaction에 저장한다.
+
+다른 입력의 오래된 revision은 `ANSWER_CONFLICT`다. 봉인 뒤에는 실제 수신 receipt의 재생만 허용하며 새 변경이나 수신한 적 없는 no-op 요청도 `QUIZ_FINALIZED`다. 봉인 이전에 수신했던 no-op receipt는 그 뒤 수정·봉인이 있어도 원래 응답을 재생한다.
 
 현재 답안 교체는 user lock 아래에서 head의 기존 answer_id를 조건으로 갱신한다. 이전 revision의 미완료 작업은 같은 트랜잭션에서 취소한다. 과거 답안과 성공한 채점 결과는 이력으로 남긴다. 호출자가 바깥 transaction을 commit/rollback하며 저장소는 commit하지 않는다. Q-03은 답안 저장과 작업 접수를 한 transaction에서 수행한 뒤 외부 호출 전에 commit해야 한다.
 

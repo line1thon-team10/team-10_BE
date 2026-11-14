@@ -196,6 +196,11 @@ class QuizAnswerRepository:
                      result_schema_version=schema_version, result_captured_at=now))
             return self.submission(user_id, quiz["id"])
 
+    def _remember_request(self, item_id, revision, digest, answer_id, now):
+        self.connection.execute(t.quiz_answer_receipts.insert().values(
+            quiz_item_id=item_id, request_revision=revision, answer_hash=digest,
+            response_answer_id=answer_id, received_at=now))
+
     def save(self, user_id, quiz_id, item_id, *, revision: int, choice: int | None = None,
              text: str | None = None, confidence: str, now: datetime, answered_date: date) -> AnswerSave:
         if type(revision) is not int or revision < 0 or type(answered_date) is not date:
@@ -213,19 +218,26 @@ class QuizAnswerRepository:
                 raise ApiError("INVALID_INPUT", "문항 유형에 맞는 문자열 답안이 필요해요", 422)
             current = self._current(item["id"])
             current_revision = current["revision"] if current else 0
-            if revision < current_revision:
+            received = self.connection.scalar(select(t.quiz_answer_receipts.c.response_answer_id).where(
+                t.quiz_answer_receipts.c.quiz_item_id == item["id"],
+                t.quiz_answer_receipts.c.request_revision == revision,
+                t.quiz_answer_receipts.c.answer_hash == digest)) if revision <= current_revision else None
+            if received:
                 replay = row_dict(self.connection.execute(select(t.quiz_answers).where(
-                    t.quiz_answers.c.quiz_item_id == item["id"], t.quiz_answers.c.revision == revision + 1)).mappings().first())
-                if replay and replay["answer_hash"] == digest:
-                    return AnswerSave(replay, False, replay["id"] == current["id"])
-            elif revision == current_revision and current and current["answer_hash"] == digest:
-                return AnswerSave(current, False, True)
+                    t.quiz_answers.c.id == received, t.quiz_answers.c.quiz_item_id == item["id"],
+                    t.quiz_answers.c.answer_hash == digest)).mappings().first())
+                if replay is None:
+                    raise ApiError("ANSWER_CONFLICT", "원래 저장 응답을 확인할 수 없어요", 409)
+                return AnswerSave(replay, False, bool(current and replay["id"] == current["id"]))
             sealed = self.connection.scalar(select(t.quiz_submission_states.c.quiz_session_id).where(
                 t.quiz_submission_states.c.quiz_session_id == quiz["id"]))
             if sealed or quiz["status"] in ("submitted", "carried_over") or quiz["finalized_at"] is not None:
                 raise ApiError("QUIZ_FINALIZED", "이미 봉인한 퀴즈의 답은 바꿀 수 없어요", 409)
             if revision != current_revision:
                 raise ApiError("ANSWER_CONFLICT", "답안이 바뀌었어요. 현재 답안을 다시 확인해 주세요", 409)
+            if current and current["answer_hash"] == digest:
+                self._remember_request(item["id"], revision, digest, current["id"], now)
+                return AnswerSave(current, False, True)
             answer = {"id": str(uuid4()), "quiz_item_id": item["id"], "revision": revision + 1, **payload,
                       "answer_hash": digest, "input_recovered": True, "legacy_answer": None,
                       "answered_at": now, "answered_date": answered_date}
@@ -243,4 +255,5 @@ class QuizAnswerRepository:
                             result=null(), error_code="ANSWER_SUPERSEDED", finished_at=now))
             else:
                 self.connection.execute(t.quiz_answer_heads.insert().values(quiz_item_id=item["id"], answer_id=answer["id"]))
+            self._remember_request(item["id"], revision, digest, answer["id"], now)
             return AnswerSave(answer, True, True)
