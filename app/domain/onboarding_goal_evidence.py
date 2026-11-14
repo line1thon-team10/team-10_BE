@@ -55,6 +55,13 @@ def _dates(text, today):
 
 def grounded_goal_group(group, quote, *, values, fields, previous, context):
     """True only when the quoted user evidence supports the proposed group."""
+    # A quoted token can occur verbatim inside a correction ("A+가 아니라 B+").
+    # Require at least one non-negated occurrence in the complete user message.
+    if group in ('examDate', 'goal'):
+        occurrences = list(re.finditer(re.escape(quote), context['text']))
+        if occurrences and all(re.match(r'\s*(?:은|는|이|가|을|를)?\s*(?:아니|말고|대신|취소)',
+                                        context['text'][match.end():]) for match in occurrences):
+            return False
     merged = {key: values[key] if key in fields else previous.get(key) for key in GOAL_GROUPS[group]}
     contextual = _last_question(context, group)
     if group == 'examDate':
