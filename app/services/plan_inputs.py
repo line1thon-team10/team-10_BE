@@ -378,7 +378,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                         (PageSpan(unit.material_id, span['start_page'], span['end_page']),), done))
                 if remaining:
                     requirements.append(WorkRequirement(task.id, task.row['subject_id'], task.row['task_type'],
-                        tuple(remaining), earliest_day))
+                        tuple(remaining), earliest_day, indivisible=True))
     zone = ZoneInfo(timezone_name)
     for task, parts in sorted(pending_fixed, key=lambda item: (item[0].row['scheduled_date'], item[0].row['starts_at'] is None, item[0].id)):
         row, day = task.row, task.row['scheduled_date']

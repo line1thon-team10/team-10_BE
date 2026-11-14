@@ -33,6 +33,7 @@ def test_explicit_partial_movement_keeps_actual_pages_and_owed_identity(api_clie
     else:
         assert len(request.requirements)==1
         requirement=request.requirements[0]
+        assert requirement.indivisible is True
         assert (requirement.id,requirement.kind,requirement.not_before)==(task['id'],kind,TODAY+timedelta(days=1))
         parts=[part.span for part in requirement.parts]
     assert [(part.start,part.end) for part in parts]==[(6,20)]
