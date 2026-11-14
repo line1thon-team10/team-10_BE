@@ -1,9 +1,16 @@
 """Shared read projection and its real home/focus HTTP consumers."""
 from copy import deepcopy
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import select, update
 
+from app.db import schema as t
+from app.services.study import StudyData
 from app.services.task_views import TaskView
+from tests.test_record_ranges import configure_ranges, post
+from tests.test_record_transactions import headers, task_for
 
 
 def planned(identifier="range-a", material="pdf-a", unit="unit-a", start=1, end=5, concept=None):
@@ -83,3 +90,122 @@ def test_task_view_counts_large_ranges_without_materializing_each_page():
 def test_task_view_does_not_coerce_invalid_page_bounds(start, end):
     with pytest.raises(ValueError):
         TaskView.from_ranges([planned(start=start, end=end)])
+
+
+def home(client, user):
+    response = client.get("/api/today", headers=headers(user))
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def home_task(client, user, task_id):
+    return next(task for task in home(client, user)["tasks"] if task["id"] == task_id)
+
+
+def test_today_returns_ordered_range_identity_and_normalized_progress_inputs(api_client, demo_user, domain_connection):
+    task, ranges = configure_ranges(domain_connection, demo_user, [("a", 15, 20), ("a", 12, 16), ("b", 12, 16)])
+    result = post(api_client, demo_user, task, "partial", completedRanges=[
+        {"rangeId": ranges[0]["id"], "toPage": 17}, {"rangeId": ranges[2]["id"], "toPage": 13}])
+    assert result.status_code == 200, result.text
+
+    data = home(api_client, demo_user)
+    view = next(item for item in data["tasks"] if item["id"] == task.id)
+    materials = dict(domain_connection.execute(select(t.units.c.id, t.units.c.material_id)).all())
+    assert view["status"] == "partial"
+    assert (view["pages"], view["donePages"]) == (14, 5)
+    assert view["from"] is view["to"] is view["unitNo"] is view["doneTo"] is None
+    assert view["ranges"] == [
+        {"id": row["id"], "materialId": materials[row["unit_id"]], "unitId": row["unit_id"],
+         "conceptId": row["concept_id"], "from": row["start_page"], "to": row["end_page"], "doneTo": done_to}
+        for row, done_to in zip(ranges, [17, None, 13])
+    ]
+    assert data["progress"]["totalPages"] == sum(item["pages"] for item in data["tasks"]) == 32
+    assert data["progress"]["donePages"] == sum(item["donePages"] for item in data["tasks"]) == 23
+
+
+def test_today_single_range_tracks_post_and_full_replacement_patch(api_client, demo_user, domain_connection):
+    task = task_for(domain_connection, demo_user, "AI2")
+    domain_connection.commit()
+    before = home_task(api_client, demo_user, task.id)
+    assert (before["from"], before["to"], before["unitNo"], before["pages"], before["donePages"]) == (12, 20, 2, 9, 0)
+    assert before["doneTo"] is before["ranges"][0]["doneTo"] is None
+    result = post(api_client, demo_user, task, "partial", toPage=13)
+    assert result.status_code == 200, result.text
+    partial = home_task(api_client, demo_user, task.id)
+    assert (partial["status"], partial["donePages"], partial["doneTo"]) == ("partial", 2, 13)
+
+    for fields, expected in [({"completedRanges": []}, ("none", 0, None)), ({"toPage": 20}, ("done", 9, 20))]:
+        result = api_client.patch(f"/api/tasks/{task.id}/record", headers=headers(demo_user), json=fields)
+        assert result.status_code == 200, result.text
+        fixed = result.json()["data"]
+        view = home_task(api_client, demo_user, task.id)
+        assert (view["status"], view["donePages"], view["doneTo"]) == expected
+        assert {key: view[key] for key in ("ranges", "donePages", "doneTo")} == {
+            key: fixed[key] for key in ("ranges", "donePages", "doneTo")}
+
+
+@pytest.mark.parametrize("status", ["planned", "partial", "completed", "missed"])
+def test_today_does_not_infer_completed_pages_from_status(api_client, demo_user, domain_connection, status):
+    task = task_for(domain_connection, demo_user, "AI2")
+    domain_connection.execute(update(t.study_tasks).where(t.study_tasks.c.id == task.id).values(status=status))
+    domain_connection.commit()
+    view = home_task(api_client, demo_user, task.id)
+    assert view["donePages"] == 0
+    assert view["doneTo"] is view["ranges"][0]["doneTo"] is None
+
+
+@pytest.mark.parametrize("nominal", [False, True])
+def test_today_unpaged_task_uses_recorded_status_with_zero_page_counts(api_client, demo_user, domain_connection, nominal):
+    task = task_for(domain_connection, demo_user, "AI2")
+    if nominal:
+        domain_connection.execute(update(t.study_task_ranges).where(t.study_task_ranges.c.task_id == task.id)
+                                  .values(start_page=None, end_page=None, planned_minutes=25))
+    else:
+        domain_connection.execute(t.study_task_ranges.delete().where(t.study_task_ranges.c.task_id == task.id))
+    domain_connection.commit()
+    for result in ["done", "none"]:
+        response = post(api_client, demo_user, task, result)
+        assert response.status_code == 200, response.text
+        view = home_task(api_client, demo_user, task.id)
+        assert view["status"] == result
+        assert view["pages"] == view["donePages"] == 0
+        assert view["ranges"] == []
+        assert view["from"] is view["to"] is view["unitNo"] is view["doneTo"] is None
+
+
+def test_study_range_identity_survives_archived_subject_and_retired_unit(api_client, demo_user, domain_connection):
+    conn = domain_connection
+    task = task_for(conn, demo_user, "DB2")
+    before = StudyData(conn, demo_user).task_view(task)
+    conn.execute(update(t.subjects).where(t.subjects.c.id == task.row["subject_id"]).values(status="archived"))
+    conn.execute(update(t.units).where(t.units.c.id == task.ranges[0]["unit_id"])
+                 .values(retired_at=datetime.now(timezone.utc)))
+    data = StudyData(conn, demo_user)
+    historical = next(item for item in data.tasks if item.id == task.id)
+    assert data.unit_of(historical) is None
+    assert data.task_view(historical) == before
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_today_excludes_range_from_other_subject_or_owner(api_client, demo_user, domain_connection, foreign):
+    owner = api_client.post("/api/session").json()["data"]["anonymousId"] if foreign else demo_user
+    task = task_for(domain_connection, demo_user, "AI2")
+    other = task_for(domain_connection, owner, "DB2")
+    domain_connection.execute(update(t.study_task_ranges).where(t.study_task_ranges.c.task_id == task.id)
+                              .values(unit_id=other.ranges[0]["unit_id"], concept_id=None))
+    domain_connection.commit()
+    view = home_task(api_client, demo_user, task.id)
+    assert view["ranges"] == []
+    assert view["pages"] == view["donePages"] == 0
+
+
+def test_today_uses_only_this_tasks_record_snapshot(api_client, demo_user, domain_connection):
+    task = task_for(domain_connection, demo_user, "AI2")
+    other = task_for(domain_connection, demo_user, "DB2")
+    assert other.record is not None
+    domain_connection.execute(t.study_record_ranges.insert().values(
+        id=str(uuid4()), record_id=other.record["id"], unit_id=task.ranges[0]["unit_id"], start_page=12, end_page=20))
+    domain_connection.commit()
+    view = home_task(api_client, demo_user, task.id)
+    assert view["donePages"] == 0
+    assert view["doneTo"] is view["ranges"][0]["doneTo"] is None
