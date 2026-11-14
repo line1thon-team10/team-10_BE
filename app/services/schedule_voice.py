@@ -77,7 +77,7 @@ class ScheduleVoiceService:
             changes['allocation']=_saved_allocation(request,result,supersede,data,user['timezone'])
         response={'event':{'title':event.title,'date':first.isoformat(),'start':event.start,'end':event.end,
                 'repeat':event.days is not None,'label':'말로 추가한 일정'},
-            'moves':(_move_view(data,changes['allocation']) if changes.get('allocation') else [])+_extra_move_view(data,extra),
+            'moves':(_move_view(data,changes['allocation']) if changes.get('allocation') else [])+_extra_move_view(data,extra,user['timezone']),
             'note':None}
         with self.engine.begin() as conn:
             return ProposalService(conn).create(user_id,domain=VOICE_DOMAIN,target=target,snapshot=snapshot,

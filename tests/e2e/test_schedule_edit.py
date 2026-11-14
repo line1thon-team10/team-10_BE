@@ -132,6 +132,7 @@ def test_unpaged_review_moves_as_original_time_and_block_without_fake_pages(api_
     response=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'10:00','end':'11:00'})
     assert response.status_code==200,response.text
     moved=next(x for x in response.json()['data']['moves'] if x['taskId']==task)
+    assert (moved['block']['start'],moved['block']['end'])==('10:00','10:30')
     assert len(moved['pieces'])==1 and moved['pieces'][0]['minutes']==30
     assert moved['pieces'][0]['pages']==0 and moved['pieces'][0]['from'] is None
     applied=apply(api_client,case['user'],key,response.json()['data']['previewId'])
