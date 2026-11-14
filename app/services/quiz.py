@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import Connection, func, select, update
 
 from app.ai import engine as ai
+from app.ai.metrics_adapter import calculate_learning_metrics
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.services.study import StudyData, unit_no
@@ -295,53 +296,74 @@ class QuizService:
             self.conn.execute(update(t.weak_questions).where(t.weak_questions.c.question_id == question_id).values(**values))
 
     def _metrics_input(self) -> dict:
-        """DB 기록을 현민님 learning_metrics 입력 모양(seed_quiz.json과 같은 키)으로"""
-        units = [u for u in self.data.units.values()]
-        code = {u["id"]: u["code"] for u in units}
-        concepts = self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(list(code)))).mappings().all()
-        ccode = {c["id"]: c["code"] for c in concepts}
-        qs = self.conn.execute(select(t.questions).where(t.questions.c.unit_id.in_(list(code)))).mappings().all()
-        qcode = {q["id"]: q["code"] or q["id"] for q in qs}
+        """Owned UUID snapshots; only complete finalized sets contribute facts."""
+        units = self.conn.execute(select(t.units, t.materials.c.subject_id,
+            t.materials.c.sha256.label("material_sha256"), t.materials.c.analysis_version)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .where(t.units.c.id.in_(list(self.data.units)))).mappings().all()
+        unit_ids = [unit["id"] for unit in units]
+        concepts = self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(unit_ids))).mappings().all()
+        questions = self.conn.execute(select(t.questions.c.id, t.questions.c.unit_id, t.questions.c.concept_id,
+            t.questions.c.code, t.questions.c.difficulty).where(t.questions.c.unit_id.in_(unit_ids))).mappings().all()
         attempts = self.conn.execute(
-            select(t.quiz_attempts.c.answered_date, t.quiz_attempts.c.confidence, t.quiz_attempts.c.is_correct,
-                   t.quiz_attempts.c.essay_score, t.quiz_items.c.question_id)
+            select(t.quiz_attempts.c.id, t.quiz_attempts.c.quiz_item_id, t.quiz_attempts.c.answered_date,
+                   t.quiz_attempts.c.answered_at, t.quiz_attempts.c.finalized_at, t.quiz_attempts.c.graded_at,
+                   t.quiz_attempts.c.grading_status, t.quiz_attempts.c.confidence, t.quiz_attempts.c.is_correct,
+                   t.quiz_items.c.question_id, t.quiz_sessions.c.type.label("quiz_type"),
+                   t.quiz_sessions.c.status.label("session_status"),
+                   t.quiz_sessions.c.finalized_at.label("session_finalized_at"),
+                   t.quiz_sessions.c.grading_status.label("session_grading_status"))
             .join(t.quiz_items, t.quiz_attempts.c.quiz_item_id == t.quiz_items.c.id)
-            .where(t.quiz_items.c.question_id.in_(list(qcode)), t.quiz_attempts.c.is_correct.is_not(None))
-            .order_by(t.quiz_attempts.c.answered_at)).mappings().all()
-        return {
-            "subjects": [{"id": s["code"], "name": s["name"], "pages": 1, "target": s["target_score"] or 0,
-                          "exam": s["exam_date"].isoformat() if s["exam_date"] else None} for s in self.data.subjects],
-            "units": [{"id": u["code"], "subject": self.data.subject_by_id[u["subject_id"]]["code"], "name": u["title"],
-                       "page_start": u["start_page"], "page_end": u["end_page"],
-                       "difficulty": DIFF_KO.get(u["difficulty"], "하")} for u in units],
-            "concepts": [{"id": c["code"], "unit": code[c["unit_id"]], "name": c["title"],
-                          "page_start": c["start_page"], "page_end": c["end_page"]} for c in concepts],
-            "questions": [{"id": qcode[q["id"]], "concept": ccode.get(q["concept_id"]), "unit": code[q["unit_id"]],
-                           "type": TYPE_KO[q["type"]], "difficulty": DIFF_KO.get(q["difficulty"], "하")} for q in qs],
-            "attempts": [{"date": a["answered_date"].isoformat(), "question": qcode[a["question_id"]],
-                          "confidence": CONF_KO[a["confidence"]], "correct": a["is_correct"],
-                          **({"essay_score": a["essay_score"]} if a["essay_score"] is not None else {})} for a in attempts],
-        }
+            .join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
+            .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
+            .join(t.units, t.questions.c.unit_id == t.units.c.id)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .where(t.questions.c.unit_id.in_(unit_ids), t.quiz_sessions.c.user_id == self.user["id"],
+                   t.quiz_sessions.c.subject_id.is_(None) | (t.quiz_sessions.c.subject_id == t.materials.c.subject_id),
+                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.grading_status == "completed", t.quiz_attempts.c.finalized_at.is_not(None),
+                   t.quiz_attempts.c.graded_at.is_not(None), t.quiz_attempts.c.grading_status.in_(("graded", "fallback")),
+                   t.quiz_attempts.c.is_correct.is_not(None), t.quiz_attempts.c.answered_date <= self.today)
+            .order_by(t.quiz_attempts.c.answered_date, t.quiz_attempts.c.answered_at, t.quiz_attempts.c.id)).mappings().all()
+        entries = self.conn.execute(select(t.mastery_history)
+            .join(t.quiz_sessions, t.mastery_history.c.quiz_session_id == t.quiz_sessions.c.id)
+            .where(t.mastery_history.c.unit_id.in_(unit_ids), t.mastery_history.c.score < 80,
+                   t.mastery_history.c.recorded_date <= self.today, t.quiz_sessions.c.user_id == self.user["id"],
+                   t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+                   t.quiz_sessions.c.grading_status == "completed")
+            .order_by(t.mastery_history.c.recorded_date, t.mastery_history.c.created_at, t.mastery_history.c.id)).mappings().all()
+        # S-03 will supply verified current-scope eligibility. Legacy unit flags,
+        # arbitrary pass rows, and repeated submissions do not establish it.
+        return {"units": units, "concepts": concepts, "questions": questions, "attempts": attempts, "recovery_entries": entries}
 
     def _recalc_mastery(self, quiz_session_id: str, unit_ids: set[str]) -> None:
-        result = ai.module("learning_metrics").calculate_learning_metrics(self._metrics_input())
-        by_code = {u["unit"]: u for u in result["units"]}
+        finalized = self.conn.scalar(select(t.quiz_sessions.c.id).where(
+            t.quiz_sessions.c.id == quiz_session_id, t.quiz_sessions.c.user_id == self.user["id"],
+            t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.finalized_at.is_not(None),
+            t.quiz_sessions.c.grading_status == "completed"))
+        if finalized is None:
+            raise ValueError("Mastery requires a finalized owned quiz set")
+        recorded = set(self.conn.scalars(select(t.mastery_history.c.unit_id).where(t.mastery_history.c.quiz_session_id == quiz_session_id)))
+        pending = unit_ids - recorded
+        if not pending:
+            return
+        result = calculate_learning_metrics(self._metrics_input())
+        by_unit = {row.unit_id: row for row in result.units}
         now = _now()
-        for uid in unit_ids:
-            u = self.data.units[uid]
-            r = by_code.get(u["code"])
+        for uid in sorted(pending):
+            r = by_unit.get(uid)
             if not r:
                 continue
-            level = GRADE_FROM_AI.get(r["grade"], "shaky")
+            u = self.conn.execute(select(t.units).where(t.units.c.id == uid)).mappings().one()
             self.conn.execute(update(t.units).where(t.units.c.id == uid).values(
-                mastery_score=r["score"], mastery_level=level, recovery_mode=r["recovery_mode"],
-                recovery_started_at=u["recovery_started_at"] or (now if r["recovery_mode"] else None),
+                mastery_score=r.score, mastery_level=r.grade, recovery_mode=r.recovery_mode,
+                recovery_started_at=u["recovery_started_at"] or (now if r.recovery_mode else None),
                 mastery_updated_at=now, updated_at=now))
             self.conn.execute(t.mastery_history.insert().values(
                 id=str(uuid.uuid4()), unit_id=uid, quiz_session_id=quiz_session_id,
-                previous_score=u["mastery_score"], previous_level=u["mastery_level"], raw_score=r["score"],
-                score=r["score"], level=level, recovery_mode=r["recovery_mode"], recorded_date=self.today,
-                created_at=now))
+                previous_score=u["mastery_score"], previous_level=u["mastery_level"], raw_score=float(r.raw_score),
+                score=r.score, level=r.grade, recovery_mode=r.recovery_mode, recorded_date=self.today,
+                daily_increase_limit=r.daily_increase_limit, created_at=now))
 
     # ---------- 결과 ----------
     def result_view(self, session: dict) -> dict:
