@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pymupdf
 import pytest
-from sqlalchemy import event, select, update
+from sqlalchemy import select, update
 from starlette.datastructures import Headers
 
 from app.core.clock import now_utc
@@ -269,6 +269,36 @@ def test_upload_refuses_unowned_or_invalid_subject_before_admission(api_client, 
     assert_no_admission(domain_connection, case)
 
 
+def fail_admission_commit(patch, engine, *, after_commit):
+    """Fail only the actual upload transaction, after its real job insert.
+
+    Authentication has its own earlier commit. Capture the DBAPI connection at
+    enqueue instead of relying on commit order or failing unrelated requests.
+    """
+    original_enqueue, original_commit = MaterialRepository.enqueue, engine.dialect.do_commit
+    target, failures = {}, []
+
+    def enqueue(repository, *args, **kwargs):
+        job_id = original_enqueue(repository, *args, **kwargs)
+        target.update(connection=repository.connection.connection.driver_connection, job_id=job_id)
+        return job_id
+
+    def commit(connection):
+        raw = getattr(connection, "driver_connection", connection)
+        if raw is target.get("connection"):
+            job_id = target.pop("job_id")
+            target.clear()
+            if after_commit:
+                original_commit(connection)
+            failures.append(job_id)
+            raise RuntimeError("lost commit acknowledgement" if after_commit else "commit failed before DBAPI commit")
+        original_commit(connection)
+
+    patch.setattr(MaterialRepository, "enqueue", enqueue)
+    patch.setattr(engine.dialect, "do_commit", commit)
+    return failures
+
+
 @pytest.mark.parametrize("failure", ["publish", "enqueue", "commit"])
 def test_failed_admission_cleans_file_and_job_then_same_sha_retry_succeeds(
         api_client, material_case, domain_connection, monkeypatch, failure):
@@ -276,9 +306,7 @@ def test_failed_admission_cleans_file_and_job_then_same_sha_retry_succeeds(
     case, conn, raw = material_case, domain_connection, pdf_bytes()
     with monkeypatch.context() as patch:
         if failure == "commit":
-            def fail_commit(_):
-                raise RuntimeError("commit failed before DBAPI commit")
-            event.listen(engine, "commit", fail_commit)
+            failures = fail_admission_commit(patch, engine, after_commit=False)
         else:
             owner, method = (storage.MaterialStorageService, "_publish") if failure == "publish" else (MaterialRepository, "enqueue")
             original = getattr(owner, method)
@@ -286,12 +314,10 @@ def test_failed_admission_cleans_file_and_job_then_same_sha_retry_succeeds(
                 original(*args, **kwargs)
                 raise RuntimeError("injected failure after write")
             patch.setattr(owner, method, fail_after_write)
-        try:
-            response = upload(api_client, case, raw)
-            assert response.status_code == 500, response.text
-        finally:
-            if failure == "commit":
-                event.remove(engine, "commit", fail_commit)
+        response = upload(api_client, case, raw)
+        assert response.status_code == 500, response.text
+        if failure == "commit":
+            assert len(failures) == 1
     assert_no_admission(conn, case)
     retried = upload(api_client, case, raw)
     assert retried.status_code == 200, retried.text
@@ -316,16 +342,16 @@ def test_lost_commit_acknowledgement_preserves_committed_input_and_retry_job(
         api_client, material_case, domain_connection, monkeypatch):
     from app.db.session import engine
     case, conn, raw = material_case, domain_connection, pdf_bytes()
-    original = engine.dialect.do_commit
-    def committed_but_unknown(connection):
-        original(connection)
-        raise RuntimeError("connection lost after actual commit")
     with monkeypatch.context() as patch:
-        patch.setattr(engine.dialect, "do_commit", committed_but_unknown)
+        failures = fail_admission_commit(patch, engine, after_commit=True)
         response = upload(api_client, case, raw)
         assert response.status_code == 500
+        assert len(failures) == 1
     material = conn.execute(select(t.materials)).mappings().one()
     job = conn.execute(select(t.ai_jobs)).mappings().one()
+    assert failures == [job["id"]]
+    assert material["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert job["target_id"] == material["id"] and job["status"] == "queued"
     assert (case["root"] / material["original_storage_key"]).read_bytes() == raw
     assert not list((case["root"] / ".uploads").iterdir())
     conn.commit()
