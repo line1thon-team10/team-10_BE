@@ -3,6 +3,8 @@
 One connected flow, parameterized by the repository's SQLite/isolated-PG fixtures.
 No browser, runtime server, real credentials, provider calls, or shared DB data.
 """
+from datetime import date
+from uuid import uuid4
 from sqlalchemy import select
 
 from app.ai.gateway import ProcessExecutor
@@ -51,10 +53,12 @@ def test_day9_put_restore_saved_submit_result_and_replay(
     active = _data(client.get("/api/study/sessions/active", headers=headers))
     assert active is not None
     _data(client.post(f"/api/study/sessions/{active['id']}/end", headers=headers))
-    _data(client.post("/api/records", headers=headers, json={
+    recorded = client.post("/api/records", headers={**headers, "Idempotency-Key": str(uuid4())}, json={
         "taskId": active["taskId"], "sessionId": active["id"],
         "result": "partial", "toPage": 13,
-    }))
+    })
+    assert _data(recorded)['event']['rate'] == 74
+    assert _data(client.get('/api/today',headers=headers))['progress']['rate'] == 74
     opened = _data(client.get(f"/api/quiz/{active['subjectId']}", headers=headers))
     quiz_id = opened["quizId"]
     questions = list(conn.execute(select(t.questions, t.quiz_items.c.id.label("item_id"))
@@ -118,3 +122,28 @@ def test_day9_put_restore_saved_submit_result_and_replay(
     assert replayed.status_code == 200 and replayed.json() == submitted.json()
     assert _persistent_result(conn, quiz_id) == first_state
     assert len(executions) == 1
+
+    # Continue the same submitted quiz into downstream read models and day close.
+    books = _data(client.get('/api/books',headers=headers))
+    assert any(block.get('task',{}).get('id')==active['taskId']
+        for subject in books['subjects'] for unit in subject['units'] for block in unit['blocks'])
+    month = _data(client.get('/api/monthly?month=2026-11',headers=headers))
+    studied = next(row for row in month['days'] if row['date']=='2026-11-09')
+    assert (studied['plan'],studied['done'],studied['rate'])==(27,20,74)
+    records = conn.execute(select(t.study_records).order_by(t.study_records.c.id)).all()
+    conn.commit()
+    other = _data(client.post('/api/session'))['anonymousId']
+    assert client.get('/api/quiz/'+quiz_id,headers={'X-Anonymous-Id':other}).status_code==404
+    close_headers = {**headers,'Idempotency-Key':str(uuid4())}
+    closed = client.post('/api/demo/next-day',headers=close_headers)
+    assert _data(closed)['today']=='2026-11-10'
+    assert client.post('/api/demo/next-day',headers=close_headers).json()==closed.json()
+    assert conn.execute(select(t.study_records).where(t.study_records.c.id.in_([row.id for row in records])).order_by(t.study_records.c.id)).all()==records
+    assert _persistent_result(conn,quiz_id)==first_state
+    totals=conn.execute(select(t.daily_plan_totals).where(t.daily_plan_totals.c.user_id==demo_user,
+        t.daily_plan_totals.c.study_date==date(2026,11,9))).mappings().all()
+    assert totals and all(row['finalized_at'] is not None for row in totals)
+    conn.commit()
+    after=_data(client.get('/api/monthly?month=2026-11',headers=headers))
+    day=next(row for row in after['days'] if row['date']=='2026-11-09')
+    assert (day['plan'],day['done'],day['rate'])==(27,20,74)
