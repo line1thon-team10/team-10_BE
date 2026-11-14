@@ -4,9 +4,10 @@ import json
 import math
 import re
 from datetime import date, datetime, timezone
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from sqlalchemy import Connection, null, select
+from sqlalchemy import Connection, null, select, update
 
 from app.db import schema as t
 from app.repositories.locking import lock_user
@@ -114,6 +115,12 @@ class LegacyResponseUnavailable(LegacyProposalUnavailable):
     """Application is known, but its original response was never stored."""
 
 
+@dataclass(frozen=True)
+class ProposalTransition:
+    proposal: dict
+    changed: bool
+
+
 def _uuid(value) -> str:
     try:
         return str(value if isinstance(value, UUID) else UUID(value))
@@ -191,9 +198,13 @@ class ProposalRepository:
         user_id = _uuid(user_id)
         _text(kind, "kind", nonempty=True)
         query = select(t.plan_proposal_states.c.proposal_id).join(
-            t.plan_proposals, t.plan_proposals.c.id == t.plan_proposal_states.c.proposal_id).where(
+            t.plan_proposals, t.plan_proposals.c.id == t.plan_proposal_states.c.proposal_id).join(
+            t.plan_change_requests, t.plan_change_requests.c.id == t.plan_proposals.c.request_id).where(
             t.plan_proposal_states.c.user_id == user_id, t.plan_proposal_states.c.kind == kind,
-            t.plan_proposal_states.c.status == "ready").order_by(t.plan_proposals.c.created_at, t.plan_proposals.c.id)
+            t.plan_proposal_states.c.status == "ready", t.plan_change_requests.c.user_id == user_id,
+            t.plan_change_requests.c.kind == kind, t.plan_change_requests.c.status == "ready",
+            t.plan_change_requests.c.accepted_proposal_id.is_(None)).order_by(
+                t.plan_proposals.c.created_at, t.plan_proposals.c.id)
         if input_hash is not None:
             query = query.where(t.plan_proposal_states.c.input_hash == _hash(input_hash))
         return [self.get(user_id, identifier) for identifier in self.connection.scalars(query)]
@@ -277,3 +288,60 @@ class ProposalRepository:
                 result_response=null(), result_schema_version=None, result_captured_at=None, decided_at=None,
                 legacy=False, legacy_snapshot=null()))
             return self.get(user_id, proposal_id)
+
+    def mark_applied(self, user_id, proposal_id, *, expected_revision: int, response: dict | str,
+                     now: datetime, schema_version: int = 1) -> ProposalTransition:
+        """Record the first success alongside the caller's domain writes.
+
+        SYS-05 must validate live bases and execute the saved changes within the
+        same outer transaction. This method never increments plans.revision.
+        """
+        response = canonical_object(response)
+        _positive(schema_version, "schema_version")
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="applied", now=now,
+                            response=response, schema_version=schema_version)
+
+    def cancel(self, user_id, proposal_id, *, expected_revision: int, now: datetime) -> ProposalTransition:
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="cancelled", now=now)
+
+    def mark_stale(self, user_id, proposal_id, *, expected_revision: int, now: datetime) -> ProposalTransition:
+        """Persist a caller's stale decision without inspecting domain tables."""
+        return self._finish(user_id, proposal_id, expected_revision=expected_revision, status="stale", now=now)
+
+    def _finish(self, user_id, proposal_id, *, expected_revision, status, now,
+                response=None, schema_version=None) -> ProposalTransition:
+        user_id, proposal_id, now = _uuid(user_id), _uuid(proposal_id), _time(now)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        self._lock(user_id)
+        with self.connection.begin_nested():
+            state = self.get(user_id, proposal_id)
+            if state["legacy"]:
+                if state["status"] == "applied":
+                    raise LegacyResponseUnavailable("The legacy success has no replayable original response")
+                raise LegacyProposalUnavailable("Legacy candidates cannot be executed or relabelled")
+            if state["status"] == "applied" and status == "applied":
+                if state["request_status"] != "accepted" or state["accepted_proposal_id"] != proposal_id:
+                    raise ProposalConflict("The accepted request no longer matches this result")
+                return ProposalTransition(state, changed=False)
+            if state["status"] != "ready" or state["state_revision"] != expected_revision:
+                raise ProposalConflict("The candidate state revision has changed")
+            if now < state["created_at"]:
+                raise ValueError("A decision must not precede candidate creation")
+            values = dict(status=status, state_revision=expected_revision + 1, decided_at=now)
+            if status == "applied":
+                selected = self.connection.execute(update(t.plan_change_requests).where(
+                    t.plan_change_requests.c.id == state["request_id"], t.plan_change_requests.c.user_id == user_id,
+                    t.plan_change_requests.c.kind == state["kind"], t.plan_change_requests.c.status == "ready",
+                    t.plan_change_requests.c.accepted_proposal_id.is_(None)).values(
+                        status="accepted", accepted_proposal_id=proposal_id, decided_at=now, updated_at=now))
+                if selected.rowcount != 1:
+                    raise ProposalConflict("Another candidate or request decision has already won")
+                values.update(result_response=response, result_schema_version=schema_version, result_captured_at=now)
+            changed = self.connection.execute(update(t.plan_proposal_states).where(
+                t.plan_proposal_states.c.proposal_id == proposal_id, t.plan_proposal_states.c.user_id == user_id,
+                t.plan_proposal_states.c.kind == state["kind"], t.plan_proposal_states.c.status == "ready",
+                t.plan_proposal_states.c.state_revision == expected_revision).values(**values))
+            if changed.rowcount != 1:
+                raise ProposalConflict("The candidate compare-and-set failed")
+            return ProposalTransition(self.get(user_id, proposal_id), changed=True)
