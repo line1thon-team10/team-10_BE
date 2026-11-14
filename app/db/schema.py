@@ -56,6 +56,10 @@ subjects = Table(
     Column("other_exam_info", Text, nullable=True),
     Column("target_score", Numeric(asdecimal=False), nullable=True),
     Column("goal_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_exam_date_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_total_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("onboarding_goal_etc_confirmed_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("ix_subjects_1", "user_id", "code", unique=True),
@@ -65,12 +69,15 @@ onboarding_messages = Table(
     "onboarding_messages", metadata,
     Column("id", UUID, primary_key=True, nullable=False),
     Column("user_id", UUID, ForeignKey("users.id"), nullable=False),
+    Column("subject_id", UUID, ForeignKey("subjects.id"), nullable=True),
     Column("change_request_id", UUID, ForeignKey("plan_change_requests.id"), nullable=True),
     Column("role", String, nullable=False),
     Column("text", Text, nullable=False),
     Column("chips", JSONB, nullable=True),
+    Column("sort_order", Integer, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_onboarding_messages_1", "user_id", "created_at"),
+    Index("ix_onboarding_messages_2", "user_id", "subject_id", "sort_order"),
 )
 
 calendar_events = Table(
