@@ -6,6 +6,8 @@ from sqlalchemy import func,select,update
 from app.db import schema as t
 from app.services.learning_evidence import revalidate_record_passes
 from tests.test_progress_contract import progress_world
+from tests.test_remedial_tasks import remedial_case
+from tests.test_mastery_rules import mastery_case
 
 
 def request(client,w,unit,key,**changes):
@@ -117,3 +119,35 @@ def test_books_task_id_supports_direct_completion_correction_and_restoration(api
     w.conn.commit()
     today=api_client.get('/api/today',headers=headers).json()['data']
     assert today['tasks']==[] and today['progress']['totalPages']==0
+
+
+@pytest.mark.parametrize('receipt_fails',[False,True])
+def test_direct_first_pass_rechecks_weak_result_atomically(api_client,domain_connection,remedial_case,monkeypatch,receipt_fails):
+    from tests.test_remedial_tasks import submit
+    from app.repositories.record_requests import RecordRequestRepository
+    from app.core.responses import ApiError
+    conn,c=domain_connection,remedial_case
+    conn.execute(t.learning_passes.delete().where(t.learning_passes.c.id==c['initial']))
+    conn.commit()
+    submit(api_client,conn,c)
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==0
+    conn.commit()
+    if receipt_fails:
+        def fail(*args,**kwargs):raise ApiError('INVALID_INPUT','receipt failed',422)
+        monkeypatch.setattr(RecordRequestRepository,'save',fail)
+    headers={**c['headers'],'Idempotency-Key':str(uuid4())}
+    body={'subjectId':c['subject_id'],'unitId':c['units'][0]['id']}
+    response=api_client.post('/api/review/relearn',headers=headers,json=body)
+    assert response.status_code==(422 if receipt_fails else 200),response.text
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==(0 if receipt_fails else 1)
+    passes=list(conn.execute(select(t.learning_passes).where(t.learning_passes.c.unit_id==body['unitId'])).mappings())
+    assert len(passes)==(0 if receipt_fails else 1)
+    if receipt_fails:
+        assert conn.scalar(select(func.count()).select_from(t.study_tasks).where(t.study_tasks.c.task_type.in_(('review','remedial'))))==0
+    else:
+        assert passes[0]['completion_kind']=='full_relearn'
+        obligation=conn.execute(select(t.remedial_obligations)).mappings().one()
+        assert obligation['required_ranges']==[[1,3],[8,10]]
+        conn.commit()
+        assert api_client.post('/api/review/relearn',headers=headers,json=body).json()==response.json()
+        assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==1

@@ -8,6 +8,7 @@ from app.db import schema as t
 from app.repositories.record_requests import RecordRequestRepository
 from app.services.quiz_answers import lock_quiz_user
 from app.services.learning_passes import scope_revision
+from app.services.remedial import after_initial_passes
 from app.services.study import StudyData
 from app.services.task_views import unit_no
 
@@ -55,6 +56,7 @@ class RelearningService:
         self.conn.execute(t.learning_passes.insert().values(id=str(uuid4()),unit_id=unit['id'],pass_number=number,
             completion_kind='full_relearn',source_task_id=task_id,evidence_key='direct:'+hashlib.sha256(key.encode()).hexdigest(),
             evidence_snapshot=snapshot,completed_at=at,completed_date=today))
+        after_initial_passes(self.conn,self.user['id'],[unit['id']],at)
         count=self.conn.scalar(select(func.count()).select_from(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id'],
             t.learning_passes.c.invalidated_at.is_(None)))
         return receipt.save({'subjectId':unit['subject_id'],'materialId':unit['material_id'],'unitId':unit['id'],
