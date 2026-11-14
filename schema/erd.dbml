@@ -484,6 +484,66 @@ Table weak_questions [note: 'API 목록은 questions의 prompt/type/choices를 �
   resolved_at timestamptz
 }
 
+Table quiz_answers [note: '불변 답안 revision. 원문 문자열은 변형하지 않고 choice/text/confidence의 canonical JSON을 hash한다. 삭제 cascade와 CHECK는 quiz-storage-constraints.json. legacy_answer는 과거 선택 문구 원문이며 복원 불가 시 input_recovered=false, answer_hash=null.'] {
+  id uuid [pk]
+  quiz_item_id uuid [not null, ref: > quiz_items.id]
+  revision int [not null]
+  choice int
+  text text
+  confidence varchar [not null]
+  answer_hash varchar
+  input_recovered boolean [not null, default: true]
+  legacy_answer text
+  answered_at timestamptz [not null]
+  answered_date date [not null]
+  indexes { (quiz_item_id, revision) [unique] }
+}
+
+Table quiz_answer_heads [note: '항목별 현재 불변 답안을 가리킨다. answer_id 조건부 교체가 CAS이며 동일 답 재저장은 revision을 늘리지 않는다.'] {
+  quiz_item_id uuid [pk, ref: > quiz_items.id]
+  answer_id uuid [not null, unique, ref: > quiz_answers.id]
+}
+
+Table quiz_answer_receipts [note: '실제 수신한 답 저장 요청의 최초 응답. 동일 답 no-op도 기록하므로 이후 revision 변경 뒤에 원 응답을 재생한다. 이전 revision의 같은 원문이라는 이유만으로 미수신 stale 요청을 재생하지 않는다.'] {
+  quiz_item_id uuid [not null, ref: > quiz_items.id]
+  request_revision int [not null]
+  answer_hash varchar [not null]
+  response_answer_id uuid [not null, ref: > quiz_answers.id]
+  received_at timestamptz [not null]
+  indexes { (quiz_item_id, request_revision, answer_hash) [pk] }
+}
+
+Table quiz_grading_jobs [note: '답안 revision당 하나. lease token은 매 선점마다 바뀌며 현재 answer/head/revision과 소유 token/만료를 모두 확인한 결과만 저장한다. 집계 확정은 별도 Q05.'] {
+  id uuid [pk]
+  answer_id uuid [not null, unique, ref: > quiz_answers.id]
+  answer_revision int [not null]
+  status varchar [not null, default: 'queued']
+  lease_owner varchar
+  lease_token uuid
+  lease_expires_at timestamptz
+  claim_count int [not null, default: 0]
+  result jsonb
+  error_code varchar
+  created_at timestamptz [not null]
+  claimed_at timestamptz
+  finished_at timestamptz
+  indexes { (status, lease_expires_at, created_at) }
+}
+
+Table quiz_submission_states [note: '봉인한 답안 집합과 최초 결과를 저장. legacy_snapshot은 migration 당시 보존 사실이며 실제 과거 응답이 아니다. result_snapshot은 최초 확정 또는 legacy 복구 조회 때만 별도 저장.'] {
+  quiz_session_id uuid [pk, ref: > quiz_sessions.id]
+  sealed_at timestamptz [not null]
+  answer_set_hash varchar
+  input_recovered boolean [not null]
+  sealed_answers jsonb [not null]
+  legacy boolean [not null, default: false]
+  legacy_snapshot jsonb
+  result_snapshot jsonb
+  result_provenance varchar [note: 'submitted / legacy_reconstructed; snapshot 없으면 null']
+  result_schema_version varchar
+  result_captured_at timestamptz
+}
+
 // BK: 날짜·과목·단원·퀴즈별 재노출 방지
 Table user_notices {
   id uuid [pk]
@@ -648,6 +708,11 @@ TableGroup quizzes {
   quiz_scopes
   quiz_items
   quiz_attempts
+  quiz_answers
+  quiz_answer_heads
+  quiz_answer_receipts
+  quiz_grading_jobs
+  quiz_submission_states
   weak_questions
 }
 
