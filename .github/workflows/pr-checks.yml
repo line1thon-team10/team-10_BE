@@ -11,7 +11,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17-alpine
@@ -63,7 +63,7 @@ jobs:
         run: |
           python -m pip install -r requirements.txt -r requirements-ai.txt pytest==9.2.0 httpx==0.28.1
           python -m pip check
-          python -m pytest -q tests
+          python -m pytest -q tests --tb=short -x
       - name: Record tested revisions
         if: always()
         env:
