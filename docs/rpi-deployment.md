@@ -43,7 +43,14 @@ RPI4 Compose 플러그인은 `/home/ubuntu/.docker/cli-plugins/docker-compose`�
 
 ## 실행 및 확인
 
-[workflow](../.github/workflows/deploy-rpi.yml)는 `main`, 초기 배포용 `feat/rpi-deployment` push 또는 수동 실행으로 동작한다. 다른 stacked 브랜치와 PR은 배포하지 않는다. 배포 브랜치 변경은 workflow에서 명시적으로 관리한다.
+[workflow](../.github/workflows/deploy-rpi.yml)는 `main`, 초기 배포용 `feat/rpi-deployment` push 또는 수동 실행으로 동작한다. 다른 stacked 브랜치와 PR의 push는 배포하지 않는다. 수동 실행은 `revision`에 전체 40자리 소문자 commit SHA를 지정하며, workflow 파일이 있는 브랜치와 별개로 해당 SHA의 코드·AI gitlink·Compose를 checkout한다. 이미지 tag와 revision label도 실제 checkout한 SHA를 기록한다. 잘못된 SHA 형식은 checkout 전에 거절한다.
+
+```bash
+gh workflow run deploy-rpi.yml -R line1thon-team10/team-10_BE \
+  --ref <workflow-branch> -f revision=<approved-full-commit-sha>
+```
+
+배포 후 run의 입력과 이미지 revision label이 승인된 SHA인지 확인한다. SHA를 지원하는 수동 workflow가 있는 브랜치를 `--ref`로 지정하고, 그 브랜치의 다른 변경을 앱 이미지에 섞지 않는다.
 
 1. GitHub-hosted에서 테스트 후 `linux/arm64` 이미지를 빌드한다.
 2. 배포 job이 digest로 고정된 이미지를 RPI4에 전달한다. 서버에서는 빌드하지 않는다.

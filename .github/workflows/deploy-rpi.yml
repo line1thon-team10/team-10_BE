@@ -3,6 +3,11 @@ on:
   push:
     branches: [main, feat/rpi-deployment]
   workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Full 40-character BE commit SHA to build and deploy'
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -34,12 +39,20 @@ jobs:
     outputs:
       image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
     steps:
+      - name: Validate manual revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: '[[ "$REVISION" =~ ^[a-f0-9]{40}$ ]]'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
       - name: Read pinned AI commit
         id: ai
-        run: echo "sha=$(git rev-parse HEAD:vendor/team-10_AI)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(git rev-parse HEAD:vendor/team-10_AI)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: line1thon-team10/team-10_AI
@@ -71,10 +84,10 @@ jobs:
           context: .
           push: true
           platforms: linux/arm64
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          tags: ${{ env.IMAGE }}:sha-${{ steps.ai.outputs.revision }}
           labels: |
             org.opencontainers.image.source=https://github.com/line1thon-team10/team-10_BE
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.ai.outputs.revision }}
             dev.line1.ai-revision=${{ steps.ai.outputs.sha }}
       - name: Require private image visibility
         env:
@@ -85,7 +98,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/rpi-deployment'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/rpi-deployment'
     runs-on: [self-hosted, Linux, ARM64, line1-deploy]
     timeout-minutes: 20
     permissions:
@@ -94,6 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
       - name: Apply prebuilt image on RPI4
         env:
