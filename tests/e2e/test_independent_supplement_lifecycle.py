@@ -90,7 +90,7 @@ def test_quiz_obligation_record_correction_and_later_mastery_are_connected(api_c
     assert dict(conn.execute(select(t.remedial_obligations)).mappings().one()) == obligation
 
 
-@pytest.mark.parametrize('damage', ['foreign_quiz', 'unfinalized_quiz', 'early_record', 'foreign_record', 'other_scope', 'malformed_blocks'])
+@pytest.mark.parametrize('damage', ['foreign_quiz', 'unfinalized_quiz', 'ungraded_quiz', 'open_quiz', 'other_subject', 'early_record', 'foreign_record', 'other_scope', 'malformed_blocks'])
 def test_recovery_rechecks_original_obligation_and_owned_evidence(api_client, domain_connection, remedial_case, damage):
     conn, case = domain_connection, remedial_case
     source, _ = low_quiz(api_client, conn, case)
@@ -106,6 +106,14 @@ def test_recovery_rechecks_original_obligation_and_owned_evidence(api_client, do
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(user_id=other))
     elif damage == 'unfinalized_quiz':
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(finalized_at=None))
+    elif damage == 'ungraded_quiz':
+        conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(grading_status='pending'))
+    elif damage == 'open_quiz':
+        conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(status='available'))
+    elif damage == 'other_subject':
+        other = str(uuid4())
+        conn.execute(t.subjects.insert().values(id=other, user_id=case['user'].id, code='other-evidence', name='다른 과목', color='blue', status='active', created_at=AT, updated_at=AT))
+        conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(subject_id=other))
     elif damage == 'early_record':
         conn.execute(update(t.study_records).where(t.study_records.c.id.in_(snap['recordIds'])).values(study_date=DAY))
     elif damage == 'foreign_record':
@@ -146,6 +154,21 @@ def test_overlapping_wrong_concepts_are_unioned_and_unallocated_obligation_survi
     assert response.status_code == 200, response.text
     assert dict(conn.execute(select(t.remedial_obligations)).mappings().one()) == original
     assert list(conn.scalars(select(t.remedial_obligation_blocks.c.block_id))) == []
+
+
+@pytest.mark.parametrize('subjectless', [False, True])
+def test_finalized_carried_quiz_keeps_verified_remedial_recovery(api_client, domain_connection, remedial_case, subjectless):
+    conn, case = domain_connection, remedial_case
+    source, _ = low_quiz(api_client, conn, case)
+    task = remedial_task(conn)
+    go(conn, case, case['nextday'])
+    write(api_client, case, task['id'])
+    changes = {'status': 'carried_over'}
+    if subjectless:
+        changes['subject_id'] = None
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(**changes))
+    conn.commit()
+    assert eligible(conn, case)
 
 
 def test_finalized_carried_over_source_remains_valid_when_remedial_is_completed(api_client, domain_connection, remedial_case):
