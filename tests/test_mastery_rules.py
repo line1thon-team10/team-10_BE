@@ -2,15 +2,20 @@ from dataclasses import FrozenInstanceError, replace
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from fractions import Fraction
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import func, select, update
 
 from app.domain.mastery import (
     ConfirmedAttempt, DayEligibility, RecoveryEntry, UnitScope, calculate_mastery,
     grade, half_up, ordered_attempts, weighted_score,
 )
 from app.ai.metrics_adapter import calculate_learning_metrics, current_scope
+from app.db import schema as t
+from app.domain.user import User
+from app.repositories.users import UserRepository
+from app.services.quiz import QuizService
 
 
 def uid(number):
@@ -310,3 +315,161 @@ def test_sqlite_naive_stored_timestamps_are_normalized_without_changing_stored_a
         row["answered_at"] = row["answered_at"].replace(tzinfo=None)
         row["finalized_at"] = row["finalized_at"].replace(tzinfo=None)
     assert calculate_learning_metrics(data) == expected
+
+
+@pytest.fixture
+def mastery_case(domain_connection):
+    conn = domain_connection
+    user = replace(User.anonymous(now=AT), demo_date=DAY)
+    UserRepository(conn).add(user)
+    subject_id = str(uuid4())
+    conn.execute(t.subjects.insert().values(id=subject_id, user_id=user.id, code="SUBJECT", name="과목", color="#123456",
+                                           status="active", created_at=AT, updated_at=AT))
+    units, questions = [], []
+    for index in range(2):
+        material_id, unit_id, concept_id = str(uuid4()), str(uuid4()), str(uuid4())
+        conn.execute(t.materials.insert().values(id=material_id, subject_id=subject_id, original_name=f"{index}.pdf",
+            source_format="pdf", sha256=str(index) * 64, analysis_version="v1", created_at=AT, updated_at=AT))
+        conn.execute(t.units.insert().values(id=unit_id, material_id=material_id, code="UNIT1", title=f"자료{index} 단원1",
+            sort_order=1, start_page=1, end_page=10, difficulty="low", created_at=AT, updated_at=AT))
+        conn.execute(t.concepts.insert().values(id=concept_id, unit_id=unit_id, code="C1", title="개념", sort_order=1,
+            start_page=1, end_page=5, created_at=AT, updated_at=AT))
+        unit_questions = []
+        for number in range(20):
+            question_id = str(uuid4())
+            conn.execute(t.questions.insert().values(id=question_id, unit_id=unit_id,
+                concept_id=None if index == 0 and number == 0 else concept_id, code=f"Q{number + 1}", type="choice",
+                difficulty="low", prompt=f"자료{index} 문항{number}", choices=[{"text": "맞음"}, {"text": "틀림"}],
+                correct_answer="맞음", explanation="설명", created_at=AT))
+            unit_questions.append(question_id)
+        units.append({"id": unit_id, "material_id": material_id})
+        questions.append(unit_questions)
+    conn.commit()
+    return {"user": user, "subject_id": subject_id, "units": units, "questions": questions,
+            "headers": {"X-Anonymous-Id": user.id}}
+
+
+def make_quiz(conn, case, questions, *, day=DAY, owner_id=None):
+    quiz_id = str(uuid4())
+    conn.execute(t.quiz_sessions.insert().values(id=quiz_id, user_id=owner_id or case["user"].id,
+        subject_id=case["subject_id"], type="practice", quiz_date=day, status="ready", selected_difficulty="low", created_at=AT))
+    items = [{"id": str(uuid4()), "quiz_session_id": quiz_id, "question_id": question_id,
+              "sort_order": n, "inclusion_reason": "practice"} for n, question_id in enumerate(questions, 1)]
+    conn.execute(t.quiz_items.insert(), items)
+    conn.commit()
+    return quiz_id, items
+
+
+def submit_quiz(client, conn, case, questions, correct_count, *, day=DAY):
+    quiz_id, items = make_quiz(conn, case, questions, day=day)
+    response = client.post(f"/api/quiz/{quiz_id}/submit", headers=case["headers"], json={"quizId": quiz_id,
+        "answers": [{"questionId": item["id"], "choice": 0 if n < correct_count else 1, "confidence": "sure"}
+                    for n, item in enumerate(items)]})
+    assert response.status_code == 200, response.text
+    conn.commit()
+    return quiz_id, response.json()["data"]
+
+
+def test_http_same_codes_across_pdfs_and_mixed_null_concepts_do_not_merge_or_raise_500(api_client, domain_connection, mastery_case, monkeypatch):
+    from app.services import quiz
+    def forbidden(*args):
+        raise AssertionError("Mastery and objective grading must not call private AI")
+    monkeypatch.setattr(quiz.ai, "module", forbidden)
+    case, conn = mastery_case, domain_connection
+    first_id, first = submit_quiz(api_client, conn, case, case["questions"][0], 0)
+    second_id, second = submit_quiz(api_client, conn, case, case["questions"][1], 20)
+    assert [(row["unitId"], row["after"]) for row in first["unitChanges"]] == [(case["units"][0]["id"], 0)]
+    assert [(row["unitId"], row["after"]) for row in second["unitChanges"]] == [(case["units"][1]["id"], 99)]
+    stored = {row["id"]: row["mastery_score"] for row in conn.execute(select(t.units)).mappings()}
+    assert stored == {case["units"][0]["id"]: 0, case["units"][1]["id"]: 99}
+    raw = conn.scalar(select(t.mastery_history.c.raw_score).where(t.mastery_history.c.quiz_session_id == second_id))
+    assert raw == 100
+    assert api_client.get(f"/api/quiz/{first_id}/result", headers=case["headers"]).json()["data"] == first
+
+
+def test_http_first_day_observed_entry_is_sticky_and_multiple_sets_do_not_stack_daily_cap(api_client, domain_connection, mastery_case):
+    case, conn = mastery_case, domain_connection
+    questions = case["questions"][0]
+    first_id, first = submit_quiz(api_client, conn, case, questions[:10], 7)
+    second_id, second = submit_quiz(api_client, conn, case, questions, 20)
+    third_id, third = submit_quiz(api_client, conn, case, questions, 20)
+    assert [result["unitChanges"][0]["after"] for result in (first, second, third)] == [70, 75, 75]
+    rows = {row["quiz_session_id"]: row for row in conn.execute(select(t.mastery_history)).mappings()}
+    assert rows[second_id]["raw_score"] == 97 and rows[third_id]["raw_score"] > 97
+    assert rows[third_id]["daily_increase_limit"] == 5 and rows[third_id]["recorded_date"] == DAY
+    assert rows[second_id]["previous_score"] == 70 and rows[third_id]["previous_score"] == 75
+    svc = QuizService(conn, case["user"].to_mapping(), DAY)
+    snapshot = dict(conn.execute(select(t.units).where(t.units.c.id == case["units"][0]["id"])).mappings().one())
+    svc._recalc_mastery(third_id, {case["units"][0]["id"]})
+    svc._recalc_mastery(third_id, {case["units"][0]["id"]})
+    assert dict(conn.execute(select(t.units).where(t.units.c.id == snapshot["id"])).mappings().one()) == snapshot
+    assert conn.scalar(select(func.count()).select_from(t.mastery_history)) == 3
+
+
+def test_http_unverified_passes_do_not_unlock_stable_recovery_or_fifteen_bonus(api_client, domain_connection, mastery_case):
+    case, conn = mastery_case, domain_connection
+    _, first = submit_quiz(api_client, conn, case, case["questions"][0][:10], 7)
+    conn.execute(t.learning_passes.insert().values(id=str(uuid4()), unit_id=case["units"][0]["id"], pass_number=2,
+        completion_kind="remedial", evidence_key="unverified", evidence_snapshot={}, completed_at=AT, completed_date=DAY))
+    conn.commit()
+    scores = [first["unitChanges"][0]["after"]]
+    for offset in (1, 2, 3):
+        day = DAY + timedelta(days=offset)
+        conn.execute(update(t.users).where(t.users.c.id == case["user"].id).values(demo_date=day))
+        conn.commit()
+        _, result = submit_quiz(api_client, conn, case, case["questions"][0], 20, day=day)
+        scores.append(result["unitChanges"][0]["after"])
+    assert scores == [70, 75, 79, 79]
+
+
+@pytest.mark.parametrize("missing", ["attempt_finalized", "attempt_graded", "attempt_status", "session_finalized",
+                                    "session_status", "session_grading", "foreign_owner"])
+def test_http_does_not_apply_pending_or_foreign_correct_answers(api_client, domain_connection, mastery_case, missing):
+    case, conn = mastery_case, domain_connection
+    owner_id = None
+    if missing == "foreign_owner":
+        other = User.anonymous(now=AT)
+        UserRepository(conn).add(other)
+        conn.commit()
+        owner_id = other.id
+    stale_quiz, items = make_quiz(conn, case, case["questions"][0], owner_id=owner_id)
+    session_values = {"status": "submitted", "finalized_at": AT, "grading_status": "completed", "submitted_at": AT}
+    session_values.update({"session_finalized": {"finalized_at": None}, "session_status": {"status": "in_progress"},
+                           "session_grading": {"grading_status": "pending"}}.get(missing, {}))
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == stale_quiz).values(**session_values))
+    for item in items:
+        values = {"id": str(uuid4()), "quiz_item_id": item["id"], "answer": "맞음", "confidence": "sure", "is_correct": True,
+                  "grading_status": "graded", "answered_at": AT, "answered_date": DAY, "finalized_at": AT, "graded_at": AT}
+        values.update({"attempt_finalized": {"finalized_at": None}, "attempt_graded": {"graded_at": None},
+                       "attempt_status": {"grading_status": "pending"}}.get(missing, {}))
+        conn.execute(t.quiz_attempts.insert().values(**values))
+    conn.commit()
+    _, result = submit_quiz(api_client, conn, case, case["questions"][0], 0)
+    assert result["unitChanges"][0]["after"] == 0
+    assert conn.scalar(select(func.count()).select_from(t.mastery_history)) == 1
+
+
+def test_seed_flags_without_actual_history_never_create_a_recovery_anchor(domain_connection, mastery_case):
+    case, conn = mastery_case, domain_connection
+    conn.execute(update(t.units).where(t.units.c.id == case["units"][0]["id"])
+                 .values(mastery_score=70, recovery_mode=True, recovery_started_at=AT))
+    svc = QuizService(conn, case["user"].to_mapping(), DAY)
+    data = svc._metrics_input()
+    assert data["recovery_entries"] == [] and data["attempts"] == []
+    assert calculate_learning_metrics(data).units == ()
+
+
+@pytest.mark.parametrize("foreign", [False, True], ids=["ungraded-history", "foreign-history"])
+def test_ungraded_or_foreign_history_cannot_create_a_recovery_anchor(api_client, domain_connection, mastery_case, foreign):
+    case, conn = mastery_case, domain_connection
+    other = User.anonymous(now=AT)
+    UserRepository(conn).add(other)
+    conn.commit()
+    quiz_id, _ = make_quiz(conn, case, case["questions"][0], owner_id=other.id if foreign else None)
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == quiz_id).values(
+        status="submitted", finalized_at=AT, grading_status="completed" if foreign else "pending"))
+    conn.execute(t.mastery_history.insert().values(id=str(uuid4()), unit_id=case["units"][0]["id"], quiz_session_id=quiz_id,
+        raw_score=70, score=70, level="shaky", recovery_mode=True, recorded_date=DAY, created_at=AT))
+    conn.commit()
+    _, result = submit_quiz(api_client, conn, case, case["questions"][0], 20)
+    assert result["unitChanges"][0]["after"] == 99 and result["unitChanges"][0]["grade"] == "stable"
