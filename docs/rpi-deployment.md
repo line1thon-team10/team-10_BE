@@ -4,6 +4,12 @@
 
 ## 구성
 
+### 기능 PR 검증과 배포 분리
+
+`pr-checks.yml`은 모든 대상 브랜치의 PR 후보 merge를 GitHub-hosted ARM64에서 SQLite/PostgreSQL로 검사한다. BE 후보 SHA의 gitlink에 고정된 AI만 checkout하고 실제 테스트 SHA를 run summary에 남긴다. 이미지 push와 RPI runner 접근은 없다. 비공개 AI 접근이 없는 fork/Dependabot PR은 성공으로 건너뛰지 않고 테스트 미실행 사유를 실패 상태로 남긴다. 필요하면 신뢰할 수 있는 내부 검토 브랜치에서 동일 변경을 검증한다.
+
+이는 GitHub의 [pull_request merge 후보와 fork secret 제한](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)에 따른다. 배포는 별도 `deploy-rpi.yml`의 main/배포 브랜치 push 또는 고정40자리 SHA 수동 실행에서만 수행한다. PR 테스트가 통과했다고 배포되었다고 표시하지 않는다.
+
 ### 신규 AI/업로드 작업의 초기 운영 설정 (POL-02)
 
 | 설정 | 초기값 | 의미 |
