@@ -1460,7 +1460,7 @@
       "id": "O-01",
       "title": "온보딩 목표·확인 상태 영속화",
       "lane": "onboarding",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02"
@@ -1488,9 +1488,11 @@
       "optional": false,
       "branch": "feat/onboarding-state",
       "base_sha": "e0c71053c1769ba70bb8e8926a0421b7b294779d",
-      "head_sha": null,
+      "head_sha": "cbba13c9992916ab34965da8f699d720021447f7",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Worker SQLite+PostgreSQL impact tests: 212 passed; independent review pending"
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
@@ -1797,8 +1799,8 @@
       "id": "P-01",
       "title": "가용 시간 기반 계획 배치 엔진",
       "lane": "planning",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "POL-01",
         "R-01"
@@ -1820,8 +1822,8 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/plan-allocator",
+      "base_sha": "1e7144c",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
@@ -3066,14 +3068,16 @@
       "id": "OPS-01",
       "title": "기능 PR 검증과 고정 SHA 배포 경로 정리",
       "lane": "platform",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root",
       "depends_on": [
         "SYS-01"
       ],
       "write_scope": [
         "BE/.github/workflows/",
-        "BE/docs/rpi-deployment.md"
+        "BE/docs/rpi-deployment.md",
+        "BE/deploy/apply.sh",
+        "BE/tests/test_deployment_revision.py"
       ],
       "shared_resources": [
         "ci-deploy"
@@ -3087,8 +3091,8 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "infra/pr-contract-checks",
+      "base_sha": "1e7144c",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
