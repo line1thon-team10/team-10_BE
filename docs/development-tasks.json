@@ -39,8 +39,9 @@
       "report_commit": "55e108e68c735389a2a4785cae3faefdf68e81e6"
     },
     "completion_unit": "verified_user_flow",
-    "current_flow": "FLOW-DAY9",
+    "current_flow": "FLOW-COMPAT-3475",
     "current_work_order": [
+      "Restore current judging FE49c/BE3475 request compatibility on RPI4c without deploying new contracts",
       "Q-03/Q-04 review closure",
       "Q-05 final submission with FE-02A in parallel",
       "Q-06 saved grading and FE-03A/FE-03B",
@@ -51,6 +52,19 @@
     "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only. Submission/judging freeze overrides deployment order: retain BE main3475cf2 and FE main49c95c9; future API implementation stays isolated, no main promotion or new-contract production deployment until user lifts hold.",
     "status_source": "docs/development-tasks.json",
     "flows": [
+      {
+        "id": "FLOW-COMPAT-3475",
+        "title": "현재 FE 수동 기록 → 퀴즈 제출 → 결과 조회 호환 복구",
+        "state": "in_progress",
+        "required_tasks": [
+          "COMPAT-01",
+          "COMPAT-02"
+        ],
+        "base_runtime_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+        "frozen_contract_sha": "3475cf204ac726f9c96d44bbc687ea8253f8c48e",
+        "fe_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
+        "deployed_flow_complete": false
+      },
       {
         "id": "FLOW-DAY9",
         "title": "day9 집중 종료 → 기록 → 퀴즈 저장/제출 → 결과 재조회",
@@ -80,8 +94,9 @@
       "current_runtime_matches_frozen_contract": false,
       "allowed": "Isolated branch implementation, focused tests, independent review, PR CI, integration-only development.",
       "held": "BE API-changing main merges, FE dev to main promotion, new-contract production dispatch.",
-      "runtime_target_question": "Awaiting whether judging FE uses current RPI or a separate3475cf2 server. No rollback/reset/deployment without confirmed target.",
-      "fe_compatibility": "FE03A already merged to dev1edf606 requires quizId and answer PUT absent in3475cf2. FE main does not include it; FE03B stays local."
+      "runtime_target_question": "Confirmed by user: judging FE calls https://2026-line1.leehyowon14.dev. Restore3475-compatible requests on current4c20454 without DB/schema reset or new API promotion.",
+      "fe_compatibility": "FE03A already merged to dev1edf606 requires quizId and answer PUT absent in3475cf2. FE main does not include it; FE03B stays local.",
+      "compatibility_exception": "Prepare a minimal compatibility fix on the current runtime lineage only; keep main3475cf2 and new-contract integration isolated."
     }
   },
   "tasks": [
@@ -1803,7 +1818,7 @@
       "id": "M-01",
       "title": "PDF 업로드·저장·목록·다운로드",
       "lane": "materials",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02",
@@ -1834,16 +1849,18 @@
       "optional": false,
       "branch": "feat/material-storage",
       "base_sha": "b0dd061",
-      "head_sha": null,
+      "head_sha": "522ec901ccebc3158ccfc31b82913c266a5b13a2",
       "pr_url": null,
       "validation_evidence": [
-        "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease."
+        "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease.",
+        "Final522ec901 author59 SQLite/PG impact cases passed, immutable queued input and atomic file cleanup. New API only, no push/main/deploy; independent review deferred for urgent current FE compatibility."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-material-storage"
+      "worktree": "BE-task-material-storage",
+      "release_hold": true
     },
     {
       "id": "M-02",
@@ -1931,8 +1948,8 @@
       "id": "M-04",
       "title": "단원·개념·시험 범위 조회와 저장",
       "lane": "materials",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "M-01",
         "R-01"
@@ -1958,15 +1975,19 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
-      "head_sha": null,
+      "branch": "feat/material-units",
+      "base_sha": "aa4590b77956276d4f8f0bde53d1267083405608",
+      "head_sha": "7847a08723613d189c8f0ccbe726fbf810d6535d",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "GET-only7847a08 preserved with34 SQLite/PG cases. PUT/approved-preview NOT implemented and no invented error or preview. Temporarily reassigned author to compatibility hotfix; do not count task complete."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-material-units",
+      "release_hold": true
     },
     {
       "id": "M-05",
@@ -3764,12 +3785,14 @@
       "pr_url": null,
       "validation_evidence": [
         "Worktree created at6f61b7a; author first fixes FE03A stale GET and normally merges it, then final submit/result flow. API/Node impact tests and npm check only; no browser verification.",
-        "Author final8015010:26 Node cases and npm check passed, clean local branch. Incompatible with3475cf2 by design: requires answer PUT,quizId/savedAnswers and selected result query. No push/merge/deploy after freeze."
+        "Author final8015010:26 Node cases and npm check passed, clean local branch. Incompatible with3475cf2 by design: requires answer PUT,quizId/savedAnswers and selected result query. No push/merge/deploy after freeze.",
+        "Independent P2 in isolated mock only: unnormalized child result appended to parent more loses IDs and retains object-valued before/after. Original /private/tmp/team10-fe03b-edge-review.f_vzsfd8/tests/test-independent-mock-more.mjs preserved; fix deferred while current RPI contract is restored. No promotion."
       ],
       "integration_only_paths": [],
       "validation_mode": "risk-focused-impact-and-required-ci",
       "worktree": "FE-task-quiz-submit",
-      "release_hold": true
+      "release_hold": true,
+      "review_status": "changes_requested"
     },
     {
       "id": "QA-DAY9",
@@ -3809,6 +3832,70 @@
       "integration_only_paths": [],
       "validation_mode": "risk-focused-impact-and-required-ci",
       "release_hold": true
+    },
+    {
+      "id": "COMPAT-01",
+      "title": "심사용 퀴즈 제출의3475 요청 계약 복구",
+      "lane": "compatibility",
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
+      "depends_on": [],
+      "write_scope": [
+        "BE/app/schemas/quiz.py",
+        "BE/app/routers/quiz.py",
+        "BE/app/services/quiz.py",
+        "BE/tests/test_submission_quiz_compat.py"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "심사용 퀴즈 제출의3475 요청 계약 복구; current FE49c wire payload on runtime4c lineage only.",
+      "acceptance": [
+        "실제 FE main49c 요청 형태 성공·타인/다른세트/범위 검증 유지",
+        "새 endpoint/DB schema/migration/시드 reset 없음·현재데이터 보존",
+        "집중 API 테스트·독립 원본 재현·필수 CI, 화면검증 없음"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "fix/submission-quiz-compat",
+      "base_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+      "head_sha": null,
+      "pr_url": null,
+      "validation_evidence": [],
+      "integration_only_paths": [],
+      "validation_mode": "frozen-contract-api-compatibility",
+      "worktree": "BE-fix-submission-quiz-compat"
+    },
+    {
+      "id": "COMPAT-02",
+      "title": "심사용 수동 기록의 nullable session 계약 복구",
+      "lane": "compatibility",
+      "status": "running",
+      "assignee": "/root/study_implementation",
+      "depends_on": [],
+      "write_scope": [
+        "BE/app/schemas/records.py",
+        "BE/tests/test_submission_study_compat.py"
+      ],
+      "shared_resources": [],
+      "contract_files": [],
+      "deliverable": "심사용 수동 기록의 nullable session 계약 복구; current FE49c wire payload on runtime4c lineage only.",
+      "acceptance": [
+        "실제 FE main49c 요청 형태 성공·타인/다른세트/범위 검증 유지",
+        "새 endpoint/DB schema/migration/시드 reset 없음·현재데이터 보존",
+        "집중 API 테스트·독립 원본 재현·필수 CI, 화면검증 없음"
+      ],
+      "operations": [],
+      "external_gates": [],
+      "optional": false,
+      "branch": "fix/submission-study-compat",
+      "base_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+      "head_sha": null,
+      "pr_url": null,
+      "validation_evidence": [],
+      "integration_only_paths": [],
+      "validation_mode": "frozen-contract-api-compatibility",
+      "worktree": "BE-fix-submission-study-compat"
     }
   ]
 }
