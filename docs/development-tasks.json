@@ -284,8 +284,8 @@
       "id": "AI-01",
       "title": "AI 호출·검증·저장 결과 공통 경로",
       "lane": "platform",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02",
         "POL-02"
@@ -293,7 +293,9 @@
       "write_scope": [
         "BE/app/ai/gateway.py",
         "BE/app/repositories/ai_results.py",
-        "BE/tests/test_ai_gateway.py"
+        "BE/tests/test_ai_gateway.py",
+        "BE/app/ai/settings.py",
+        "BE/docs/ai-gateway-handoff.md"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -308,8 +310,8 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/ai-result-gateway",
+      "base_sha": "05106e0755f11f4efe3731e6e9986d4c58b80c62",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
@@ -357,7 +359,7 @@
       "id": "R-02",
       "title": "범위별 기록 저장·정정 API",
       "lane": "study",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "R-01"
@@ -389,11 +391,12 @@
       "optional": false,
       "branch": "feat/study-record-ranges",
       "base_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
-      "head_sha": "0df4432208d96c29519afff7262b631f4bf33ce2",
+      "head_sha": "3426dbc32310593650edc58005f91b2c632a07c4",
       "pr_url": null,
       "validation_evidence": [
         "Worker SQLite+PG records223 + demo22 passed; independent review pending",
-        "Astra245regression+768snapshot comparisons passed; P2 carried/excluded placement revival found, worker fixing; none PATCH policy clarification required"
+        "Astra245regression+768snapshot comparisons passed; P2 carried/excluded placement revival found, worker fixing; none PATCH policy clarification required",
+        "Worker fix3426dbc:269SQLite+PG tests passed; root independently reruns original6 failure cases on immutable archive"
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1807,7 +1810,7 @@
       "id": "P-01",
       "title": "가용 시간 기반 계획 배치 엔진",
       "lane": "planning",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "POL-01",
@@ -1832,9 +1835,11 @@
       "optional": false,
       "branch": "feat/plan-allocator",
       "base_sha": "1e7144c",
-      "head_sha": null,
+      "head_sha": "19718b844529288f92e8c7500563319749b4f8cc",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Worker222passed (68allocator+154ranges); 100 independent tiny oracle comparisons;90pages bench median130.49ms; Astra review pending"
+      ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
     },
