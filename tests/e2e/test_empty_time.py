@@ -123,3 +123,13 @@ def test_demo_date_has_no_invented_wall_clock_cutoff(progress_world,monkeypatch)
     monkeypatch.setattr(schedule_placements,'now_utc',lambda:at(w.day,'23:30'))
     slots=schedule_placements.free_calendar_slots(w.conn,current,[{'date':w.day.isoformat(),'start':'08:00','end':'10:00'}])
     assert slots and schedule_placements.clock_text(slots[0].start)=='08:00'
+
+
+def test_cross_midnight_task_blocks_actual_next_day_interval(progress_world):
+    from tests.test_onboarding_events import at
+    w=progress_world;unit=w.unit(1,10)
+    task=w.task((unit,1,10),day=w.day-timedelta(days=1))
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task).values(
+        starts_at=at(w.day-timedelta(days=1),'23:00'),ends_at=at(w.day,'09:45')))
+    candidate=offer(w)
+    assert [(slot['start'],slot['end']) for slot in candidate['slots']]==[('09:45','10:00')]

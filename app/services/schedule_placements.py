@@ -55,8 +55,6 @@ def free_calendar_slots(conn, user, requested_slots, *, ignore_task_ids=()):
         row = task.row
         if task.id in ignored or row['subject_id'] not in data.subject_by_id or row['status'] in ('carried_over','excluded'):
             continue
-        if row['scheduled_date'] not in days:
-            continue
         if row['starts_at'] is not None and row['ends_at'] is not None:
             left,right = _local(row['starts_at'],zone),_local(row['ends_at'],zone)
             for day in days:
@@ -65,6 +63,8 @@ def free_calendar_slots(conn, user, requested_slots, *, ignore_task_ids=()):
                     b = _minute(right) if right.date()==day else Fraction(1440)
                     if a < b: busy.append(BusyInterval(day,a,b))
         else:
+            if row['scheduled_date'] not in days:
+                continue
             # Legacy date-only placements still occupy their promised duration.
             duration=Fraction(row['estimated_minutes'])
             slot=next((slot for slot in free_slots(row['scheduled_date'],busy) if slot.minutes>=duration),None)
