@@ -194,3 +194,24 @@ def test_fractional_fixed_event_rejects_overlapping_schedule_edit(api_client,cal
     w.conn.commit()
     response=preview(api_client,w.user,f"{event['id']}@{w.day}",{'date':w.day.isoformat(),'start':'13:00','end':'14:00'})
     assert response.status_code==409 and response.json()['error']['code']=='SCHEDULE_CONFLICT'
+
+
+def test_time_only_move_never_reopens_elapsed_original_fixed_interval(api_client,domain_connection,addition_case,monkeypatch):
+    from app.services import schedule_changes,plan_inputs
+    from app.services.proposals import ProposalService
+    conn,case=domain_connection,addition_case
+    current=at(TODAY,'15:00')
+    monkeypatch.setattr(schedule_changes,'ProposalService',lambda connection:ProposalService(connection,clock=lambda:current))
+    monkeypatch.setattr(plan_inputs,'now_utc',lambda:current)
+    conn.execute(update(t.users).where(t.users.c.id==case['user']).values(demo_date=None))
+    task,block=str(uuid4()),str(uuid4())
+    conn.execute(t.study_blocks.insert().values(id=block,subject_id=case['subject'],unit_id=None,task_type='review',created_at=NOW))
+    conn.execute(t.study_tasks.insert().values(id=task,block_id=block,subject_id=case['subject'],plan_id=case['old_task']['plan_id'],
+        task_type='review',title='기존 시간 없는 총복습',scheduled_date=TODAY,starts_at=at(TODAY,'09:00'),ends_at=at(TODAY,'10:30'),
+        estimated_minutes=30,status='planned',created_at=NOW))
+    owner=dict(conn.execute(select(t.users).where(t.users.c.id==case['user'])).mappings().one())
+    event=add_event(conn,owner,day=TODAY,start='16:00',end='17:00');conn.commit()
+    candidate=preview(api_client,case['user'],f"{event['id']}@{TODAY}",{'date':TODAY.isoformat(),'start':'10:00','end':'11:00'})
+    assert candidate.status_code==200,candidate.text
+    move=next(move for move in candidate.json()['data']['moves'] if move['taskId']==task)
+    assert all(piece['date']>TODAY.isoformat() or piece['start']>='15:00' for piece in move['pieces'])

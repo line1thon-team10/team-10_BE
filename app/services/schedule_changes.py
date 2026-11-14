@@ -19,7 +19,7 @@ from app.services.calendar import occurrences
 from app.services.empty_time import EmptyTimeService
 from app.services.onboarding_events import _local, _local_time_to_utc, _minute
 from app.services.plan_draft import _basis, _json_value
-from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations
+from app.services.plan_inputs import existing_allocation_input, PlanInputError, PendingObligations, _without_elapsed_slots
 from app.services.allocator import allocate
 from app.services.study import StudyData
 from app.services.schedule_placements import apply_saved_placements, clock_minute, clock_text, move_task
@@ -339,6 +339,8 @@ def _allocation(conn,user_id,today,zone,overrides,exception_overrides,added):
     extra={'placements':[],'supersedeIds':[]}
     fixed=[task for task in request.fixed if task.id not in movable]
     fixed_by_id={task.id:task for task in request.fixed}
+    if movable:
+        request=_without_elapsed_slots(conn,user_id,replace(request,fixed=tuple(fixed)),zone,None)
     for identifier,task in sorted(movable.items()):
         duration=Fraction(task.row['estimated_minutes'])
         if not 15<=duration<=60:
