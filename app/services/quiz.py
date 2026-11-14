@@ -15,6 +15,7 @@ from app.ai import engine as ai
 from app.ai.metrics_adapter import calculate_learning_metrics
 from app.core.responses import ApiError
 from app.db import schema as t
+from app.repositories.quiz_answers import QuizAnswerRepository
 from app.services.study import StudyData, unit_no
 from app.seed.essay_examples import saved_evaluation
 
@@ -199,11 +200,19 @@ class QuizService:
                 "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
 
     def set_view(self, session: dict, saved: bool = False) -> dict:
+        # list_current validates the set's material ownership even when no
+        # answers exist. Never infer legacy choice indices from answer text.
+        saved_answers = [{"questionId": answer["quiz_item_id"], "choice": answer["choice"],
+                          "text": answer["text"], "confidence": answer["confidence"],
+                          "revision": answer["revision"]}
+                         for answer in QuizAnswerRepository(self.conn).list_current(self.user["id"], session["id"])
+                         if answer["input_recovered"]]
         items = self.items(session["id"])
         subject = self.data.subject_by_id.get(session["subject_id"], {})
         comp, _ = self.composition(items)
         return {
             "quizId": session["id"],
+            "savedAnswers": saved_answers,
             "saved": saved or session["is_fallback"], "subjectId": session["subject_id"] if session["type"] == "daily"
             else session["id"], "custom": session["type"] != "daily",
             "resultFor": session["subject_id"] if session["type"] != "daily" else session["subject_id"],
