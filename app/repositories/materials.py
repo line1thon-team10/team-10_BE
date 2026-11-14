@@ -73,6 +73,13 @@ class MaterialRepository:
             page_count=pages, analysis_version="material-analysis-v1", analysis_status="pending", analysis_stage="queued",
             created_at=now, updated_at=now))
 
+    def restore_original(self, user_id, material_id, *, key, pages, now):
+        """Restore file metadata without replacing analysis or edited structure."""
+        self.material(user_id, material_id)
+        self.connection.execute(update(t.materials).where(t.materials.c.id == material_id).values(
+            original_storage_key=key, storage_key=key, original_deleted_at=None,
+            page_count=pages, updated_at=now))
+
     def enqueue(self, user_id, material_id, *, key, pages, now):
         material = self.material(user_id, material_id)
         job_id = str(uuid4())

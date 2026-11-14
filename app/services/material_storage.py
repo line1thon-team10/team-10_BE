@@ -220,6 +220,7 @@ class MaterialStorageService:
                     repo.add(material_id=material_id, subject_id=subject_id, filename=filename,
                              sha256=digest, key=key, pages=pages, now=now)
                 if reusable is not None:
+                    repo.restore_original(user_id, material_id, key=key, pages=pages, now=now)
                     result = {"materialId": material_id, "jobId": reusable["id"]}
                 else:
                     result = {"materialId": material_id, "jobId": repo.enqueue(user_id, material_id,
