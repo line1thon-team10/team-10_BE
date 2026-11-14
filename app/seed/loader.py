@@ -48,6 +48,7 @@ def wipe_user(conn: Connection, user_id: str) -> None:
         delete(t.tutor_sources).where(t.tutor_sources.c.message_id.in_(msg_ids)),
         update(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id).values(parent_message_id=None),
         delete(t.tutor_messages).where(t.tutor_messages.c.user_id == user_id),
+        delete(t.record_requests).where(t.record_requests.c.user_id == user_id),
         delete(t.user_notices).where(t.user_notices.c.user_id == user_id),
         delete(t.weak_questions).where(t.weak_questions.c.question_id.in_(q_ids)),
         delete(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id.in_(item_ids)),
