@@ -17,7 +17,7 @@ from app.db import schema as t
 from app.domain.onboarding import CONFIRMATION_COLUMNS, subject_view
 from app.domain.ranges import PageSpan, subtract
 from app.domain.scheduling import (AllocationInput, Subject, UnitScope, FixedTask, FixedRange,
-    free_slots, WorkRequirement, ScopePart)
+    free_slots, WorkRequirement, ScopePart, StudyWindow)
 from app.repositories.events import EventRepository
 from app.services.onboarding_events import event_intervals
 
@@ -28,6 +28,7 @@ class PlanInputError(ValueError):
 
 class PendingObligations(PlanInputError):
     """Overdue remedial/review obligations need the carryover flow first."""
+
 
 
 def _page_bounds(start, end, maximum):
@@ -256,7 +257,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
                               subject_overrides=None, earliest_day=None, movable_task_ids=(),
-                              calendar_event_overrides=None, calendar_exception_overrides=None):
+                              calendar_event_overrides=None, calendar_exception_overrides=None, study_windows=()):
     """Keep learning facts and active started placements while reallocating rest.
 
     Only selected draft subjects are added. Every active study range is reduced
@@ -265,7 +266,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     """
     if (not subject_ids and material_structure_overrides is None and subject_overrides is None
             and affected_subject_ids is None and calendar_event_overrides is None
-            and calendar_exception_overrides is None and not movable_task_ids):
+            and calendar_exception_overrides is None and not movable_task_ids and not study_windows):
         raise PlanInputError('재배분할 과목이나 변경할 입력을 선택해 주세요')
     earliest_day = today if earliest_day is None else earliest_day
     if type(earliest_day) is not date or earliest_day < today:
@@ -370,7 +371,14 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                 'completed' if row['status'] == 'completed' else 'started', day, first, last, parts))
         except ValueError as exc:
             raise PlanInputError('기존 배치의 날짜와 분량을 확인해 주세요') from exc
+    if not isinstance(study_windows, (tuple, list)) or any(not isinstance(window, StudyWindow) for window in study_windows):
+        raise PlanInputError('자료 범위와 허용 날짜를 가진 추가 학습 조건이 필요해요')
+    if len({window.id for window in study_windows}) != len(study_windows):
+        raise PlanInputError('추가 학습 조건 ID가 중복돼요')
+    scoped_pages = tuple(span for unit in request.units for span in unit.ranges)
+    if any(subtract(window.ranges, scoped_pages) or any(day < today for day in window.dates) for window in study_windows):
+        raise PlanInputError('추가 학습 조건은 본인의 선택 범위와 오늘 이후 날짜여야 해요')
     units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.material_id]) if unit.subject_id in affected else ())
                   for unit in catalog.values())
     return replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed),
-                   requirements=tuple(requirements)), supersede, request
+                   requirements=tuple(requirements), study_windows=tuple(study_windows)), supersede, request
