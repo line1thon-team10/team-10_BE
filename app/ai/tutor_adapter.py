@@ -50,6 +50,15 @@ def selected_sources(payload):
                    and source['subjectId'] == parent['subjectId']]
         if {(source['materialId'], source['page']) for source in sources} != allowed:
             raise InvalidOutput('Original evidence is unavailable')
+        current = {row['id']: row for row in payload['materials']}
+        for identifier, version in (parent.get('versions') or {}).items():
+            if identifier not in current or [current[identifier]['sha256'], current[identifier]['analysisVersion']] != version:
+                raise InvalidOutput('Original material version changed')
+        for cite in parent.get('sources', []):
+            actual = '\n'.join(source['text'] for source in sources if source['materialId'] == cite['materialId']
+                               and cite['from'] <= source['page'] <= cite['to'])
+            if not cite.get('quote') or cite['quote'] not in actual:
+                raise InvalidOutput('Original quotation is no longer available')
         return sources
     terms = set(re.findall(r'[가-힣A-Za-z0-9]{2,}', payload['question'].lower()))
     def score(source):
