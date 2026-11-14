@@ -858,8 +858,8 @@
       "id": "Q-02",
       "title": "답안 revision·채점 작업·결과 저장 스키마",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "Q-01"
       ],
@@ -886,8 +886,8 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/quiz-answer-storage",
+      "base_sha": "48e83b82906339049232b28b335f5069cdf03f25",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
@@ -3100,7 +3100,8 @@
       "head_sha": "0bfbe9ecf0999b6a3ad2d61a82f6487a1f2837e1",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/18",
       "validation_evidence": [
-        "c74dda4 Actions43539000569:579 passed,1 skipped; newer0bfbe9e under review; deployment shell21 tests passed"
+        "c74dda4 Actions43539000569:579 passed,1 skipped; newer0bfbe9e under review; deployment shell21 tests passed",
+        "Astra final0bfbe9e:21 existing+8 independent deploy tests pass; old-target label bypass fixed; actual final Actions43539867574 pending"
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
