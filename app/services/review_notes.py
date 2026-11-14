@@ -83,7 +83,7 @@ class ReviewNotesService:
     def question(self, question_id):
         q,_=self.note(question_id)
         return {'noteId':q['id'],'type':'choice' if q['type'] in ('choice','ox') else q['type'],
-            'prompt':q['prompt'],'options':[c['text'] for c in q['choices']] if q['choices'] else None,'mockFilled':None}
+            'prompt':q['prompt'],'options':[c['text'] for c in q['choices']] if q['choices'] else [],'mockFilled':None}
 
     def grouped(self, group):
         entries=self._notes()
