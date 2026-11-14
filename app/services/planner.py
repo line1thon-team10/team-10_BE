@@ -65,6 +65,7 @@ class Planner:
     def __init__(self, conn: Connection, user: dict):
         self.conn = conn
         self.user = user
+        self._at = None
         self.data = StudyData(conn, user["id"])
         if not self.data.plan:
             raise ApiError("NO_PLAN", "계획을 먼저 만들어 주세요", 404)
@@ -88,19 +89,34 @@ class Planner:
 
     # ---------- 자정 판정 ----------
     def advance_day(self) -> str:
-        """오늘을 마감하고 다음 날로. 결과: carry(이월) | replan(분배안) | none"""
-        running = self.conn.execute(select(t.study_sessions.c.id).where(
-            t.study_sessions.c.user_id == self.user["id"],
-            t.study_sessions.c.status.in_(["running", "paused"]))).first()
-        if running:
-            raise ApiError("ACTIVE_STUDY_SESSION", "집중 모드를 먼저 끝내 주세요", 409)
+        """Demo-only date mutation around the shared explicit-date assessment."""
         today = self.user["demo_date"]
         if today is None:
             raise ApiError("NOT_DEMO_USER", "데모 날짜가 없는 사용자예요", 400)
+        judgment = self.close_day(today)
+        self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
+            demo_date=today + timedelta(days=1), updated_at=self._at or _now()))
+        return judgment
+
+    def close_day(self, day: date, *, allow_active: bool = False, at: datetime | None = None) -> str:
+        """Assess one local day without moving a real or demo user's clock.
+
+        D-04 supplies its locked user and closes missed dates chronologically.
+        Focus sessions may span midnight, so normal closure preserves active tasks.
+        """
+        if type(day) is not date or (at is not None and (at.tzinfo is None or at.utcoffset() is None)):
+            raise ValueError("A local day and timezone-aware timestamp are required")
+        self._at = at
+        active = set(self.conn.scalars(select(t.study_sessions.c.task_id).where(
+            t.study_sessions.c.user_id == self.user["id"],
+            t.study_sessions.c.status.in_(["running", "paused"]))))
+        if active and not allow_active:
+            raise ApiError("ACTIVE_STUDY_SESSION", "집중 모드를 먼저 끝내 주세요", 409)
+        today = day
         nxt = today + timedelta(days=1)
         # Freeze the final daily plan before any carry/exclusion changes its placements.
         from app.services.daily_totals import DailyTotalsService
-        DailyTotalsService(self.conn, self.user).snapshot(today, finalize=True, at=_now())
+        DailyTotalsService(self.conn, self.user).snapshot(today, finalize=True, at=self._at or _now())
 
         # 시험 당일부터는 새 공부 배치를 만들지 않는다. 기록/완료 태스크는 보존한다.
         for subject in self.data.subjects:
@@ -109,7 +125,8 @@ class Planner:
                 self.conn.execute(update(t.study_tasks).where(
                     t.study_tasks.c.subject_id == subject["id"],
                     t.study_tasks.c.scheduled_date >= exam,
-                    t.study_tasks.c.status.in_(["planned", "partial"])).values(status="excluded"))
+                    t.study_tasks.c.status.in_(["planned", "partial"]),
+                    t.study_tasks.c.id.not_in(active)).values(status="excluded"))
 
         def can_carry(task):
             exam = self.data.subject_by_id[task.row["subject_id"]]["exam_date"]
@@ -117,7 +134,7 @@ class Planner:
 
         left = []  # (task, 남은 범위)
         for x in self.data.tasks:
-            if x.row["subject_id"] in self.data.subject_by_id and x.row["scheduled_date"] <= today and x.row["status"] in ("planned", "partial", "missed"):
+            if x.id not in active and x.row["subject_id"] in self.data.subject_by_id and x.row["scheduled_date"] <= today and x.row["status"] in ("planned", "partial", "missed"):
                 if not can_carry(x):
                     exam = self.data.subject_by_id[x.row["subject_id"]]["exam_date"]
                     if today < exam and x.row["status"] == "planned" and not x.record:
@@ -131,14 +148,14 @@ class Planner:
         if prev:
             by_id = {x.id: x for x in self.data.tasks}
             for item in prev["recovery_context"].get("tasks", []):
-                if item["taskId"] in by_id and by_id[item["taskId"]].row["subject_id"] in self.data.subject_by_id and can_carry(by_id[item["taskId"]]):
+                if item["taskId"] not in active and item["taskId"] in by_id and by_id[item["taskId"]].row["subject_id"] in self.data.subject_by_id and can_carry(by_id[item["taskId"]]):
                     task = by_id[item["taskId"]]
                     if task.id not in {candidate.id for candidate, _ in left}:
                         rest = remaining_ranges(task)
                         if rest:
                             left.append((task, rest))
             self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == prev["id"])
-                              .values(status="stale", updated_at=_now()))
+                              .values(status="stale", updated_at=self._at or _now()))
         overdue_ranges = defaultdict(list)
         for x, rest in left:
             if x.row["task_type"] == "study":
@@ -159,7 +176,7 @@ class Planner:
 
         self._close_quizzes(today)
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
-            demo_date=nxt, last_assessed_date=today, updated_at=_now()))
+            last_assessed_date=today, updated_at=self._at or _now()))
 
         if carried_items:
             self.conn.execute(update(t.plans).where(t.plans.c.id == self.data.plan["id"]).values(
@@ -179,7 +196,7 @@ class Planner:
         if day is None or (exam is not None and day >= exam):
             # Keep the old unfinished obligation visible to future assessments.
             return None
-        result = append_carry(self.conn, x, rest, day=day, reason=reason, at=_now(), minutes=minutes)
+        result = append_carry(self.conn, x, rest, day=day, reason=reason, at=self._at or _now(), minutes=minutes)
         if result is not None:
             avg = self.daily_average(sid)
             result.update(dailyAvg=round(avg), ratio=round(result["pages"] / avg * 100) if avg else 0)
@@ -189,7 +206,7 @@ class Planner:
         """안 푼 오늘의 퀴즈는 닫고(carried_over) 다음 퀴즈에 합쳐져요 (4-4)"""
         self.conn.execute(update(t.quiz_sessions).where(
             t.quiz_sessions.c.user_id == self.user["id"], t.quiz_sessions.c.quiz_date == day,
-            t.quiz_sessions.c.status.in_(["ready", "in_progress"])).values(status="carried_over", finalized_at=_now()))
+            t.quiz_sessions.c.status.in_(["ready", "in_progress"])).values(status="carried_over", finalized_at=self._at or _now()))
 
     def _notice(self, day: date, ntype: str, dedupe: str, payload: dict) -> None:
         exists = self.conn.execute(select(t.user_notices.c.id).where(
@@ -197,11 +214,11 @@ class Planner:
         if not exists:
             self.conn.execute(t.user_notices.insert().values(
                 id=str(uuid.uuid4()), user_id=self.user["id"], dedupe_key=dedupe, notice_type=ntype,
-                notice_date=day, status="pending", payload=payload, created_at=_now()))
+                notice_date=day, status="pending", payload=payload, created_at=self._at or _now()))
 
     # ---------- 분배안 ----------
     def _create_recovery(self, day: date, nxt: date, over: dict, left: list) -> None:
-        now = _now()
+        now = self._at or _now()
         targets = [(x, rest) for x, rest in left if x.row["subject_id"] in over and x.row["task_type"] == "study"]
         context = {
             "assessedDate": day.isoformat(),
@@ -332,7 +349,7 @@ class Planner:
         if key == "B":
             for e in changes.get("exclusions", []):
                 self._exclude(e)
-        now = _now()
+        now = self._at or _now()
         self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == req["id"]).values(
             status="accepted", accepted_proposal_id=prop["id"], decided_at=now, updated_at=now))
         self.conn.execute(update(t.plans).where(t.plans.c.id == self.data.plan["id"]).values(
