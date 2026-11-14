@@ -4,7 +4,7 @@
     "planned_on": "2026-11-14",
     "state": "executing",
     "code_base_sha": "f47eac601d56d4767b4d82ec13c109550be9d1ff",
-    "deployed_be_sha": "ebc7c3d7578c182e90b325279d0971e1c423c03c",
+    "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
     "fe_base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
     "proposed_integration_branch": "integration/contract-v1",
@@ -32,8 +32,11 @@
       "workflow_sha": "76ed7188c511f475fde344a5b97f56de2a174efc",
       "branch": "infra/deploy-checkpoint-01",
       "run_id": 43550194880,
-      "state": "building",
-      "manifest": "docs/releases/2026-11-14-checkpoint-01.md"
+      "state": "verified",
+      "manifest": "docs/releases/2026-11-14-checkpoint-01.md",
+      "db_revision": "0006_quiz_answer_storage",
+      "image_digest": "sha256:f5250def3a82f5934cb832a6ad08c6b9a3710075415208c86de69275f2a52f53",
+      "report_commit": "55e108e68c735389a2a4785cae3faefdf68e81e6"
     }
   },
   "tasks": [
@@ -574,7 +577,7 @@
       "id": "D-01",
       "title": "진도·달성률·출제가능 진행률 분리",
       "lane": "study",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-03"
@@ -614,7 +617,8 @@
         "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives.",
         "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement.",
         "Worker finalb9c76a5:745SQLite+PG tests passed across21files, no existing assertion changes. Astra independent review running.",
-        "Astra b9c76a5:751SQLite+PG passed, independent set oracle3000cases/9000subject projections, no findings. Raw69.99->70->relocked HTTP verified. Actions43550278524 pending."
+        "Astra b9c76a5:751SQLite+PG passed, independent set oracle3000cases/9000subject projections, no findings. Raw69.99->70->relocked HTTP verified. Actions43550278524 pending.",
+        "Actions43550278524 candidate2518106:1743passed/1skipped. Merged9d1ddd7; exact combined full SQLite+PG2123passed/4skipped,595.38s."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -957,8 +961,8 @@
       "id": "Q-03",
       "title": "문항별 답안 저장·복구 API",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "Q-02"
       ],
@@ -966,7 +970,9 @@
         "BE/app/routers/quiz_answers.py",
         "BE/app/services/quiz_answers.py",
         "BE/app/services/quiz.py",
-        "BE/tests/test_quiz_answer_api.py"
+        "BE/tests/test_quiz_answer_api.py",
+        "BE/app/schemas/quiz_answers.py",
+        "BE/docs/quiz-answer-api-handoff.md"
       ],
       "shared_resources": [
         "quiz-legacy"
@@ -985,15 +991,21 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/quiz-answer-api",
+      "base_sha": "9d1ddd7a40e37f74823950038581b18e1134fc58",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-quiz-answers",
+      "deployment_requires": [
+        "Q-05"
+      ]
     },
     {
       "id": "Q-04",
@@ -1134,7 +1146,8 @@
         "동시 제출/동일 답 재전송/다른 답409·AI 실패503·프로세스 재시작",
         "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증",
         "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction",
-        "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt."
+        "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt.",
+        "Replace legacy POST submit transaction boundary; verify real HTTP answer-save/submit competition without holding a user lock or DB transaction during AI. This releases Q-03 deployment gate."
       ],
       "operations": [
         "POST /api/quiz/:subjectId/submit",
@@ -1606,7 +1619,7 @@
       "id": "O-02",
       "title": "온보딩 일정 CRUD·가용시간",
       "lane": "onboarding",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "O-01"
@@ -1645,7 +1658,8 @@
       "validation_evidence": [
         "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression.",
         "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04.",
-        "Independent P2: HH:mm PATCH lost stored seconds or rejected valid subminute metadata. Fixed7b13e11; root195passed, Astra original10+boundary10 and regression215SQLite/PG passed; no findings. FinalCI43549792768 pending."
+        "Independent P2: HH:mm PATCH lost stored seconds or rejected valid subminute metadata. Fixed7b13e11; root195passed, Astra original10+boundary10 and regression215SQLite/PG passed; no findings. FinalCI43549792768 pending.",
+        "Actions43549792768 candidateee905a3:1872passed/1skipped. Merged6319d3b; integration affected206passed. Combined9d1ddd7 full SQLite+PG2123passed/4skipped,595.38s."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2775,7 +2789,7 @@
       "id": "FE-01",
       "title": "FE 변경표·명세 기준·fixture 준비",
       "lane": "frontend",
-      "status": "running",
+      "status": "review",
       "assignee": "/root",
       "depends_on": [
         "SYS-02"
@@ -2800,10 +2814,11 @@
       "optional": false,
       "branch": "docs/api-contract-handoff",
       "base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
-      "head_sha": null,
+      "head_sha": "4c715bf",
       "pr_url": null,
       "validation_evidence": [
-        "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim."
+        "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim.",
+        "FE commitsfc706af baseline/C01-C22 mapping and4c715bf local HTTP fixtures/capture tool.14actual requests in5fixture files, source BE9d1ddd7, temporary SQLite cleaned. npm check baseline passed; final doc/fixture check and independent review pending. BE handoff76573d5, demo calculation source3bf62bb, root Document/API_change.md refreshed."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
