@@ -21,7 +21,7 @@
 
 ## 검증과 재시도
 
-공통 검사는 중첩된 NaN/Infinity/overflow float, JSON 이외의 타입, 순환 객체, 문자열이 아닌 객체 키, 중복 JSON 키, 인코딩할 수 없는 문자열을 거절한다. 최종 루트는 object 또는 array다. 값의 의미·근거·자료 범위·점수·문항 구조와 OCR 품질(POL-03)은 각 domain validator가 고정 snapshot으로 검사한다. 공통 경로 자체가 OCR이나 정답 품질을 검증했다고 표시하지 않는다.
+공통 검사는 중첩된 NaN/Infinity/overflow float, JSON 이외의 타입, 순환 객체, 문자열이 아닌 객체 키, 중복 JSON 키, 인코딩할 수 없는 문자열을 거절한다. PostgreSQL JSONB/Text에서 표현할 수 없는 U+0000은 값·키·provider 식별자에서도 거절해 SQLite와 같은 결과를 낸다. 최종 루트는 object 또는 array다. 값의 의미·근거·자료 범위·점수·문항 구조와 OCR 품질(POL-03)은 각 domain validator가 고정 snapshot으로 검사한다. 공통 경로 자체가 OCR이나 정답 품질을 검증했다고 표시하지 않는다.
 
 실제 transport 성공 뒤 반환된 문자열의 `JSONDecodeError`만 한 번 재시도한다. 두 번째 시도에는 `ProviderCall.format_retry=True`가 전달된다. 자격 누락, 권한 오류, 실패 transport, NaN, 잘못된 범위/근거/구조, validator 오류는 재시도하지 않는다. SDK가 문자열을 먼저 파싱해 예외를 숨기지 않도록 adapter는 원문 JSON 문자열을 반환하거나 이미 얻은 JSON 값을 전달한다.
 
@@ -55,3 +55,4 @@ DB cache 조회와 사후 usage/cache 저장 지연은 DB 운영 timeout 정책�
 - Q-04는 답안 revision/lease, M-02는 PDF 단계·실패·lease, O-03/T-01은 자연어·튜터 domain validator와 HTTP 응답 매핑을 연결한다. API의 기존 경로가 자동으로 이 gateway를 쓰도록 변경하지 않았다.
 - `tests/test_ai_gateway.py`는 SQLite/PostgreSQL의 캐시·소유권·usage와 synthetic transport의 취소·형식 재시도·근거/범위 검사·큰 출력·부분 프레임·비정상 종료를 검증한다. 기존 `test_ai_dependency.py`, `test_essay_failure.py`도 회귀 대상이다.
 - 모든 공급자 실행 테스트는 로컬 fake다. 실제 API 키 사용, 과금 호출, OCR/채점/튜터 품질 또는 실제 모델 지연 측정은 수행하지 않았다.
+- 독립 검토에서 유효 JSON의 U+0000이 SQLite에는 저장되지만 PostgreSQL에서는 SQL 오류로 빠지는 결함을 재현했다. 저장 전에 공통 경계에서 거절하도록 보완했다. 잘못된 결과는503 AI_FAILED이며 완료된 실제 transport 사용량은 유지한다. 잘못된 provider request ID 때문에 완료 이벤트를 해석할 수 없으면 시작된 요청을 failed/null로 남긴다. 수정 후 두 DB의 관련 회귀161개가 통과했다.
