@@ -253,8 +253,9 @@ def finish_carried(connection, user, quiz_id, *, at=None, retry_failed=False):
             if job_id is None:
                 continue
             job=jobs.get(user['id'],job_id)
-            if job['status']=='failed':
-                jobs.submission_retry(user['id'],job_id,revision=answer['revision'],now=now)
+            stale = job['status']=='succeeded' and validated_completed_result(connection,user['id'],job_id) is None
+            if job['status']=='failed' or stale:
+                jobs.submission_retry(user['id'],job_id,revision=answer['revision'],now=now,stale_succeeded=stale)
     today = user.get('demo_date') or now.astimezone(ZoneInfo(user['timezone'])).date()
     view = QuizService(connection,user,today)
     service = QuizFinalizationService(connection.engine,clock=lambda:now)

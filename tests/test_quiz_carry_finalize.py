@@ -83,3 +83,25 @@ def test_zero_answer_day_close_creates_no_grade_or_snapshot(api_client,domain_co
     assert facts(conn,case)=={'attempts':[],'history':[]}
     assert QuizAnswerRepository(conn).submission(case['user'],case['quiz']) is None
     assert conn.scalar(select(func.count()).select_from(t.quiz_items).where(t.quiz_items.c.quiz_session_id==case['quiz']))==4
+
+
+def test_changed_source_requeues_stale_success_without_losing_sealed_answer(api_client,domain_connection,carry_case):
+    case,conn=carry_case,domain_connection
+    assert put(api_client,case,'short',text='맞음').status_code==200
+    worker_jobs(conn,case)
+    question_id=conn.scalar(select(t.quiz_items.c.question_id).where(t.quiz_items.c.id==case['short_item']))
+    conn.execute(update(t.question_sources).where(t.question_sources.c.question_id==question_id)
+        .values(quote='수정된 원문 근거'))
+    close(conn,case)
+    original=QuizAnswerRepository(conn).list_current(case['user'],case['quiz'])
+    conn.commit()
+    assert get_result(api_client,case).status_code==503
+    assert facts(conn,case)=={'attempts':[],'history':[]}
+    status=conn.scalar(select(t.quiz_grading_jobs.c.status).where(t.quiz_grading_jobs.c.answer_id==original[0]['id']))
+    assert status=='queued'
+    conn.commit()
+    worker_jobs(conn,case)
+    response=get_result(api_client,case)
+    assert response.status_code==200,response.text
+    assert response.json()['data']['summary']['total']==1
+    assert QuizAnswerRepository(conn).list_current(case['user'],case['quiz'])==original
