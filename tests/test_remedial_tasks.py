@@ -178,3 +178,15 @@ def test_allocation_failure_rolls_back_new_facts_and_submit_retry_creates_one_ob
     retry=api_client.post(f'/api/quiz/{quiz}/submit',headers=c['headers'],json=body)
     assert retry.status_code==200,retry.text
     assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==1
+
+
+def test_previous_day_study_interval_still_blocks_its_overlap_with_next_study_day(api_client,domain_connection,remedial_case):
+    c,conn=remedial_case,domain_connection
+    sid,block,task=(str(uuid4()) for _ in range(3))
+    conn.execute(t.subjects.insert().values(id=sid,user_id=c['user'].id,code='other',name='다른 과목',color='blue',status='active',exam_date=DAY+timedelta(days=4),created_at=AT,updated_at=AT))
+    conn.execute(t.study_blocks.insert().values(id=block,subject_id=sid,task_type='study',created_at=AT))
+    conn.execute(t.study_tasks.insert().values(id=task,plan_id=c['plan'],subject_id=sid,block_id=block,task_type='study',title='과거 자정 겹침',scheduled_date=c['nextday']-timedelta(days=1),
+        starts_at=at(c['nextday']-timedelta(days=1),'22:00'),ends_at=at(c['nextday'],'09:00'),estimated_minutes=60,status='planned',created_at=AT));conn.commit()
+    submit(api_client,conn,c)
+    rows=conn.execute(select(t.study_tasks).where(t.study_tasks.c.task_type=='remedial')).mappings().all()
+    assert rows and all(row['starts_at']>=at(c['nextday'],'09:30').replace(tzinfo=row['starts_at'].tzinfo) for row in rows)

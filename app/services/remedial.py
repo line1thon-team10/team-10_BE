@@ -14,7 +14,7 @@ from app.domain.ranges import PageSpan, intersect, normalize
 from app.domain.scheduling import AllocationInput, BusyInterval, ScopePart, SearchLimit, Subject, UnitScope, WorkRequirement, half_up
 from app.repositories.events import EventRepository
 from app.services.allocator import allocate
-from app.services.onboarding_events import _local, _minute, event_intervals
+from app.services.onboarding_events import _local, _minute, _span_intervals, event_intervals
 from app.services.plan_draft import _instant
 from app.services.recovery_evidence import unit_ranges, first_passes
 from app.services.study import StudyData
@@ -106,13 +106,14 @@ def schedule_obligation(conn, user, obligation_id, now):
             busy.append(BusyInterval(first, 8*60, min(23*60, _minute(current))))
     for task in data.tasks:
         row = task.row
-        if not first <= row['scheduled_date'] < last or row['status'] in ('excluded','carried_over'):
+        if row['status'] in ('excluded','carried_over'):
             continue
         if row['starts_at'] is None or row['ends_at'] is None:
-            busy.append(BusyInterval(row['scheduled_date'], 8*60, 23*60))
+            if row['scheduled_date'] == first:
+                busy.append(BusyInterval(first, 8*60, 23*60))
         else:
             start, end = _local(row['starts_at'], zone), _local(row['ends_at'], zone)
-            busy.append(BusyInterval(row['scheduled_date'], _minute(start), _minute(end)))
+            busy.extend(_span_intervals(start, end, (first,)))
     repository = EventRepository(conn, user['id']); events = repository.events(); changes = defaultdict(list)
     for row in repository.exceptions([event['id'] for event in events]):
         changes[row['event_id']].append(row)
