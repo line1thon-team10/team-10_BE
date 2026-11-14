@@ -285,6 +285,51 @@ def test_patch_noop_preserves_revision_and_legacy_subminute_precision(domain_con
         assert stored_event(conn, event["id"]) == before
 
 
+@pytest.mark.parametrize("changes", [{}, {"title": "짧은 수업"}, {"kind": "job"},
+    {"start": "09:00", "end": "09:00"},
+    {"title": "짧은 수업", "date": "2026-11-09", "days": None, "start": "09:00", "end": "09:00"}])
+def test_http_patch_preserves_a_valid_span_within_one_display_minute(api_client, domain_connection, events_user, changes):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, starts_at=at(MONDAY, "09:00:10.123456"), ends_at=at(MONDAY, "09:00:50.654321"))
+    conn.commit()
+    before = stored_event(conn, event["id"])
+    conn.commit()
+    response = api_client.patch(f"/api/onboarding/events/{event['id']}", headers=auth(user), json=changes)
+    assert response.status_code == 200, response.text
+    after = stored_event(conn, event["id"])
+    assert (after["starts_at"], after["ends_at"]) == (before["starts_at"], before["ends_at"])
+    assert after["revision"] == before["revision"] + bool(set(changes) & {"title", "kind"})
+
+
+@pytest.mark.parametrize("weekly", [False, True])
+@pytest.mark.parametrize("end", ["09:00:50.654321", "10:00:15.654321"])
+def test_http_moving_schedule_preserves_omitted_clock_precision(api_client, domain_connection, events_user, weekly, end):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, starts_at=at(MONDAY, "09:00:30.123456"), ends_at=at(MONDAY, end),
+                      recurrence_rule="FREQ=WEEKLY;BYDAY=MO" if weekly else None)
+    conn.commit()
+    changes, expected_day = ({"days": [2]}, MONDAY + timedelta(days=1)) if weekly else (
+        {"date": "2026-11-14"}, date(2026, 11, 14))
+    response = api_client.patch(f"/api/onboarding/events/{event['id']}", headers=auth(user), json=changes)
+    assert response.status_code == 200, response.text
+    after = stored_event(conn, event["id"])
+    assert after["starts_at"].replace(tzinfo=timezone.utc) == at(expected_day, "09:00:30.123456")
+    assert after["ends_at"].replace(tzinfo=timezone.utc) == at(expected_day, end)
+    assert after["revision"] == 2
+
+
+@pytest.mark.parametrize("changes", [{"start": "09:01"}, {"end": "08:59"}, {"start": "23:00", "end": "01:00"}])
+def test_http_edit_still_rejects_invalid_actual_instants(api_client, domain_connection, events_user, changes):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, starts_at=at(MONDAY, "09:00:10"), ends_at=at(MONDAY, "09:00:50"))
+    conn.commit()
+    before = stored_event(conn, event["id"])
+    conn.commit()
+    response = api_client.patch(f"/api/onboarding/events/{event['id']}", headers=auth(user), json=changes)
+    assert response.status_code == 422, response.text
+    assert stored_event(conn, event["id"]) == before
+
+
 @pytest.mark.parametrize("changes", [{"start": "10:00"}, {"end": "08:00"}, {"date": "2026-11-14"}, {"days": None}])
 def test_patch_merges_before_validation_and_preserves_row_on_invalid_result(domain_connection, events_user, changes):
     conn, user = domain_connection, events_user

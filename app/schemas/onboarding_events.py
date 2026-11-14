@@ -3,7 +3,7 @@ from datetime import date as Date
 import re
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
 
 from app.core.responses import ApiError
 from app.schemas.onboarding import OnboardingEvent
@@ -56,10 +56,13 @@ class EventCreate(BaseModel):
     end: Clock
 
     @model_validator(mode="after")
-    def validate_event(self):
+    def validate_event(self, info: ValidationInfo):
         if (self.days is None) == (self.date is None):
             raise ValueError("Use exactly one of days or date")
-        if self.start >= self.end:
+        # A partial edit can retain stored seconds that HH:mm cannot express.
+        # Only the service may defer this check, then validate actual instants.
+        stored_precision = (info.context or {}).get("validate_stored_instants", False)
+        if not stored_precision and self.start >= self.end:
             raise ValueError("An event must start before it ends on the same day")
         return self
 

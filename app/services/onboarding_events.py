@@ -149,6 +149,11 @@ class OnboardingEventsService:
         old = event_view(existing, self.user["timezone"]) if existing else None
         old_date = date.fromisoformat(old["date"]) if old and old["date"] else None
         same_schedule = bool(old and old["days"] == command.days and old_date == command.date)
+        def clock_for(field, clock_field):
+            clock = getattr(command, clock_field)
+            if old and old[clock_field] == clock:
+                return _local(existing[field], ZoneInfo(self.user["timezone"])).time().isoformat()
+            return clock
         if same_schedule:
             # Keep actual stored instants/first occurrence/until/exception rows on
             # partial edits, including legacy sub-minute timestamp precision.
@@ -168,9 +173,17 @@ class OnboardingEventsService:
                 until = existing["recurrence_until"] if existing and existing["recurrence_rule"] else None
             else:
                 first, recurrence, until = command.date, None, None
-            values.update(starts_at=_local_time_to_utc(first, command.start, self.user["timezone"]),
-                ends_at=_local_time_to_utc(first, command.end, self.user["timezone"]),
+            values.update(starts_at=_local_time_to_utc(first, clock_for("starts_at", "start"), self.user["timezone"]),
+                ends_at=_local_time_to_utc(first, clock_for("ends_at", "end"), self.user["timezone"]),
                 recurrence_rule=recurrence, recurrence_until=until)
+        if _local(values["ends_at"], timezone.utc) <= _local(values["starts_at"], timezone.utc):
+            raise ApiError("INVALID_INPUT", "일정의 종료는 시작보다 뒤여야 해요", 422)
+        changed_schedule = existing is None or any(existing[key] != values[key]
+            for key in ("starts_at", "ends_at", "recurrence_rule", "recurrence_until"))
+        if changed_schedule:
+            tz = ZoneInfo(self.user["timezone"])
+            if _local(values["starts_at"], tz).date() != _local(values["ends_at"], tz).date():
+                raise ApiError("INVALID_INPUT", "자정을 넘는 일정은 날짜별로 나누어 주세요", 422)
         return values
 
     def create(self, command: EventCreate):
@@ -187,7 +200,7 @@ class OnboardingEventsService:
         merged = {key: current[key] for key in EventCreate.model_fields}
         merged.update(command.model_dump(exclude_unset=True))
         try:
-            valid = EventCreate.model_validate(merged)
+            valid = EventCreate.model_validate(merged, context={"validate_stored_instants": True})
         except ValidationError as exc:
             raise ApiError("INVALID_INPUT", "변경한 일정의 날짜·요일·시각을 확인해 주세요", 422) from exc
         changes = {key: value for key, value in self._values(valid, row).items() if row[key] != value}
