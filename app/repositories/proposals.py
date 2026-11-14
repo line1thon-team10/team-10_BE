@@ -177,34 +177,48 @@ class ProposalRepository:
             raise ProposalNotFound(foreign=row is not None)
         return _row(row)
 
+    @staticmethod
+    def _snapshot_query():
+        request, proposal, state = t.plan_change_requests, t.plan_proposals, t.plan_proposal_states
+        return select(state, request.c.id.label("request_id"), request.c.status.label("request_status"),
+            request.c.accepted_proposal_id, request.c.user_id.label("_request_owner"),
+            request.c.kind.label("_request_kind"), request.c.base_plan_id.label("_request_plan"),
+            request.c.base_plan_revision.label("_request_revision"), proposal.c.proposal_type,
+            proposal.c.description, proposal.c.changes, proposal.c.created_at).select_from(proposal).join(
+                request, request.c.id == proposal.c.request_id).outerjoin(
+                state, state.c.proposal_id == proposal.c.id)
+
+    @staticmethod
+    def _snapshot(user_id, row):
+        if row is None:
+            raise ProposalNotFound()
+        state = _row(row)
+        if state.pop("_request_owner") != user_id:
+            raise ProposalNotFound(foreign=True)
+        request_kind = state.pop("_request_kind")
+        request_basis = (state.pop("_request_plan"), state.pop("_request_revision"))
+        if state["proposal_id"] is None:
+            raise LegacyProposalUnavailable("The candidate predates complete preview metadata")
+        if state["user_id"] != user_id or state["kind"] != request_kind:
+            raise ProposalConflict("Candidate owner or kind does not match its request")
+        if not state["legacy"] and (state["base_plan_id"], state["base_plan_revision"]) != request_basis:
+            raise ProposalConflict("Candidate basis does not match its request")
+        return state
+
     def get(self, user_id, proposal_id) -> dict:
         user_id, proposal_id = _uuid(user_id), _uuid(proposal_id)
-        proposal = self.connection.execute(select(t.plan_proposals).where(
+        row = self.connection.execute(self._snapshot_query().where(
             t.plan_proposals.c.id == proposal_id)).mappings().first()
-        if proposal is None:
-            raise ProposalNotFound()
-        request = self._request(user_id, proposal["request_id"])
-        state = self.connection.execute(select(t.plan_proposal_states).where(
-            t.plan_proposal_states.c.proposal_id == proposal_id)).mappings().first()
-        if state is None:
-            raise LegacyProposalUnavailable("The candidate predates complete preview metadata")
-        if state["user_id"] != user_id or state["kind"] != request["kind"]:
-            raise ProposalConflict("Candidate owner or kind does not match its request")
-        if not state["legacy"] and (state["base_plan_id"], state["base_plan_revision"]) != (
-                request["base_plan_id"], request["base_plan_revision"]):
-            raise ProposalConflict("Candidate basis does not match its request")
-        return {**_row(state), "request_id": request["id"], "request_status": request["status"],
-                "accepted_proposal_id": request["accepted_proposal_id"],
-                "proposal_type": proposal["proposal_type"], "description": proposal["description"],
-                "changes": proposal["changes"], "created_at": _row(proposal)["created_at"]}
+        return self._snapshot(user_id, row)
 
     def ready(self, user_id, *, kind: str, input_hash: str | None = None) -> list[dict]:
-        """Find stored ready candidates; date/version freshness belongs to SYS-05."""
+        """Read one consistent candidate/request snapshot, without locking it.
+
+        SYS-05 must recheck freshness and selection under its apply lock.
+        """
         user_id = _uuid(user_id)
         _text(kind, "kind", nonempty=True)
-        query = select(t.plan_proposal_states.c.proposal_id).join(
-            t.plan_proposals, t.plan_proposals.c.id == t.plan_proposal_states.c.proposal_id).join(
-            t.plan_change_requests, t.plan_change_requests.c.id == t.plan_proposals.c.request_id).where(
+        query = self._snapshot_query().where(
             t.plan_proposal_states.c.user_id == user_id, t.plan_proposal_states.c.kind == kind,
             t.plan_proposal_states.c.status == "ready", t.plan_change_requests.c.user_id == user_id,
             t.plan_change_requests.c.kind == kind, t.plan_change_requests.c.status == "ready",
@@ -212,7 +226,7 @@ class ProposalRepository:
                 t.plan_proposals.c.created_at, t.plan_proposals.c.id)
         if input_hash is not None:
             query = query.where(t.plan_proposal_states.c.input_hash == _hash(input_hash))
-        return [self.get(user_id, identifier) for identifier in self.connection.scalars(query)]
+        return [self._snapshot(user_id, row) for row in self.connection.execute(query).mappings()]
 
     def result(self, user_id, proposal_id) -> dict:
         state = self.get(user_id, proposal_id)
