@@ -99,3 +99,7 @@ StudyBlock: `id` · `subjectId` · `subjectName` · `color` · `title` · `from`
 빈 시간 후보에 `slots:[{date,start,end,label}]`를 추가해 여러 회차의 빈 시간을 모두 표현한다. 기존 emptyTime은 slots의 첫 항목 또는 null이다. rest/pull/advance 후보는 slots 전체를 대상으로 한다. 선택지는 disabled 상태와 사유를 보존하고, 이미 적용한 후보 재요청은 중복 배정을 하지 않는다. 과목 삭제 후 빈 시간 응답에도 같은 형식을 적용한다.
 
 monthly/report.grades[]는 `materialId/unitId`를 포함한다. 월간 달력 칸은 월요일 시작부터 마지막 일요일까지의 실제 주 수에 따라28/35/42칸이다(2월이 월요일 시작인 평년 포함).
+
+### 빈 시간의 현재 시각 경계
+
+실제 날짜를 사용하는 계정의 오늘 빈 시간은 서버 UTC 시계를 사용자 시간대로 바꾼 현재 시각 이후만 제공한다. 23시 이후에는 오늘의 새 공부 후보를 만들지 않는다. `demo_date` 계정은 가상 시각이 없으므로 기존 계획 정책처럼 해당 가상 날짜의 08~23시를 사용한다. 실측·기록 사실은 두 경우 모두 보존한다.
