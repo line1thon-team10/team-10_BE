@@ -115,3 +115,18 @@ def test_carried_subset_inherits_only_same_block_factors(progress_world,corrupt)
     if corrupt is None:
         assert len(measured.samples)==1 and measured.weighted_pages==15 and measured.proposed==Fraction(5,2)
     else: assert measured.samples==()
+
+
+@pytest.mark.parametrize('snapshot_end',[10,21])
+def test_carried_snapshot_must_match_original_ranges_before_clipping(progress_world,snapshot_end):
+    w=progress_world;unit=w.unit(1,25)
+    source=w.task((unit,1,20),status='carried_over',day=w.day-timedelta(days=4))
+    save_placements(w,[{'id':source,'parts':[{'unitId':unit['id'],'materialId':unit['material_id'],
+        'from':1,'to':snapshot_end,'baseline':[5,2],'multiplier':[3,2]}]}])
+    block=w.conn.scalar(select(t.study_tasks.c.block_id).where(t.study_tasks.c.id==source))
+    for offset in range(3):
+        child=sample(w,unit,day=w.day-timedelta(days=offset),seconds=2250,pages=10,snapshot=False)
+        w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==child['task']).values(
+            origin_task_id=source,block_id=block))
+    # Both altered snapshots cover the child, but neither describes its source.
+    assert collect(w).samples==()
