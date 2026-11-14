@@ -19,6 +19,7 @@ Table child {
   id uuid [pk]
   parent_id uuid [not null, ref: > parent.id]
   revision int [not null]
+  mode varchar [not null, default: 'live']
 }
 `);
   fs.writeFileSync(path.join(fixture, 'schema/focus-indexes.json'), '[]');
@@ -35,6 +36,15 @@ Table child {
   let output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
   assert.match(output, /ForeignKey\("parent.id", ondelete="CASCADE"\)/);
   assert.match(output, /CheckConstraint\("revision > 0", name="ck_child_revision"\)/);
+  assert.match(output, /Column\("mode", String, nullable=False, default="live"\)/);
+  assert.doesNotMatch(output, /server_default/);
+  const withDefault = { ...config, serverDefaults: { 'child.mode': 'live' } };
+  fs.writeFileSync(configPath, JSON.stringify(withDefault));
+  result = generate();
+  assert.equal(result.status, 0, result.stderr);
+  output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
+  assert.match(output, /Column\("mode", String, nullable=False, default="live", server_default="live"\)/);
+  assert.match(output, /Column\("revision", Integer, nullable=False\)/);
   const proposalConfigPath = path.join(fixture, 'schema/proposal-storage-constraints.json');
   fs.writeFileSync(proposalConfigPath, JSON.stringify({
     checks: [{ table: 'child', name: 'ck_child_revision_limit', sql: 'revision < 10' }], foreignKeys: {},
@@ -45,7 +55,8 @@ Table child {
   assert.match(output, /CheckConstraint\("revision > 0", name="ck_child_revision"\)/);
   assert.match(output, /CheckConstraint\("revision < 10", name="ck_child_revision_limit"\)/);
   assert.match(output, /ForeignKey\("parent.id", ondelete="CASCADE"\)/);
-  for (const duplicate of [config, { checks: [], foreignKeys: config.foreignKeys }]) {
+  for (const duplicate of [config, { checks: [], foreignKeys: config.foreignKeys },
+    { checks: [], foreignKeys: {}, serverDefaults: { 'child.mode': 'live' } }]) {
     fs.writeFileSync(proposalConfigPath, JSON.stringify(duplicate));
     assert.notEqual(generate().status, 0);
   }
@@ -55,15 +66,19 @@ Table child {
   assert.equal(result.status, 0, result.stderr);
   output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
   assert.doesNotMatch(output, /ondelete|CheckConstraint/);
+  assert.doesNotMatch(output, /server_default/);
   for (const invalid of [
     { ...config, checks: [{ table: 'missing', name: 'bad', sql: '1=1' }] },
     { ...config, foreignKeys: { 'child.missing': { ondelete: 'CASCADE' } } },
     { ...config, foreignKeys: { 'child.parent_id': { ondelete: 'SET NULL' } } },
+    { ...config, serverDefaults: { 'child.missing': 'live' } },
+    { ...config, serverDefaults: { 'child.mode': 1 } },
+    { ...config, serverDefaults: { 'child.mode': 'bad\u0000value' } },
   ]) {
     fs.writeFileSync(configPath, JSON.stringify(invalid));
     assert.notEqual(generate().status, 0);
   }
-  console.log('schema generator: merged CHECK/CASCADE, backward compatibility and invalid configuration passed');
+  console.log('schema generator: merged CHECK/CASCADE, explicit server defaults, backward compatibility and invalid configuration passed');
 } finally {
   fs.rmSync(fixture, { recursive: true, force: true });
 }
