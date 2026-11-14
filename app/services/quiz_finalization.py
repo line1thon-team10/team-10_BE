@@ -214,4 +214,9 @@ class QuizFinalizationService:
         result = view._build_result_view(answers.quiz(user_id, quiz["id"]), before_blocks=before_blocks)
         stored = answers.store_result_snapshot(user_id, quiz["id"], expected_hash=state["answer_set_hash"],
             snapshot=result, provenance="submitted", schema_version="quiz-result-v1", now=now)
+        if (stored["result_snapshot"] != result or stored["result_provenance"] != "submitted"
+                or stored["result_captured_at"] != now):
+            # A lost first-snapshot race must also undo this transaction's
+            # attempts/mastery/weak writes, not return a competing response.
+            raise ApiError("ANSWER_CONFLICT", "결과 확정 상태가 바뀌었어요", 409)
         return deepcopy(stored["result_snapshot"])
