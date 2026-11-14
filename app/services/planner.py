@@ -18,6 +18,7 @@ from sqlalchemy import Connection, select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.services.study import StudyData, Task, unit_no
+from app.domain.ranges import PageSpan, normalize, subtract, page_count
 
 CARRY_RATE = 0.5
 KEEP_NOTE = "보충 학습은 어느 안에서도 미루지 않아요"
@@ -39,71 +40,83 @@ def _mdw(d: date) -> str:
 
 
 def remaining_ranges(task: Task) -> list[dict]:
-    """계획 범위에서 기록한 범위를 뺀 남은 범위"""
-    done = defaultdict(set)
-    for r in task.done_ranges:
-        if r["start_page"] is not None:
-            done[r["unit_id"]].update(range(r["start_page"], r["end_page"] + 1))
-    out = []
+    """Subtract actual PDF-page unions while retaining the originating range IDs."""
+    units = {r["unit_id"]: r.get("material_id", r["unit_id"]) for r in task.paged}
+    completed = [PageSpan(units[r["unit_id"]], r["start_page"], r["end_page"])
+                 for r in task.done_ranges if r["unit_id"] in units
+                 and r["start_page"] is not None and r["end_page"] is not None]
+    seen, out = [], []
     for r in task.paged:
-        pages = [p for p in range(r["start_page"], r["end_page"] + 1) if p not in done[r["unit_id"]]]
-        if not pages:
-            continue
-        start = prev = pages[0]
-        for p in pages[1:] + [None]:
-            if p is not None and p == prev + 1:
-                prev = p
-                continue
-            out.append({"unit_id": r["unit_id"], "start_page": start, "end_page": prev})
-            if p is not None:
-                start = prev = p
+        material = units[r["unit_id"]]
+        source = PageSpan(material, r["start_page"], r["end_page"])
+        for part in subtract([source], [*completed, *seen]):
+            out.append({"unit_id": r["unit_id"], "material_id": material,
+                        "source_range_id": r.get("id"), "start_page": part.start, "end_page": part.end})
+        seen.append(source)
     return out
 
 
 def _pages(ranges) -> int:
-    return sum(r["end_page"] - r["start_page"] + 1 for r in ranges)
+    return page_count(PageSpan(r.get("material_id", r["unit_id"]), r["start_page"], r["end_page"])
+                      for r in ranges)
 
 
 class Planner:
     def __init__(self, conn: Connection, user: dict):
         self.conn = conn
         self.user = user
+        self._at = None
         self.data = StudyData(conn, user["id"])
         if not self.data.plan:
             raise ApiError("NO_PLAN", "계획을 먼저 만들어 주세요", 404)
 
     # ---------- 기준 ----------
     def daily_average(self, subject_id: str) -> float:
-        scope = sum(u["end_page"] - u["start_page"] + 1 for u in self.data.units.values()
-                    if u["subject_id"] == subject_id and u["in_scope"] and u["start_page"] is not None)
+        scope = page_count(span for uid, spans in self.data.unit_scopes.items()
+                           if self.data.units[uid]["subject_id"] == subject_id for span in spans)
         days = {x.row["scheduled_date"] for x in self.data.tasks  # 보충만 있던 날도 '태스크가 있는 날'
                 if x.row["subject_id"] == subject_id and x.row["origin_task_id"] is None}
         return scope / len(days) if days else 0
 
-    def next_study_day(self, subject_id: str, after: date) -> date:
+    def next_study_day(self, subject_id: str, after: date) -> date | None:
         days = sorted({x.row["scheduled_date"] for x in self.data.tasks
                        if x.row["subject_id"] == subject_id and x.row["scheduled_date"] > after
                        and x.row["status"] not in ("carried_over", "excluded")})
         exam = self.data.subject_by_id[subject_id]["exam_date"]
         if days and (exam is None or days[0] < exam):
             return days[0]
-        return after + timedelta(days=1)
+        return None
 
     # ---------- 자정 판정 ----------
     def advance_day(self) -> str:
-        """오늘을 마감하고 다음 날로. 결과: carry(이월) | replan(분배안) | none"""
-        running = self.conn.execute(select(t.study_sessions.c.id).where(
-            t.study_sessions.c.user_id == self.user["id"],
-            t.study_sessions.c.status.in_(["running", "paused"]))).first()
-        if running:
-            raise ApiError("ACTIVE_STUDY_SESSION", "집중 모드를 먼저 끝내 주세요", 409)
+        """Demo-only date mutation around the shared explicit-date assessment."""
         today = self.user["demo_date"]
         if today is None:
             raise ApiError("NOT_DEMO_USER", "데모 날짜가 없는 사용자예요", 400)
+        judgment = self.close_day(today)
+        self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
+            demo_date=today + timedelta(days=1), updated_at=self._at or _now()))
+        return judgment
+
+    def close_day(self, day: date, *, allow_active: bool = False, at: datetime | None = None) -> str:
+        """Assess one local day without moving a real or demo user's clock.
+
+        D-04 supplies its locked user and closes missed dates chronologically.
+        Focus sessions may span midnight, so normal closure preserves active tasks.
+        """
+        if type(day) is not date or (at is not None and (at.tzinfo is None or at.utcoffset() is None)):
+            raise ValueError("A local day and timezone-aware timestamp are required")
+        self._at = at
+        active = set(self.conn.scalars(select(t.study_sessions.c.task_id).where(
+            t.study_sessions.c.user_id == self.user["id"],
+            t.study_sessions.c.status.in_(["running", "paused"]))))
+        if active and not allow_active:
+            raise ApiError("ACTIVE_STUDY_SESSION", "집중 모드를 먼저 끝내 주세요", 409)
+        today = day
         nxt = today + timedelta(days=1)
         # Freeze the final daily plan before any carry/exclusion changes its placements.
         from app.services.daily_totals import DailyTotalsService
-        DailyTotalsService(self.conn, self.user).snapshot(today, finalize=True, at=_now())
+        DailyTotalsService(self.conn, self.user).snapshot(today, finalize=True, at=self._at or _now())
 
         # 시험 당일부터는 새 공부 배치를 만들지 않는다. 기록/완료 태스크는 보존한다.
         for subject in self.data.subjects:
@@ -112,15 +125,16 @@ class Planner:
                 self.conn.execute(update(t.study_tasks).where(
                     t.study_tasks.c.subject_id == subject["id"],
                     t.study_tasks.c.scheduled_date >= exam,
-                    t.study_tasks.c.status.in_(["planned", "partial"])).values(status="excluded"))
+                    t.study_tasks.c.status.in_(["planned", "partial"]),
+                    t.study_tasks.c.id.not_in(active)).values(status="excluded"))
 
         def can_carry(task):
             exam = self.data.subject_by_id[task.row["subject_id"]]["exam_date"]
             return exam is None or nxt < exam
 
         left = []  # (task, 남은 범위)
-        for x in self.data.tasks_on(today):
-            if x.row["status"] in ("planned", "partial"):
+        for x in self.data.tasks:
+            if x.id not in active and x.row["subject_id"] in self.data.subject_by_id and x.row["scheduled_date"] <= today and x.row["status"] in ("planned", "partial", "missed"):
                 if not can_carry(x):
                     exam = self.data.subject_by_id[x.row["subject_id"]]["exam_date"]
                     if today < exam and x.row["status"] == "planned" and not x.record:
@@ -134,14 +148,19 @@ class Planner:
         if prev:
             by_id = {x.id: x for x in self.data.tasks}
             for item in prev["recovery_context"].get("tasks", []):
-                if item["taskId"] in by_id and can_carry(by_id[item["taskId"]]):
-                    left.append((by_id[item["taskId"]], item["ranges"]))
+                if item["taskId"] not in active and item["taskId"] in by_id and by_id[item["taskId"]].row["subject_id"] in self.data.subject_by_id and can_carry(by_id[item["taskId"]]):
+                    task = by_id[item["taskId"]]
+                    if task.id not in {candidate.id for candidate, _ in left}:
+                        rest = remaining_ranges(task)
+                        if rest:
+                            left.append((task, rest))
             self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == prev["id"])
-                              .values(status="stale", updated_at=_now()))
-        overdue = defaultdict(int)
+                              .values(status="stale", updated_at=self._at or _now()))
+        overdue_ranges = defaultdict(list)
         for x, rest in left:
             if x.row["task_type"] == "study":
-                overdue[x.row["subject_id"]] += _pages(rest)
+                overdue_ranges[x.row["subject_id"]].extend(rest)
+        overdue = {sid: _pages(ranges) for sid, ranges in overdue_ranges.items()}
         over = {sid: pages for sid, pages in overdue.items()
                 if pages >= math.ceil(self.daily_average(sid) * CARRY_RATE)}
 
@@ -151,13 +170,17 @@ class Planner:
                 self.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == x.id).values(status="missed"))
             if x.row["subject_id"] in over and x.row["task_type"] == "study":
                 continue  # 분배안에서 처리
-            carried_items.append(self._carry(x, rest, reason="어제에서 이월"))
+            item = self._carry(x, rest, reason="어제에서 이월", after=today)
+            if item is not None:
+                carried_items.append(item)
 
         self._close_quizzes(today)
         self.conn.execute(update(t.users).where(t.users.c.id == self.user["id"]).values(
-            demo_date=nxt, last_assessed_date=today, updated_at=_now()))
+            last_assessed_date=today, updated_at=self._at or _now()))
 
         if carried_items:
+            self.conn.execute(update(t.plans).where(t.plans.c.id == self.data.plan["id"]).values(
+                revision=t.plans.c.revision + 1))
             self._notice(nxt, "carry", f"carry:{nxt.isoformat()}", {"items": carried_items})
         if over:
             self._create_recovery(today, nxt, over, left)
@@ -165,31 +188,25 @@ class Planner:
         return "carry" if carried_items else "none"
 
     def _carry(self, x: Task, rest: list[dict], reason: str, day: date | None = None,
-               minutes: int | None = None) -> dict:
+               minutes: int | None = None, after: date | None = None) -> dict | None:
+        from app.services.carryover import append_carry
         sid = x.row["subject_id"]
-        day = day or self.next_study_day(sid, x.row["scheduled_date"])
-        pages = _pages(rest)
-        mpp = float(self.data.subject_by_id[sid]["minutes_per_page"] or 2.5)
-        minutes = minutes or max(15, round(pages * mpp / 5) * 5)
-        task_id = str(uuid.uuid4())
-        self.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == x.id).values(status="carried_over"))
-        self.conn.execute(t.study_tasks.insert().values(
-            id=task_id, plan_id=x.row["plan_id"], subject_id=sid, block_id=x.row["block_id"], origin_task_id=x.id,
-            task_type=x.row["task_type"], title=x.row["title"], scheduled_date=day, estimated_minutes=minutes,
-            placement_reason=reason, status="planned", created_at=_now()))
-        for i, r in enumerate(rest):
-            self.conn.execute(t.study_task_ranges.insert().values(
-                id=str(uuid.uuid4()), task_id=task_id, unit_id=r["unit_id"], start_page=r["start_page"],
-                end_page=r["end_page"], sort_order=i + 1))
-        avg = self.daily_average(sid)
-        return {"subjectId": sid, "from": rest[0]["start_page"], "to": rest[-1]["end_page"], "pages": pages,
-                "dailyAvg": round(avg), "ratio": round(pages / avg * 100) if avg else 0, "date": day.isoformat()}
+        day = day or self.next_study_day(sid, after or x.row["scheduled_date"])
+        exam = self.data.subject_by_id[sid]["exam_date"]
+        if day is None or (exam is not None and day >= exam):
+            # Keep the old unfinished obligation visible to future assessments.
+            return None
+        result = append_carry(self.conn, x, rest, day=day, reason=reason, at=self._at or _now(), minutes=minutes)
+        if result is not None:
+            avg = self.daily_average(sid)
+            result.update(dailyAvg=round(avg), ratio=round(result["pages"] / avg * 100) if avg else 0)
+        return result
 
     def _close_quizzes(self, day: date) -> None:
         """안 푼 오늘의 퀴즈는 닫고(carried_over) 다음 퀴즈에 합쳐져요 (4-4)"""
         self.conn.execute(update(t.quiz_sessions).where(
             t.quiz_sessions.c.user_id == self.user["id"], t.quiz_sessions.c.quiz_date == day,
-            t.quiz_sessions.c.status.in_(["ready", "in_progress"])).values(status="carried_over", finalized_at=_now()))
+            t.quiz_sessions.c.status.in_(["ready", "in_progress"])).values(status="carried_over", finalized_at=self._at or _now()))
 
     def _notice(self, day: date, ntype: str, dedupe: str, payload: dict) -> None:
         exists = self.conn.execute(select(t.user_notices.c.id).where(
@@ -197,11 +214,11 @@ class Planner:
         if not exists:
             self.conn.execute(t.user_notices.insert().values(
                 id=str(uuid.uuid4()), user_id=self.user["id"], dedupe_key=dedupe, notice_type=ntype,
-                notice_date=day, status="pending", payload=payload, created_at=_now()))
+                notice_date=day, status="pending", payload=payload, created_at=self._at or _now()))
 
     # ---------- 분배안 ----------
     def _create_recovery(self, day: date, nxt: date, over: dict, left: list) -> None:
-        now = _now()
+        now = self._at or _now()
         targets = [(x, rest) for x, rest in left if x.row["subject_id"] in over and x.row["task_type"] == "study"]
         context = {
             "assessedDate": day.isoformat(),
@@ -332,7 +349,7 @@ class Planner:
         if key == "B":
             for e in changes.get("exclusions", []):
                 self._exclude(e)
-        now = _now()
+        now = self._at or _now()
         self.conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == req["id"]).values(
             status="accepted", accepted_proposal_id=prop["id"], decided_at=now, updated_at=now))
         self.conn.execute(update(t.plans).where(t.plans.c.id == self.data.plan["id"]).values(

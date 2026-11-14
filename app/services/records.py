@@ -9,6 +9,7 @@ from app.domain.ranges import PageSpan, intersect, page_count
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.records import RecordRepository
 from app.services.learning_evidence import revalidate_record_passes
+from app.services.carryover_corrections import reconcile_carryover
 from app.services.study import StudyData, Task
 
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
@@ -139,6 +140,7 @@ def save_record(conn, task: Task, result: str, ranges: list[dict], study_date, s
     record_id = RecordRepository(conn).replace(
         task, RESULT_TO_DB[result], status, ranges, study_date, session_id, at)
     revalidate_record_passes(conn, user_id, record_id, at)
+    reconcile_carryover(conn, task, user_id=user_id, at=at)
 
 
 def check_session(conn, task: Task, session_id: str | None, *, user_id: str) -> str | None:
