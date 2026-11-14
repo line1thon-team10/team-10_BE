@@ -496,3 +496,83 @@ class ProcessExecutor:
                     raise CleanupFailed("AI process termination was not confirmed; recycle this worker")
                 process.close()
         return ExecutionResult(result, telemetry.usage, failure)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class GatewayResult:
+    data: dict | list
+    saved_result_id: str
+    source: str
+    actual_call_count: int
+
+
+def _ai_failed():
+    from app.core.responses import ApiError
+    return ApiError("AI_FAILED", "검증된 AI 결과를 준비하지 못했어요", 503)
+
+
+class AiGateway:
+    """Validated reuse or isolated provider execution, without domain state changes.
+
+    The caller MUST commit existing answers and release its transactions/user locks
+    before calling run(). This class only owns its short engine-created connections;
+    it cannot release caller locks. Workers must recheck their material revision,
+    answer revision and job lease before applying the returned result.
+    """
+    def __init__(self, engine, *, settings: AiSettings | None = None, approved_demos=()):
+        from app.repositories.ai_results import AiResultRepository
+        self.repository = AiResultRepository(engine)
+        self.settings = AiSettings.from_environment() if settings is None else settings
+        if not isinstance(self.settings, AiSettings):
+            raise TypeError("AiSettings is required")
+        self.approved_demos = tuple(approved_demos)
+        if any(not isinstance(approval, DemoApproval) for approval in self.approved_demos):
+            raise TypeError("Only explicit server-owned demo approvals are accepted")
+        self.executor = ProcessExecutor()
+
+    def _approval(self, identity):
+        return next((approval for approval in self.approved_demos if approval.matches(identity)), None)
+
+    def run(self, request: GatewayRequest, *, validator: FunctionRef, provider: ProviderSpec | None = None,
+            mode: str = "live") -> GatewayResult:
+        if not isinstance(request, GatewayRequest):
+            raise TypeError("GatewayRequest is required")
+        if mode not in ("live", "saved", "backup"):
+            raise ValueError("Unknown AI result mode")
+        deadline = time.monotonic() + self.settings.budget_for(pdf_job=request.pdf_job)
+        cached = self.repository.lookup(request, demo_approval=self._approval(request.identity))
+        # This branch intentionally precedes provider imports and credential checks.
+        if cached is None and (mode in ("saved", "backup") or provider is None):
+            raise _ai_failed()
+        try:
+            cached_json = canonical_json(cached.result) if cached else None
+        except InvalidOutput:
+            raise _ai_failed() from None
+        outcome = self.executor.execute(request.identity, provider=None if cached else provider,
+            validator=validator, deadline=deadline, cleanup_timeout=self.settings.cleanup_timeout_seconds,
+            cached_json=cached_json)
+        # These transactions begin only after the execution process was reaped.
+        # Usage commits independently so a later cache write failure cannot erase it.
+        self.repository.record_usage(request, outcome.usage)
+        if outcome.failure is not None or outcome.data is None:
+            raise _ai_failed()
+        if cached:
+            return GatewayResult(outcome.data, cached.id, cached.source, 0)
+        result_id = self.repository.save(request, outcome.data)
+        return GatewayResult(outcome.data, result_id, "live", len(outcome.usage))
+
+    def register_demo(self, request: GatewayRequest, result, *, validator: FunctionRef) -> str:
+        """Explicit server setup only; validate and publish one allowlisted demo."""
+        if not isinstance(request, GatewayRequest):
+            raise TypeError("GatewayRequest is required")
+        approval = self._approval(request.identity)
+        if approval is None or request.identity.materials:
+            raise ValueError("Only an exact approved self-authored demo can be shared")
+        # Establish ownership before validation; this connection closes immediately.
+        self.repository.lookup(request, demo_approval=approval)
+        deadline = time.monotonic() + self.settings.budget_for(pdf_job=request.pdf_job)
+        outcome = self.executor.execute(request.identity, provider=None, validator=validator,
+            deadline=deadline, cleanup_timeout=self.settings.cleanup_timeout_seconds, cached_json=canonical_json(result))
+        if outcome.failure is not None or outcome.data is None:
+            raise _ai_failed()
+        return self.repository.save(request, outcome.data, demo_approval=approval)

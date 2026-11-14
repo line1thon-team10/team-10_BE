@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine, event, func, select, text
 
 from app.ai.gateway import (
-    DemoApproval, FunctionRef, GatewayRequest, InvalidOutput, MaterialRevision, ProcessExecutor, ProviderSpec,
+    AiGateway, DemoApproval, ExecutionResult, FunctionRef, GatewayRequest, InvalidOutput, MaterialRevision, ProcessExecutor, ProviderSpec,
     ResultIdentity, TelemetryError, UsageRecord, _Telemetry, canonical_json, parse_json,
 )
 from app.ai.settings import AiSettings
@@ -477,3 +477,157 @@ def test_usage_validation_prevents_partial_or_fabricated_measurements(result_rep
     assert usage_rows(domain_connection) == []
     result_repository.record_usage(request, [])
     assert usage_rows(domain_connection) == []
+
+
+def fake_request(owner, payload=None, **identity_changes):
+    return GatewayRequest(owner, identity(input=payload or {}, validation_context={"pages": [1, 2], "evidence": "source"},
+                                          **identity_changes))
+
+
+def test_gateway_live_validates_saves_and_reconnects_keylessly(result_repository, domain_connection, gateway_user):
+    gateway = AiGateway(result_repository.engine)
+    request = fake_request(gateway_user, {"behavior": "multiple"})
+    first = gateway.run(request, provider=PROVIDER, validator=VALIDATOR)
+    assert first.source == "live" and first.actual_call_count == 2
+    assert first.data == {"page": 2, "evidence": "source"}
+    reconnected = AiGateway(result_repository.engine)
+    for mode in ("live", "saved", "backup"):
+        saved = reconnected.run(request, validator=VALIDATOR, mode=mode)
+        assert saved.saved_result_id == first.saved_result_id and saved.source == "private_cache"
+        assert saved.data == first.data and saved.actual_call_count == 0
+    assert len(usage_rows(domain_connection)) == 2
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 1
+
+
+@pytest.mark.parametrize("mode", ["saved", "backup"])
+def test_forced_saved_miss_never_initializes_provider_or_checks_credentials(result_repository, domain_connection, gateway_user, monkeypatch, mode):
+    gateway = AiGateway(result_repository.engine)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Saved miss cannot execute provider code")
+    monkeypatch.setattr(gateway.executor, "execute", forbidden)
+    with pytest.raises(ApiError) as error:
+        gateway.run(fake_request(gateway_user), provider="invalid unused provider", validator=None, mode=mode)
+    assert (error.value.code, error.value.status) == ("AI_FAILED", 503)
+    assert usage_rows(domain_connection) == []
+
+
+def test_live_keyless_miss_and_provider_credential_error_never_create_usage(result_repository, domain_connection, gateway_user):
+    gateway = AiGateway(result_repository.engine)
+    for provider in (None, PROVIDER):
+        with pytest.raises(ApiError) as error:
+            gateway.run(fake_request(gateway_user, {"behavior": "missing_credentials"}), provider=provider, validator=VALIDATOR)
+        assert error.value.code == "AI_FAILED" and error.value.status == 503
+        assert "secret" not in error.value.message
+    assert usage_rows(domain_connection) == []
+
+
+@pytest.mark.parametrize("changes", [{"input": {"changed": True}}, {"provider": "other"}, {"model_version": "v2"},
+                                    {"prompt_version": "v2"}, {"schema_version": "v2"},
+                                    {"validation_context": {"pages": [1], "evidence": "source"}}])
+def test_gateway_saved_reuse_requires_all_input_and_version_dimensions(result_repository, domain_connection, gateway_user, changes):
+    request = fake_request(gateway_user)
+    result_repository.save(request, {"page": 2, "evidence": "source"})
+    fields = {"input": {}, "validation_context": {"pages": [1, 2], "evidence": "source"}, **changes}
+    different = GatewayRequest(gateway_user, identity(**fields))
+    with pytest.raises(ApiError) as error:
+        AiGateway(result_repository.engine).run(different, validator=VALIDATOR, mode="saved")
+    assert error.value.code == "AI_FAILED" and usage_rows(domain_connection) == []
+
+
+def test_gateway_cache_does_not_cross_owners_or_material_revisions(result_repository, domain_connection, gateway_user):
+    material_id = add_material(domain_connection, gateway_user)
+    request = fake_request(gateway_user, materials=[MaterialRevision(material_id, "v1")])
+    result_repository.save(request, {"page": 2, "evidence": "source"})
+    gateway = AiGateway(result_repository.engine)
+    changed = replace(request, identity=replace(request.identity, materials=(MaterialRevision(material_id, "v2"),)))
+    with pytest.raises(ApiError) as error:
+        gateway.run(changed, validator=VALIDATOR, mode="saved")
+    assert error.value.code == "AI_FAILED"
+    other = User.anonymous(now=NOW)
+    UserRepository(domain_connection).add(other)
+    domain_connection.commit()
+    with pytest.raises(ApiError) as error:
+        gateway.run(replace(request, owner_id=other.id), validator=VALIDATOR, mode="saved")
+    assert error.value.code == "NO_MATERIAL"
+    private = fake_request(gateway_user)
+    result_repository.save(private, {"page": 2, "evidence": "source"})
+    with pytest.raises(ApiError) as error:
+        gateway.run(replace(private, owner_id=other.id), validator=VALIDATOR, mode="saved")
+    assert error.value.code == "AI_FAILED" and usage_rows(domain_connection) == []
+
+
+def test_invalid_saved_result_is_revalidated_without_a_live_fallback(result_repository, domain_connection, gateway_user):
+    request = fake_request(gateway_user)
+    result_repository.save(request, {"page": 99, "evidence": "source"})
+    with pytest.raises(ApiError) as error:
+        AiGateway(result_repository.engine).run(request, validator=VALIDATOR, provider=PROVIDER)
+    assert error.value.code == "AI_FAILED" and usage_rows(domain_connection) == []
+
+
+@pytest.mark.parametrize("behavior,calls,status", [("syntax_always", 2, "succeeded"), ("exception", 1, "failed"),
+                                                 ("malformed_telemetry", 1, "failed")])
+def test_gateway_failure_persists_only_actual_observations_and_no_result(result_repository, domain_connection, gateway_user, behavior, calls, status):
+    with pytest.raises(ApiError) as error:
+        AiGateway(result_repository.engine).run(fake_request(gateway_user, {"behavior": behavior}), provider=PROVIDER, validator=VALIDATOR)
+    assert error.value.code == "AI_FAILED"
+    rows = usage_rows(domain_connection)
+    assert len(rows) == calls and {row["status"] for row in rows} == {status}
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+
+
+def test_gateway_own_connections_are_closed_during_external_work_and_usage_survives_save_failure(result_repository, domain_connection, gateway_user, monkeypatch):
+    gateway = AiGateway(result_repository.engine)
+    original_execute = gateway.executor.execute
+    def inspect_connections(*args, **kwargs):
+        assert gateway.repository.engine.pool.checkedout() == 0
+        # Another connection can write while the execution boundary is active.
+        with gateway.repository.engine.begin() as conn:
+            conn.execute(t.users.update().where(t.users.c.id == gateway_user).values(updated_at=NOW))
+        return original_execute(*args, **kwargs)
+    def fail_save(*args, **kwargs):
+        raise RuntimeError("synthetic cache failure")
+    monkeypatch.setattr(gateway.executor, "execute", inspect_connections)
+    monkeypatch.setattr(gateway.repository, "save", fail_save)
+    with pytest.raises(RuntimeError, match="synthetic cache failure"):
+        gateway.run(fake_request(gateway_user), provider=PROVIDER, validator=VALIDATOR)
+    assert len(usage_rows(domain_connection)) == 1
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 0
+    assert not domain_connection.closed
+
+
+def test_shared_demo_is_explicitly_validated_allowlisted_and_keyless(result_repository, domain_connection, gateway_user):
+    request = fake_request(gateway_user, scenario_key="self-authored:approved")
+    approval = DemoApproval(request.identity.scenario_key, request.identity.input_hash, True)
+    gateway = AiGateway(result_repository.engine, approved_demos=[approval])
+    result_id = gateway.register_demo(request, {"page": 2, "evidence": "source"}, validator=VALIDATOR)
+    domain_connection.commit()
+    assert domain_connection.scalar(select(t.ai_saved_results.c.user_id).where(t.ai_saved_results.c.id == result_id)) is None
+    other = User.anonymous(now=NOW)
+    UserRepository(domain_connection).add(other)
+    domain_connection.commit()
+    shared = gateway.run(replace(request, owner_id=other.id), validator=VALIDATOR, mode="backup")
+    assert shared.source == "demo_cache" and shared.saved_result_id == result_id and shared.actual_call_count == 0
+    with pytest.raises(ApiError):
+        AiGateway(result_repository.engine).run(request, validator=VALIDATOR, mode="saved")
+    with pytest.raises(ValueError):
+        AiGateway(result_repository.engine).register_demo(request, {}, validator=VALIDATOR)
+    with pytest.raises(ApiError):
+        gateway.register_demo(request, {"page": 50, "evidence": "source"}, validator=VALIDATOR)
+    assert domain_connection.scalar(select(func.count()).select_from(t.ai_saved_results)) == 1
+    assert usage_rows(domain_connection) == []
+
+
+def test_pdf_budget_requires_explicit_background_selection(result_repository, gateway_user, monkeypatch):
+    request = fake_request(gateway_user, kind="pdf_analysis")
+    result_repository.save(request, {"page": 2, "evidence": "source"})
+    gateway = AiGateway(result_repository.engine, settings=AiSettings(request_budget_seconds=2, pdf_job_budget_seconds=7))
+    budgets = []
+    def observe_budget(*args, **kwargs):
+        budgets.append(kwargs["deadline"] - time.monotonic())
+        return ExecutionResult({"page": 2, "evidence": "source"}, (), None)
+    monkeypatch.setattr(gateway.executor, "execute", observe_budget)
+    gateway.run(request, validator=VALIDATOR, mode="saved")
+    gateway.run(replace(request, pdf_job=True), validator=VALIDATOR, mode="saved")
+    assert 1 < budgets[0] <= 2 and 6 < budgets[1] <= 7
+    with pytest.raises(ValueError):
+        replace(fake_request(gateway_user), pdf_job=True)
