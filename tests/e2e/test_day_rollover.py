@@ -239,3 +239,32 @@ def test_settlement_commits_even_when_requested_read_has_no_plan(api_client,doma
     response=read(api_client,user,'/api/today')
     assert response.status_code==404 and response.json()['error']['code']=='NO_PLAN'
     assert domain_connection.scalar(select(t.users.c.last_assessed_date).where(t.users.c.id==user))==date(2026,11,10)
+
+
+def test_missing_marker_bootstraps_from_first_owned_plan_day(api_client,progress_world,end_focus,real_clock,monkeypatch):
+    w=progress_world
+    w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.plan_id==w.plan['id']).values(scheduled_date=w.day))
+    w.conn.execute(update(t.plans).where(t.plans.c.id==w.plan['id']).values(created_at=w.now,approved_at=w.now))
+    w.conn.execute(update(t.users).where(t.users.c.id==w.user).values(created_at=w.now))
+    w.conn.commit();end_focus(w.user);ordinary(w,last=None)
+    seen=[];close=Planner.close_day
+    def traced(self,day,**kwargs):
+        seen.append(day);return close(self,day,**kwargs)
+    monkeypatch.setattr(Planner,'close_day',traced)
+    response=read(api_client,w.user)
+    assert response.status_code==200,response.text
+    assert seen==[date(2026,11,9),date(2026,11,10)]
+
+
+def test_settlement_keeps_other_owner_and_future_marker_unchanged(api_client,progress_world,end_focus,real_clock):
+    w=progress_world;w.conn.commit();end_focus(w.user);ordinary(w)
+    other=api_client.post('/api/session').json()['data']['anonymousId']
+    w.conn.execute(update(t.users).where(t.users.c.id==other).values(demo_date=None,last_assessed_date=date(2026,11,20)))
+    before=dict(w.conn.execute(select(t.users).where(t.users.c.id==other)).mappings().one())
+    subjects=w.conn.execute(select(t.subjects).where(t.subjects.c.user_id==other)).all();w.conn.commit()
+    assert read(api_client,w.user).status_code==200
+    assert dict(w.conn.execute(select(t.users).where(t.users.c.id==other)).mappings().one())==before
+    assert w.conn.execute(select(t.subjects).where(t.subjects.c.user_id==other)).all()==subjects
+    w.conn.commit()
+    assert read(api_client,other).status_code==200
+    assert dict(w.conn.execute(select(t.users).where(t.users.c.id==other)).mappings().one())==before
