@@ -74,3 +74,19 @@ def test_failed_receipt_rolls_back_direct_completion(api_client,progress_world,m
     assert w.conn.scalar(select(func.count()).select_from(t.learning_passes).where(t.learning_passes.c.unit_id==unit['id']))==0
     monkeypatch.setattr(RecordRequestRepository,'save',original)
     assert request(api_client,w,unit,key).status_code==200
+
+
+def test_direct_completion_supplies_custom_scope_without_daily_plan(api_client,progress_world):
+    from tests.test_quiz_selection import add_question
+    from tests.test_custom_quiz import create,scope
+    w=progress_world;unit=w.unit(1,5);add_question(w,unit)
+    before=create(api_client,w,[scope(unit,1,5)],count=1)
+    assert before.status_code==422
+    assert request(api_client,w,unit,str(uuid4())).status_code==200
+    custom=create(api_client,w,[scope(unit,1,5)],count=1)
+    assert custom.status_code==200,custom.text
+    assert custom.json()['data']['count']==1
+    w.conn.commit()
+    today=api_client.get('/api/today',headers={'X-Anonymous-Id':w.user})
+    assert today.status_code==200,today.text
+    assert today.json()['data']['tasks']==[] and today.json()['data']['progress']['totalPages']==0
