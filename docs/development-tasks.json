@@ -231,7 +231,7 @@
       "id": "SYS-05",
       "title": "미리보기 승인·stale·재시도 공통 서비스",
       "lane": "platform",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-04"
@@ -262,11 +262,13 @@
       "validation_evidence": [
         "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease.",
         "Final397 passed/5 SQLite-only skips; same5 concurrency cases execute on PostgreSQL. Approved minimal repository lease distinguishes known old-writer selected accepted proposals without sidecars and known kind mismatches. Astra independent review pending at a56e5af.",
-        "Astra a56e5af review closed without findings: existing397/5skip plus independent15/3skip, PG concurrency cases executed. Required CI pending. Further platform expansion deprioritized for day9 flow."
+        "Astra a56e5af review closed without findings: existing397/5skip plus independent15/3skip, PG concurrency cases executed. Required CI pending. Further platform expansion deprioritized for day9 flow.",
+        "Required Actions43554969227 succeeded: candidate172e1869f95d5fe8a260f353bcb20f1510aaa766,2335 passed/6 skipped1047.11s. Integratedfd2a3d1 app/tests/schema/migrations/scripts/workflow/deploy diff is identical to tested candidate; no duplicate whole regression."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "BE-task-preview-application"
+      "worktree": "BE-task-preview-application",
+      "integration_sha": "fd2a3d1c8f6c441407438466221a779f10bd2cbc"
     },
     {
       "id": "POL-01",
@@ -1033,11 +1035,12 @@
       "optional": false,
       "branch": "feat/quiz-answer-api",
       "base_sha": "9d1ddd7a40e37f74823950038581b18e1134fc58",
-      "head_sha": "0f746ed9a3c0383bfe3b8b6a215191575b8805ed",
+      "head_sha": "17c16c1af5bc6e9f620b3852a14cb7703f14261b",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/29",
       "validation_evidence": [
         "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed.",
-        "Independent review found 3 P2 categories: Unicode/NUL storage divergence, invalid concept-unit linkage, and receipt replay after metadata changes. Root fixed each atomically (7d1f49d/83acd27/4022fa7). Original independent22 and additional70 SQLite+PG passed at immutable4022fa7; no remaining findings in changed code. Documentation-only0f746ed. Legacy submit deployment gate remains Q-05."
+        "Independent review found 3 P2 categories: Unicode/NUL storage divergence, invalid concept-unit linkage, and receipt replay after metadata changes. Root fixed each atomically (7d1f49d/83acd27/4022fa7). Original independent22 and additional70 SQLite+PG passed at immutable4022fa7; no remaining findings in changed code. Documentation-only0f746ed. Legacy submit deployment gate remains Q-05.",
+        "Required CI43554966252:1 failed/2348 passed/4 skipped1239.53s. Only existing normal-result ProcessExecutor test exceeded its arbitrary4s cold-spawn budget. Separate test-only17c16c1 uses contract20s for result/telemetry checks; explicit deadline/termination tests unchanged. Focused original+deadline5 passed4.24s; CI rerun pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -3592,7 +3595,7 @@
       "id": "FE-02A",
       "title": "day9 집중 종료·기록·홈 갱신 흐름",
       "lane": "frontend",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "FE-01",
@@ -3627,10 +3630,11 @@
       "optional": false,
       "branch": "feat/day9-record-flow",
       "base_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
-      "head_sha": null,
+      "head_sha": "52f4a23d3bff4c5e7680c176695162d2eff094f0",
       "pr_url": null,
       "validation_evidence": [
-        "Latest FE49c95c9 preserved; minimal mock response fields allowed to retain default mode, no seed/policy rewrite. Root prepares local BE8017 and FE5187, no production reset."
+        "Latest FE49c95c9 preserved; minimal mock response fields allowed to retain default mode, no seed/policy rewrite. Root prepares local BE8017 and FE5187, no production reset.",
+        "Immutable52f4a23: node11 passed and npm check; actual server(false) browser flow under Astra review. Temporary SQLite writer lock injects one409 without production mutation."
       ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
@@ -3643,8 +3647,8 @@
       "id": "FE-03A",
       "title": "퀴즈 문항 저장·새로고침 복구 흐름",
       "lane": "frontend",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "FE-01",
         "Q-03"
@@ -3653,7 +3657,11 @@
         "FE/src/api/quiz.js",
         "FE/src/api/adapters/quiz.js",
         "FE/src/hooks/useQuiz.js",
-        "FE/src/pages/quiz/S8Quiz.jsx"
+        "FE/src/pages/quiz/S8Quiz.jsx",
+        "FE/src/pages/quiz/answerDraft.js",
+        "FE/src/mocks/handlers/quiz.js",
+        "FE/src/mocks/logic.js",
+        "FE/tests/quiz-answer-flow.test.mjs"
       ],
       "shared_resources": [],
       "contract_files": [],
@@ -3666,13 +3674,19 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/quiz-answer-flow",
+      "base_sha": "6cd8753a0778e0ac2e2d64d3a09d22f329de56ca",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
-      "integration_only_paths": [],
-      "validation_mode": "risk-focused-impact-and-required-ci"
+      "validation_evidence": [
+        "Starts against reviewed immutable Q03 contract while its unrelated test-budget CI repair runs. Distinct worktree/file ownership from FE02A review. Minimal mock PUT/recovery compatibility permitted; no seed/scoring rewrite."
+      ],
+      "integration_only_paths": [
+        "FE/src/api/endpoints.js",
+        "FE/src/hooks/queryKeys.js"
+      ],
+      "validation_mode": "risk-focused-impact-and-required-ci",
+      "worktree": "FE-task-quiz-answers"
     },
     {
       "id": "FE-03B",
