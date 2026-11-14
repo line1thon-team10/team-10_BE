@@ -43,7 +43,7 @@ def initial_allocation_input(connection, user_id: str, *, today: date,
 
 
 def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None,
-                      subject_overrides=None):
+                      subject_overrides=None, calendar_event_overrides=None, calendar_exception_overrides=None):
     """Resolve owned draft subjects, concept unions and actual calendar intervals.
 
     quiz_enabled is deliberately not an admission condition: a manual outline
@@ -201,6 +201,44 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     exceptions = defaultdict(list)
     for row in repository.exceptions([event["id"] for event in events]):
         exceptions[row["event_id"]].append(row)
+    event_changes = {} if calendar_event_overrides is None else calendar_event_overrides
+    exception_changes = {} if calendar_exception_overrides is None else calendar_exception_overrides
+    if not isinstance(event_changes, dict) or not isinstance(exception_changes, dict):
+        raise PlanInputError('일정 후보는 ID별 변경 객체여야 해요')
+    by_event = {event['id']: event for event in events}
+    owned_subjects = set(connection.scalars(select(t.subjects.c.id).where(t.subjects.c.user_id == user_id)))
+    for identifier, candidate in event_changes.items():
+        try:
+            if str(UUID(identifier)) != identifier:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            raise PlanInputError('올바른 일정 UUID가 필요해요') from None
+        current = connection.execute(select(t.calendar_events.c.user_id, t.calendar_events.c.subject_id)
+            .where(t.calendar_events.c.id == identifier)).mappings().first()
+        if current and (current['user_id'] != user_id or current['subject_id'] is not None
+                        and current['subject_id'] not in owned_subjects):
+            raise PlanInputError('다른 사용자의 일정을 변경할 수 없어요')
+        if candidate is None:
+            if identifier not in by_event:
+                raise PlanInputError('제거할 본인의 일정이 없어요')
+            del by_event[identifier]
+            continue
+        if (not isinstance(candidate, dict) or candidate.get('id') != identifier or candidate.get('user_id') != user_id
+                or candidate.get('subject_id') is not None and candidate['subject_id'] not in owned_subjects
+                or not {'starts_at', 'ends_at', 'recurrence_rule', 'recurrence_until'} <= set(candidate)
+                or candidate.get('event_type') not in ('class', 'job', 'meet', 'other')):
+            raise PlanInputError('본인 일정의 올바른 후보가 필요해요')
+        if candidate.get('deleted_at') is not None:
+            by_event.pop(identifier, None)
+        else:
+            by_event[identifier] = dict(candidate)
+    for identifier, rows in exception_changes.items():
+        if identifier not in by_event or not isinstance(rows, list):
+            raise PlanInputError('유효한 본인 일정의 회차 변경만 지정해 주세요')
+        if any(not isinstance(row, dict) or row.get('event_id') != identifier for row in rows):
+            raise PlanInputError('회차 변경의 소속 일정이 달라요')
+        exceptions[identifier] = [dict(row) for row in rows]
+    events = list(by_event.values())
     last_exam = max(subject.exam_date for subject in subjects)
     busy = []
     try:
@@ -217,7 +255,8 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
 
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
-                              subject_overrides=None, earliest_day=None):
+                              subject_overrides=None, earliest_day=None,
+                              calendar_event_overrides=None, calendar_exception_overrides=None):
     """Keep learning facts and active started placements while reallocating rest.
 
     Only selected draft subjects are added. Every active study range is reduced
@@ -225,14 +264,16 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     Superseded rows are retained (including records, quiz/book references).
     """
     if (not subject_ids and material_structure_overrides is None and subject_overrides is None
-            and affected_subject_ids is None):
+            and affected_subject_ids is None and calendar_event_overrides is None
+            and calendar_exception_overrides is None):
         raise PlanInputError('재배분할 과목이나 변경할 입력을 선택해 주세요')
     earliest_day = today if earliest_day is None else earliest_day
     if type(earliest_day) is not date or earliest_day < today:
         raise PlanInputError('재배분 시작일은 오늘 이후여야 해요')
     request = _allocation_input(connection, user_id, today=today, timezone_name=timezone_name,
                                 subject_ids=subject_ids, existing=True, material_structure_overrides=material_structure_overrides,
-                                subject_overrides=subject_overrides)
+                                subject_overrides=subject_overrides, calendar_event_overrides=calendar_event_overrides,
+                                calendar_exception_overrides=calendar_exception_overrides)
     from app.services.study import StudyData
     data = StudyData(connection, user_id)
     included = {subject.id for subject in request.subjects}
