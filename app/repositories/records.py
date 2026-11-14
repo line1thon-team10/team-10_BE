@@ -56,8 +56,10 @@ class RecordRepository:
             self.conn.execute(t.study_record_ranges.insert().values(
                 id=str(uuid4()), record_id=record_id, unit_id=item["unit_id"],
                 start_page=item["start_page"], end_page=item["end_page"]))
+        # Record corrections change learning evidence, not retired placements.
         self.conn.execute(update(t.study_tasks).where(
-            t.study_tasks.c.id == task.id).values(status=status))
+            t.study_tasks.c.id == task.id,
+            t.study_tasks.c.status.not_in(("carried_over", "excluded"))).values(status=status))
         if status == "completed":
             self.conn.execute(update(t.study_blocks).where(
                 t.study_blocks.c.id == task.row["block_id"],

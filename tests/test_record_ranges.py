@@ -10,6 +10,7 @@ from app.db import schema as t
 from app.schemas.records import FixIn, RecordIn
 from app.routers import today
 from app.services import records
+from app.services.study import StudyData
 from tests.test_record_transactions import headers, task_for
 
 TASK_ID = "2d4b385a-ec4a-4e95-b313-a98ce1641d42"
@@ -463,3 +464,74 @@ def test_range_snapshot_rolls_back_all_writes_if_revalidation_fails(api_client, 
     assert_error(response, 500, "SERVER_ERROR")
     assert snapshot(domain_connection, task) == before
     assert [dict(row) for row in domain_connection.execute(select(t.learning_passes)).mappings()] == old_passes
+
+
+@pytest.mark.parametrize("placement_status", ["carried_over", "excluded"])
+@pytest.mark.parametrize("result", ["none", "partial", "done"])
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_record_correction_preserves_retired_placements_and_existing_evidence(
+        api_client, demo_user, domain_connection, end_focus, placement_status, result, method):
+    conn = domain_connection
+    session = api_client.get("/api/study/sessions/active", headers=headers(demo_user)).json()["data"]
+    end_focus(demo_user)
+    task = task_for(conn, demo_user, "AI2")
+    old_day = task.row["scheduled_date"]
+    conn.commit()
+    response = post(api_client, demo_user, task, "partial", toPage=19, sessionId=session["id"])
+    assert response.status_code == 200, response.text
+    original_record = snapshot(conn, task)["record"]
+
+    # Existing evidence has its own historical scope, independent of placement.
+    template = dict(conn.execute(select(t.learning_passes).limit(1)).mappings().one())
+    historical_pass = {**template, "id": str(uuid4()), "unit_id": task.ranges[0]["unit_id"],
+        "source_task_id": task.id, "completed_at": original_record["recorded_at"],
+        "completed_date": original_record["study_date"], "invalidated_at": None,
+        "evidence_snapshot": {"schemaVersion": "1", "recordIds": [original_record["id"]],
+                              "requiredRanges": [[12, 19]]}}
+    conn.execute(t.learning_passes.insert().values(**historical_pass))
+    if placement_status == "excluded":
+        # The actual next-day API excludes placements on/after the exam date.
+        conn.execute(update(t.subjects).where(t.subjects.c.id == task.row["subject_id"])
+                     .values(exam_date=old_day))
+    conn.commit()
+    response = api_client.post("/api/demo/next-day", headers=headers(demo_user))
+    assert response.status_code == 200, response.text
+    assert snapshot(conn, task)["task"]["status"] == placement_status
+
+    plan_tasks = select(t.study_tasks).where(t.study_tasks.c.plan_id == task.row["plan_id"]).order_by(t.study_tasks.c.id)
+    before_tasks = [dict(row) for row in conn.execute(plan_tasks).mappings()]
+    task_ids = [row["id"] for row in before_tasks]
+    plan_ranges = select(t.study_task_ranges).where(t.study_task_ranges.c.task_id.in_(task_ids)).order_by(t.study_task_ranges.c.id)
+    before_ranges = [dict(row) for row in conn.execute(plan_ranges).mappings()]
+    children = [row for row in before_tasks if row["origin_task_id"] == task.id]
+    assert len(children) == (1 if placement_status == "carried_over" else 0)
+    if children:
+        assert children[0]["status"] == "planned" and children[0]["block_id"] == task.row["block_id"]
+    before_passes = [dict(row) for row in conn.execute(select(t.learning_passes).order_by(t.learning_passes.c.id)).mappings()]
+    before_block_ids = set(conn.scalars(select(t.study_blocks.c.id)))
+    conn.commit()
+
+    selected = [] if result == "none" else [{"rangeId": task.ranges[0]["id"], "toPage": 13 if result == "partial" else 20}]
+    response = post(api_client, demo_user, task, result, completedRanges=selected) if method == "post" else patch(
+        api_client, demo_user, task, completedRanges=selected)
+    assert response.status_code == 200, response.text
+    if method == "patch":
+        assert response.json()["data"]["status"] == result
+
+    assert [dict(row) for row in conn.execute(plan_tasks).mappings()] == before_tasks
+    assert [dict(row) for row in conn.execute(plan_ranges).mappings()] == before_ranges
+    assert task.id not in {row.id for row in StudyData(conn, demo_user).tasks_on(old_day)}
+    assert set(conn.scalars(select(t.study_blocks.c.id))) == before_block_ids
+    saved = snapshot(conn, task)
+    assert saved["record"]["result"] == records.RESULT_TO_DB[result]
+    for key in ("id", "task_id", "study_date", "recorded_at", "session_id"):
+        assert saved["record"][key] == original_record[key]
+    assert [(row["start_page"], row["end_page"]) for row in saved["ranges"]] == (
+        [] if result == "none" else [(12, 13 if result == "partial" else 20)])
+    after_passes = [dict(row) for row in conn.execute(select(t.learning_passes).order_by(t.learning_passes.c.id)).mappings()]
+    for before, after in zip(before_passes, after_passes, strict=True):
+        if before["id"] == historical_pass["id"]:
+            assert (after["invalidated_at"] is None) is (result == "done")
+            assert {**after, "invalidated_at": None} == before
+        else:
+            assert after == before
