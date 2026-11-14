@@ -1,5 +1,6 @@
 """Exact mastery arithmetic over immutable, finalized attempt facts."""
 from dataclasses import dataclass
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from fractions import Fraction
 from uuid import UUID
@@ -134,3 +135,186 @@ def grade(score: int) -> str:
     if type(score) is not int or not 0 <= score <= 99:
         raise ValueError("A displayed integer score in 0..99 is required")
     return "risk" if score < 50 else "shaky" if score < 80 else "stable"
+
+
+@dataclass(frozen=True, slots=True)
+class UnitScope:
+    material_id: str
+    unit_id: str
+    revision: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "material_id", _uuid(self.material_id, "material_id"))
+        object.__setattr__(self, "unit_id", _uuid(self.unit_id, "unit_id"))
+        if type(self.revision) is not str or not self.revision.strip():
+            raise ValueError("A current scope revision is required")
+
+
+@dataclass(frozen=True, slots=True)
+class DayEligibility:
+    """S-03 supplies verified, current-scope evidence; this class does not create it."""
+    scope: UnitScope
+    day: date
+    full_relearned: bool = False
+    custom_confirmed: bool = False
+    supplement_completed: bool = False
+
+    def __post_init__(self):
+        if not isinstance(self.scope, UnitScope):
+            raise ValueError("A current unit scope is required")
+        _day(self.day)
+        if any(type(value) is not bool for value in (self.full_relearned, self.custom_confirmed, self.supplement_completed)):
+            raise ValueError("Eligibility must be established boolean facts")
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryEntry:
+    """An actually finalized set result below 80, identified by its stored history."""
+    material_id: str
+    unit_id: str
+    recorded_date: date
+    displayed_score: int
+    history_id: str
+    recorded_at: datetime
+
+    def __post_init__(self):
+        for field in ("material_id", "unit_id", "history_id"):
+            object.__setattr__(self, field, _uuid(getattr(self, field), field))
+        _day(self.recorded_date)
+        object.__setattr__(self, "recorded_at", _instant(self.recorded_at))
+        if type(self.displayed_score) is not int or not 0 <= self.displayed_score < 80:
+            raise ValueError("A recovery entry must be an observed integer score below 80")
+
+
+@dataclass(frozen=True, slots=True)
+class DayScore:
+    material_id: str
+    unit_id: str
+    day: date
+    raw_score: Fraction
+    capped_score: Fraction
+    score: int
+    grade: str
+    previous_score: int | None
+    recovery_mode: bool
+    recovery_started_date: date | None
+    recovery_result_dates: tuple[date, ...]
+    daily_increase_limit: int | None
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConceptErrors:
+    material_id: str
+    unit_id: str
+    concept_id: str | None
+    wrong_count: int
+
+    @property
+    def is_weak(self):
+        return self.wrong_count >= 2
+
+
+@dataclass(frozen=True, slots=True)
+class MasteryResult:
+    history: tuple[DayScore, ...]
+    units: tuple[DayScore, ...]
+    concept_errors: tuple[ConceptErrors, ...]
+
+    def latest(self, unit_id):
+        return next((row for row in self.units if row.unit_id == unit_id), None)
+
+
+def calculate_mastery(attempts, *, recovery_entries=(), current_scopes=(), eligibility=()) -> MasteryResult:
+    """Replay one daily aggregate from its prior-day score, retaining real entry events.
+
+    Reordering inputs and repeating identical facts cannot grant points. Different
+    finalized set histories remain meaningful: a real first-day 70 anchors that
+    day's later recovery at 75, even if its eventual raw aggregate reaches 90.
+    """
+    facts = ordered_attempts(attempts)
+    by_unit, material_of = defaultdict(list), {}
+    for fact in facts:
+        by_unit[fact.unit_id].append(fact)
+        material_of[fact.unit_id] = fact.material_id
+    scopes = {}
+    for scope in current_scopes:
+        if not isinstance(scope, UnitScope):
+            raise ValueError("UnitScope values are required")
+        if scope.unit_id in scopes and scopes[scope.unit_id] != scope:
+            raise ValueError("A unit has conflicting current scope revisions")
+        if scope.unit_id in material_of and material_of[scope.unit_id] != scope.material_id:
+            raise ValueError("The scope belongs to another material")
+        scopes[scope.unit_id] = scope
+    eligible = {}
+    for evidence in eligibility:
+        if not isinstance(evidence, DayEligibility):
+            raise ValueError("Verified DayEligibility values are required")
+        key = (evidence.scope, evidence.day)
+        if key in eligible and eligible[key] != evidence:
+            raise ValueError("Conflicting daily eligibility snapshots")
+        eligible[key] = evidence
+    entries, first_entries = {}, {}
+    for entry in recovery_entries:
+        if not isinstance(entry, RecoveryEntry):
+            raise ValueError("Observed RecoveryEntry values are required")
+        if entry.history_id in entries and entries[entry.history_id] != entry:
+            raise ValueError("Conflicting facts have the same history ID")
+        if entry.unit_id in material_of and material_of[entry.unit_id] != entry.material_id:
+            raise ValueError("The recovery entry belongs to another material")
+        entries[entry.history_id] = entry
+    for entry in sorted(entries.values(), key=lambda row: (row.recorded_date, row.recorded_at, row.history_id)):
+        first_entries.setdefault(entry.unit_id, entry)
+
+    history, latest = [], []
+    for unit_id in sorted(by_unit):
+        scope, entry = scopes.get(unit_id), first_entries.get(unit_id)
+        per_day, accumulated, previous, recovery_start, result_days = defaultdict(list), [], None, None, []
+        for fact in by_unit[unit_id]:
+            per_day[fact.answered_date].append(fact)
+        for day in sorted(per_day):
+            accumulated.extend(per_day[day])
+            raw = _weighted_score(accumulated).value
+            candidate, reasons = min(raw, Fraction(99)), []
+            if raw > 99:
+                reasons.append("maximum_99")
+            if entry is not None and entry.recorded_date <= day:
+                recovery_start = min(recovery_start, entry.recorded_date) if recovery_start else entry.recorded_date
+            observed_recovery = recovery_start is not None
+            evidence = eligible.get((scope, day)) if scope else None
+            has_custom = any(fact.quiz_kind == "custom" for fact in per_day[day])
+            boost = bool(evidence and evidence.full_relearned and evidence.custom_confirmed and has_custom)
+            limit = 15 if boost else 5
+            anchor = previous.capped_score if previous else (
+                Fraction(entry.displayed_score) if entry is not None and entry.recorded_date == day else None)
+            if observed_recovery and anchor is not None and candidate > anchor + limit:
+                candidate = anchor + limit
+                reasons.append("daily_recovery_limit")
+            previous_grade = previous.grade if previous else grade(entry.displayed_score) if entry and entry.recorded_date == day else None
+            if previous_grade == "risk" and half_up(candidate) >= 80:
+                candidate = Fraction(79)
+                reasons.append("one_grade_per_day")
+            if recovery_start is None and half_up(candidate) < 80:
+                recovery_start = day
+            if recovery_start is not None:
+                result_days = [result_day for result_day in per_day if recovery_start <= result_day <= day]
+                supplement = bool(scope and any(
+                    snapshot.scope == scope and recovery_start <= snapshot.day <= day and snapshot.supplement_completed
+                    for snapshot in eligible.values()))
+                if half_up(candidate) >= 80 and (not supplement or len(result_days) < 2):
+                    candidate = Fraction(79)
+                    reasons.append("recovery_stable_requires_supplement_and_two_dates")
+            score = half_up(candidate)
+            previous = DayScore(material_of[unit_id], unit_id, day, raw, candidate, score, grade(score),
+                previous.score if previous else None, recovery_start is not None, recovery_start,
+                tuple(sorted(result_days)), limit if recovery_start is not None else None, tuple(reasons))
+            history.append(previous)
+        latest.append(previous)
+
+    wrong = defaultdict(int)
+    for fact in facts:
+        if not fact.correct:
+            wrong[(fact.material_id, fact.unit_id, fact.concept_id)] += 1
+    errors = tuple(ConceptErrors(material, unit, concept, count) for (material, unit, concept), count
+                   in sorted(wrong.items(), key=lambda row: (row[0][0], row[0][1], row[0][2] or "")))
+    return MasteryResult(tuple(sorted(history, key=lambda row: (row.day, row.unit_id))), tuple(latest), errors)
