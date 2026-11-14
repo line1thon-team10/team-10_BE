@@ -54,6 +54,29 @@ if [[ "$worker_available" -eq 1 && $'\n'"$configured_services"$'\n' != *$'\ngrad
   echo 'The image has a grading worker but the Compose contract does not; keeping the current service.' >&2
   exit 1
 fi
+# Older release images legitimately have no material worker. Dependency/import
+# failures must stop deployment before touching the running application.
+material_worker_available=0
+material_probe='import importlib, sys
+try:
+    importlib.import_module("app.workers.materials")
+except ModuleNotFoundError as error:
+    if error.name in ("app.workers", "app.workers.materials"):
+        sys.exit(42)
+    raise'
+if docker run --rm --entrypoint python "$image" -c "$material_probe"; then
+  material_worker_available=1
+else
+  probe_status=$?
+  if [[ "$probe_status" -ne 42 ]]; then
+    echo 'Material worker module probe failed; keeping the current service.' >&2
+    exit 1
+  fi
+fi
+if [[ "$material_worker_available" -eq 1 && $'\n'"$configured_services"$'\n' != *$'\nmaterial-worker\n'* ]]; then
+  echo 'The image has a material worker but the Compose contract does not; keeping the current service.' >&2
+  exit 1
+fi
 "${compose[@]}" up -d --wait db
 # Stop writers before schema changes; no database downgrade is attempted on failure.
 "${compose[@]}" stop api
@@ -63,13 +86,13 @@ running=$(docker ps --filter "label=com.docker.compose.project=$project" --forma
 writers=()
 while IFS='|' read -r container container_project service writer; do
   [[ -n "$container" && "$container_project" == "$project" && "$service" != db ]] || continue
-  if [[ "$writer" == true || "$service" == api || "$service" == grading-worker || "$service" == migrate ]]; then
+  if [[ "$writer" == true || "$service" == api || "$service" == grading-worker || "$service" == material-worker || "$service" == migrate ]]; then
     [[ "$container" =~ ^[a-f0-9]{12,64}$ ]] || { echo 'Unexpected writer container identity.' >&2; exit 1; }
     writers+=("$container")
   fi
 done <<< "$running"
 if [[ ${#writers[@]} -gt 0 ]]; then
-  docker stop --time 35 "${writers[@]}"
+  docker stop --time 320 "${writers[@]}"
 fi
 mkdir -p backups
 backup="backups/$(date -u +%Y%m%dT%H%M%SZ).sql"
@@ -78,6 +101,9 @@ backup="backups/$(date -u +%Y%m%dT%H%M%SZ).sql"
 start_services=(api)
 if [[ "$worker_available" -eq 1 ]]; then
   start_services+=(grading-worker)
+fi
+if [[ "$material_worker_available" -eq 1 ]]; then
+  start_services+=(material-worker)
 fi
 "${compose[@]}" up -d --no-deps --wait --wait-timeout 180 "${start_services[@]}"
 printf '%s\n' "$image" > deployed-image.txt

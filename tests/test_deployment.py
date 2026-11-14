@@ -40,7 +40,7 @@ fi
     env = {**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
            'DEPLOY_LOG': str(tmp_path / 'docker.log'),
            'MOCK_BE_REVISION': BE_REVISION, 'MOCK_AI_REVISION': AI_REVISION,
-           'MOCK_SERVICES': 'db\nmigrate\napi\ngrading-worker'}
+           'MOCK_SERVICES': 'db\nmigrate\napi\ngrading-worker\nmaterial-worker'}
     return tmp_path, env
 
 
@@ -151,7 +151,7 @@ def test_exact_project_writers_including_orphans_stop_before_backup(deployment):
     result, log = run(deployment, MOCK_CONTAINER_ROWS=rows)
     assert result.returncode == 0, result.stderr
     stopped = next(line for line in log.splitlines() if line.startswith('stop --time'))
-    assert stopped == 'stop --time 35 111111111111 222222222222 666666666666'
+    assert stopped == 'stop --time 320 111111111111 222222222222 666666666666'
     assert 'ps --filter label=com.docker.compose.project=line1-2026 ' in log
     assert log.index('stop api') < log.index(stopped) < log.index('pg_dump') < log.index('run --rm --no-deps migrate')
     assert 'up -d --no-deps --wait --wait-timeout 180 api grading-worker' in log
@@ -161,7 +161,7 @@ def test_latest_apply_with_old_compose_and_image_stops_orphan_worker_then_starts
     result, log = run(deployment, WORKER_PROBE_STATUS='42', MOCK_SERVICES='db\nmigrate\napi',
         MOCK_CONTAINER_ROWS='111111111111|line1-2026|grading-worker|true')
     assert result.returncode == 0, result.stderr
-    assert log.index('stop --time 35 111111111111') < log.index('pg_dump')
+    assert log.index('stop --time 320 111111111111') < log.index('pg_dump')
     assert 'up -d --no-deps --wait --wait-timeout 180 api\n' in log
     assert 'up -d --no-deps --wait --wait-timeout 180 api grading-worker' not in log
 
@@ -181,7 +181,7 @@ def test_worker_image_requires_matching_compose_service_before_stopping_current_
     assert 'stop api' not in log and 'pg_dump' not in log
 
 
-@pytest.mark.parametrize('failure', ['ps --filter', 'stop --time 35'])
+@pytest.mark.parametrize('failure', ['ps --filter', 'stop --time 320'])
 def test_writer_discovery_or_stop_failure_prevents_backup_and_migration(deployment, failure):
     result, log = run(deployment, FAIL_MATCH=failure,
         MOCK_CONTAINER_ROWS='111111111111|line1-2026|grading-worker|true')
@@ -196,7 +196,8 @@ def test_apply_shell_syntax_is_valid():
 
 @pytest.mark.parametrize('kind,expected', [('missing_parent', 42), ('missing_module', 42),
     ('missing_dependency', 1), ('broken_module', 1), ('valid', 0)])
-def test_actual_probe_distinguishes_old_module_absence_from_import_failure(tmp_path, kind, expected):
+@pytest.mark.parametrize('worker_module', ['grading', 'materials'])
+def test_actual_probe_distinguishes_old_module_absence_from_import_failure(tmp_path, kind, expected, worker_module):
     app = tmp_path / 'app'
     app.mkdir()
     (app / '__init__.py').write_text('')
@@ -207,9 +208,36 @@ def test_actual_probe_distinguishes_old_module_absence_from_import_failure(tmp_p
         if kind != 'missing_module':
             content = {'missing_dependency': 'import absent_grading_dependency\n',
                        'broken_module': 'raise RuntimeError("broken worker")\n', 'valid': ''}[kind]
-            (workers / 'grading.py').write_text(content)
+            (workers / (worker_module + '.py')).write_text(content)
     source = (ROOT / 'deploy/apply.sh').read_text()
-    probe = source.split("probe='", 1)[1].split("'\nif docker run", 1)[0]
+    prefix = "material_probe='" if worker_module == "materials" else "probe='"
+    probe = source.split(prefix, 1)[1].split("'\nif docker run", 1)[0]
     bootstrap = 'import sys; sys.path.insert(0, sys.argv[1])\n' + probe
     result = subprocess.run([sys.executable, '-I', '-c', bootstrap, str(tmp_path)], capture_output=True, text=True)
     assert result.returncode == expected, result.stderr
+
+
+def test_material_worker_shares_owned_storage_and_has_no_listening_port():
+    import yaml
+    services = yaml.safe_load((ROOT/'deploy/compose.yml').read_text())['services']
+    api, worker = services['api'], services['material-worker']
+    assert worker['image'] == api['image'] and worker['volumes'] == api['volumes']
+    assert worker['environment'] == api['environment'] and 'ports' not in worker
+    assert worker['command'] == ['python','-m','app.workers.materials','--loop']
+    assert worker['stop_grace_period'] == '320s'
+    assert worker['labels']['dev.line1.database-writer'] == 'true'
+    assert worker['healthcheck']['test'] == ['CMD','python','-m','app.workers.materials','--healthcheck']
+
+
+def test_material_image_without_compose_worker_stops_before_writes(deployment):
+    result, log = run(deployment, MOCK_SERVICES='db\nmigrate\napi\ngrading-worker')
+    assert result.returncode != 0
+    assert 'material worker' in result.stderr and 'Compose contract' in result.stderr
+    assert 'stop api' not in log and 'pg_dump' not in log
+
+
+def test_material_worker_drains_before_backup_and_restarts_after_migration(deployment):
+    result, log = run(deployment, MOCK_CONTAINER_ROWS='111111111111|line1-2026|material-worker|true')
+    assert result.returncode == 0, result.stderr
+    assert log.index('stop --time 320 111111111111') < log.index('pg_dump')
+    assert 'up -d --no-deps --wait --wait-timeout 180 api grading-worker material-worker' in log

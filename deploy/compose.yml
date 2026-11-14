@@ -79,6 +79,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+  material-worker:
+    <<: *api
+    command: [python, -m, app.workers.materials, --loop]
+    restart: unless-stopped
+    stop_grace_period: 320s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, app.workers.materials, --healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 volumes:
   postgres:
   storage:

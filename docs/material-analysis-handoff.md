@@ -15,3 +15,13 @@ Groq와 OCR adapter는 전송 재시도 및 redirect를 끄고 매 전송에 남
 ## 수동 목차 해석
 
 M-03 `POST /api/materials/toc`는 자료 소유권과 과목 관계·실제 페이지 수를 먼저 확인한다. `1. 제목 1~5쪽` 또는 `1) 제목 p1-5`처럼 명확한 한 줄 형식은 결정적으로 파싱하며, 나머지 자연어는 사용자·자료 버전에 격리된 gateway `nl_parse`를 사용한다. 두 경로 모두 양의 유일 단원 번호, 비어 있지 않은 제목, 물리 페이지 경계, 단원 비중첩을 확인한다. 명확한 입력의 잘못된 범위는 422, 외부 해석 실패는 503이며 임의로 내용을 고치거나 단원을 만들지 않는다. 응답 후보를 반환할 뿐 단원·개념·자료·분석 작업은 변경하지 않는다. 저장은 별도 `PUT /api/units`의 책임이다.
+
+## Worker 실행 구성
+
+Compose의 `material-worker`는 API와 같은 immutable image/DB/자료 volume을 사용하고 외부 포트를 열지 않는다.
+기본 300초 PDF 예산에 맞춰 종료 유예는 320초다. 배포 스크립트는 기존 writer를 모두 중지한 뒤
+DB를 백업하고 migration 후 worker를 시작한다. PID·유효시각 기반 heartbeat로 healthcheck하며,
+SIGTERM/SIGINT는 현재 작업의 제한된 gateway 실행이 끝난 뒤 새 작업을 가져오지 않고 종료한다.
+시간 예산을 늘리는 운영 설정은 종료 유예도 함께 조정해야 한다. 이전 앱에 worker 모듈이 없는
+경우는 API만 시작할 수 있으나, 존재하는 worker의 import 실패나 Compose 누락은 배포 전 오류다.
+현재 신규 API의 운영 배포 동결은 유지한다.
