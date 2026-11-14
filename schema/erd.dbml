@@ -215,6 +215,31 @@ Table plan_proposals {
   created_at timestamptz [not null]
 }
 
+Table plan_proposal_states [note: 'SYS-04: previewId는 기존 plan_proposals.id. 새 후보만 완전한 기준/원 응답을 갖추며 legacy의 알 수 없는 값은 null. 시간 만료 없음. changes는 기존 proposal의 불변 스냅샷. 적용은 SYS-05의 사용자 잠금/도메인 변경과 같은 transaction에서 CAS.'] {
+  proposal_id uuid [pk, ref: > plan_proposals.id]
+  user_id uuid [not null, ref: > users.id]
+  kind varchar [not null, note: '원 request.kind와 일치']
+  target jsonb [note: '도메인이 제공한 대상 종류/식별자. 일정 회차 ID 등도 그대로 보존']
+  normalized_input jsonb
+  input_hash varchar [note: '정규화 입력의 canonical JSON SHA256. 문자열 공백과 배열 순서는 도메인이 결정']
+  base_date date
+  base_plan_id uuid [ref: > plans.id]
+  base_plan_revision int
+  base_structure_hash varchar [note: '계획 없는 후보의 자료/목표/일정 구조 해시. 도메인이 입력을 제공']
+  dependency_versions jsonb [note: '참조한 자료/일정/기록/정책 등의 ID와 버전. 원소 해석은 SYS-05와 도메인 책임']
+  status varchar [not null, note: 'ready / applied / cancelled / stale / legacy']
+  state_revision int [not null, note: '0부터 CAS 전이마다 1 증가. 최초 응답 재생은 증가 없음']
+  preview_response jsonb
+  preview_schema_version int
+  result_response jsonb [note: '최초 적용 응답. legacy 적용 사실만 있는 경우 null이며 재실행 허가가 아님']
+  result_schema_version int
+  result_captured_at timestamptz
+  decided_at timestamptz
+  legacy boolean [not null]
+  legacy_snapshot jsonb [note: '이관 당시 request/proposal의 알려진 사실. 누락된 기준값/응답을 추정하지 않음']
+  indexes { (user_id, kind, status) }
+}
+
 Table study_blocks [note: '책 블록의 지속 ID. 같은 작업의 이월·버전 복사는 이 ID 공유. 기록된 블록은 삭제하지 않고 현재 등급으로 표시.'] {
   id uuid [pk]
   subject_id uuid [not null, ref: > subjects.id]
