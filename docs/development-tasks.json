@@ -136,7 +136,7 @@
       "id": "SYS-04",
       "title": "미리보기 저장 구조·기준 버전 추가",
       "lane": "platform",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-02"
@@ -148,7 +148,7 @@
         "BE/app/repositories/proposals.py",
         "BE/tests/test_proposal_storage.py",
         "BE/scripts/gen_schema/gen_schema.js",
-        "BE/schema/preview-storage-constraints.json",
+        "BE/schema/proposal-storage-constraints.json",
         "BE/tests/test_proposal_storage_migration.py",
         "BE/docs/preview-storage-handoff.md",
         "BE/docs/api/persistence.md"
@@ -170,10 +170,11 @@
       "optional": false,
       "branch": "feat/preview-storage",
       "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "fa1a6730a668564a076532ded1936fbc29780bf7",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/26",
       "validation_evidence": [
-        "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress."
+        "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress.",
+        "Finalfa1a673:222SQLite+PG passed; generator regeneration exact and single0007head. Astra review queued after S-01 fix recheck."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -420,7 +421,7 @@
       "id": "R-03",
       "title": "Task 응답 범위·자료 식별 통일",
       "lane": "study",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-01"
@@ -459,7 +460,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/24",
       "validation_evidence": [
         "Shared TaskView+home/focus ca88fcd;282study+157focusSQLite/PG passed;handoff pending. FocusTask minimal field extension explicitly leased.",
-        "Worker424SQLite+PG passed; Astra424+4independentHTTP+5000range-oracle cases passed, no findings. Actions43546278439 pending."
+        "Worker424SQLite+PG passed; Astra424+4independentHTTP+5000range-oracle cases passed, no findings. Actions43546278439 pending.",
+        "Actions43546278439 candidate8f87a804:1436passed/1skipped. Merged e11d961; candidate/integration tree diff contains only two orchestration documents, identical code/tests."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -555,15 +557,16 @@
       "id": "D-01",
       "title": "진도·달성률·출제가능 진행률 분리",
       "lane": "study",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/quiz_implementation",
       "depends_on": [
         "R-03"
       ],
       "write_scope": [
         "BE/app/services/study.py",
         "BE/app/domain/progress.py",
-        "BE/tests/test_progress_contract.py"
+        "BE/tests/test_progress_contract.py",
+        "BE/docs/progress-aggregates-handoff.md"
       ],
       "shared_resources": [
         "study-read-model"
@@ -583,13 +586,16 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/progress-aggregates",
+      "base_sha": "e11d9617e99f219764daf0d472f3b372fd7ece66",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-progress"
     },
     {
       "id": "D-02",
@@ -1037,10 +1043,11 @@
       "optional": false,
       "branch": "feat/mastery-rules",
       "base_sha": "baed68a",
-      "head_sha": "53db4e43b35dd38ae90c3c6002ce9cad30470661",
+      "head_sha": "29afcc3553b9131fa90b2087038788b6d0c5af46",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/25",
       "validation_evidence": [
-        "Worker304SQLite+PG passed. Astra independent oracles passed; existing demo package regression still called private metrics after UUID snapshot change. Root correcting that existing test separately before final review."
+        "Worker304SQLite+PG passed. Astra independent oracles passed; existing demo package regression still called private metrics after UUID snapshot change. Root correcting that existing test separately before final review.",
+        "Root29afcc3 only repairs existing demo-test consumer:20SQLite+PG passed and explicit90/40/80 assert. Independent recheck pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
