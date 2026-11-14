@@ -15,7 +15,7 @@
 ID/이름/reason은 string, pages/current/failedStep/progress는 integer, steps는 string[], reused/ocr/quizless는 bool. 목록의 pages/jobId/ocr/quizless는 분석 전 null 가능. 작업의 ocr/reason/failedStep은 아직 판정되지 않았거나 해당 없으면 null. status는 running/done/failed. running의 progress=0..99, done=100, current는 0 기반 단계 인덱스. failedStep은 실패한 current, reason은 한국어 안내다.
 
 - 과목당 여러 PDF를 보존한다. 새 업로드가 기존 자료를 교체하지 않는다. 동일 사용자·과목·파일 SHA256의 완료/진행 작업은 재사용, 실패 작업은 새 시도로 접수한다.
-- PDF MIME과 실제 구문을 검증한다. 비PDF `415 NOT_PDF`, 잠금/손상으로 읽을 수 없으면 `400 BAD_REQUEST`. 운영 업로드 상한을 넘으면 `413 FILE_TOO_LARGE`; 50MiB를 제품 요구로 고정하지 않는다.
+- PDF MIME과 실제 구문을 검증한다. 비PDF `415 NOT_PDF`, 잠금/손상으로 읽을 수 없으면 `400 BAD_REQUEST`. 운영 업로드 상한을 넘으면 `413 FILE_TOO_LARGE`. POL-02 초기 설정은 `MAX_PDF_UPLOAD_BYTES=26214400`(25MiB, pinned AI 업로드 기본 상한과 일치)이며 제품 요구가 아니다. 정확히 상한인 파일은 허용하고 한 바이트 초과부터 거절한다. Content-Length를 신뢰하지 않고 읽는 동안 누적 검사하며 거절된 임시 파일/새 작업을 남기지 않는다.
 - OCR 성공이면 `ocr=true`. 저품질일 때만 `quizless=true`. OCR이라는 이유만으로 전부 퀴즈에서 제외하지 않는다. 분석 실패 시 수동 목차 입력을 안내한다. 품질 임계값은 p.22의 AI 확인 사항이며 FE는 서버 판정값으로 표시한다.
 - 파일 저장과 작업 접수를 완료한 뒤 200을 반환한다. 오래된 분석 작업은 새 구조를 덮어쓰지 않는다. 스토리지 경로는 노출하지 않는다.
 
