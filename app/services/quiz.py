@@ -44,7 +44,7 @@ class QuizService:
         self.data = StudyData(conn, user["id"])
 
     # ---------- 조회 ----------
-    def session(self, key: str, quiz_id: str | None = None) -> dict:
+    def session(self, key: str, quiz_id: str | None = None, difficulty: str | None = None) -> dict:
         """명시한 quiz_id는 새 세트를 만들지 않고 경로·소유 과목까지 검증한다."""
         owned_subjects = select(t.subjects.c.id).where(t.subjects.c.user_id == self.user["id"])
         s = self.conn.execute(select(t.quiz_sessions).where(
@@ -55,10 +55,12 @@ class QuizService:
         if s:
             if quiz_id is not None and key not in (s["id"], s["subject_id"]):
                 raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
+            if difficulty is not None and difficulty != s['selected_difficulty']:
+                raise ApiError('QUIZ_DIFFICULTY_CONFLICT', '이미 준비된 퀴즈의 난이도는 바꿀 수 없어요', 409)
             return dict(s)
         if quiz_id is not None or key not in self.data.subject_by_id:
             raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
-        return self.ensure_daily(key)
+        return self.ensure_daily(key, difficulty)
 
     def daily_sessions(self, subject_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(select(t.quiz_sessions).where(
@@ -111,41 +113,9 @@ class QuizService:
         return out
 
     # ---------- 구성 ----------
-    def ensure_daily(self, subject_id: str) -> dict:
-        """그 과목의 오늘 퀴즈. 없으면 규칙대로 만들어요 (새 문제 5/단원 + 취약 문항)"""
-        open_ones = [s for s in self.daily_sessions(subject_id) if s["status"] in ("ready", "in_progress")]
-        if open_ones:
-            return open_ones[0]
-        done = [s for s in self.daily_sessions(subject_id) if s["status"] == "submitted"]
-        if done:
-            return done[-1]
-        studied_units = []
-        for x in self.data.tasks_on(self.today):
-            unit = self.data.unit_of(x)
-            if x.row["subject_id"] == subject_id and unit and unit["id"] not in studied_units:
-                studied_units.append(unit["id"])
-        if not studied_units:
-            raise ApiError("NO_QUIZ", "오늘 이 과목은 공부한 범위가 없어서 퀴즈가 없어요", 404)
-        attempted = set(self.conn.execute(
-            select(t.quiz_items.c.question_id).join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
-            .where(t.quiz_sessions.c.user_id == self.user["id"])).scalars())
-        chosen: list[tuple[str, str]] = []
-        weak = self.conn.execute(
-            select(t.weak_questions.c.question_id).join(t.questions, t.weak_questions.c.question_id == t.questions.c.id)
-            .join(t.units, t.questions.c.unit_id == t.units.c.id)
-            .join(t.materials, t.units.c.material_id == t.materials.c.id)
-            .where(t.materials.c.subject_id == subject_id, t.weak_questions.c.status == "active",
-                   t.weak_questions.c.next_review_date <= self.today)).scalars().all()
-        chosen += [(q, "weak") for q in weak]
-        for uid in studied_units:
-            fresh = self.conn.execute(
-                select(t.questions.c.id).where(t.questions.c.unit_id == uid, t.questions.c.difficulty == "low",
-                                               t.questions.c.origin != "generated")
-                .order_by(t.questions.c.code)).scalars().all()
-            chosen += [(q, "new") for q in [q for q in fresh if q not in attempted][:NEW_PER_UNIT]]
-        if not chosen:
-            raise ApiError("NO_QUESTIONS", "이 범위 문항이 아직 준비되지 않았어요", 404)
-        return self._create(subject_id, "daily", chosen)
+    def ensure_daily(self, subject_id: str, difficulty: str | None = None) -> dict:
+        from app.services.quiz_selection import QuizSelection
+        return QuizSelection(self.conn, self.user, self.today).ensure_daily(subject_id, difficulty)
 
     def _create(self, subject_id, qtype, chosen, parent=None) -> dict:
         sid = str(uuid.uuid4())
@@ -193,9 +163,10 @@ class QuizService:
         return self._round(fresh or {x["unit_id"] for x in items})
 
     def _round(self, unit_ids) -> str:
-        passes = self.conn.execute(select(func.max(t.learning_passes.c.pass_number)).where(
-            t.learning_passes.c.unit_id.in_(list(unit_ids)), t.learning_passes.c.invalidated_at.is_(None))).scalar()
-        return f"{max(1, passes or 1)}회독"
+        rounds = dict(self.conn.execute(select(t.learning_passes.c.unit_id, func.count(t.learning_passes.c.id)).where(
+            t.learning_passes.c.unit_id.in_(list(unit_ids)), t.learning_passes.c.invalidated_at.is_(None))
+            .group_by(t.learning_passes.c.unit_id)).all())
+        return f"{max(1, min((rounds.get(uid, 0) for uid in unit_ids), default=0))}회독"
 
     def composition(self, items) -> tuple[str, list[str]]:
         by_unit = defaultdict(list)
