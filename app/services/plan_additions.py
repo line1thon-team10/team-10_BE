@@ -45,7 +45,8 @@ def _ready(service, user_id, snapshot, normalized):
 def _expand_structure(conn, user_id, body, selected):
     structure = UnitService(conn).get(user_id, body.subjectId, body.materialId)
     covered = []
-    maximum = max((unit['no'] or 0 for unit in structure['units']), default=0)
+    used_numbers = {unit['no'] for unit in structure['units']}
+    maximum = max((number or 0 for number in used_numbers), default=0)
     for unit in structure['units']:
         unit.pop('quizless')
         unit.pop('evidence')
@@ -69,6 +70,11 @@ def _expand_structure(conn, user_id, body, selected):
             'from':part.start, 'to':part.end, 'inExam':True} for part in missing)
     for part in subtract(selected, covered):
         maximum += 1
+        if maximum > 2_147_483_647:
+            maximum = 1
+        while maximum in used_numbers:
+            maximum = maximum+1 if maximum < 2_147_483_647 else 1
+        used_numbers.add(maximum)
         structure['units'].append({'no':maximum, 'title':f'추가 범위 {part.start}–{part.end}쪽',
             'from':part.start, 'to':part.end, 'difficulty':None, 'inExam':True, 'concepts':[]})
     structure.pop('file')
