@@ -28,7 +28,7 @@ class PlanInputError(ValueError):
 
 
 class PendingObligations(PlanInputError):
-    """Overdue remedial/review obligations need the carryover flow first."""
+    """Owed remedial/review work needs its current carryover resolved first."""
 
 
 
@@ -348,6 +348,56 @@ def _unallocated_obligations(connection, user_id, included, catalog):
     return result
 
 
+
+def _restore_carryover_residuals(tasks, catalog, affected, requirements, supersede, earliest_day):
+    """A correction may reopen pages outside the latest carryover reservation."""
+    blocks = defaultdict(list)
+    for task in tasks:
+        if task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review'):
+            blocks[task.row['block_id']].append(task)
+    for chain in blocks.values():
+        carried = [task for task in chain if task.row['status'] == 'carried_over']
+        if not carried:
+            continue
+        required, actual, reserved = defaultdict(list), defaultdict(list), defaultdict(list)
+        live = [task for task in chain if task.row['status'] not in ('carried_over', 'excluded', 'completed')]
+        if len(live) > 1:
+            raise PlanInputError('같은 보충·복습에 진행 중인 배치가 중복돼요')
+        for task in chain:
+            if task.row['status'] == 'excluded':
+                continue
+            for row in task.paged:
+                unit = catalog.get(row['unit_id'])
+                if unit is None:
+                    raise PlanInputError('이월된 보충·복습의 원래 단원을 확인해 주세요')
+                span = PageSpan(unit.material_id, row['start_page'], row['end_page'])
+                required[unit.id].append(span)
+                if task in live:
+                    reserved[unit.id].append(span)
+            if task.record and task.record['result'] in ('completed', 'partial'):
+                for row in task.done_ranges:
+                    if row['unit_id'] in catalog and row['start_page'] is not None and row['end_page'] is not None:
+                        unit = catalog[row['unit_id']]
+                        actual[unit.id].append(PageSpan(unit.material_id, row['start_page'], row['end_page']))
+        remaining = tuple(ScopePart(uid, span) for uid, spans in required.items()
+                          for span in subtract(spans, actual[uid]))
+        residual = any(subtract((part.span,), reserved[part.unit_id]) for part in remaining)
+        if live and live[0].id not in supersede:
+            if residual:
+                raise PendingObligations('기록 정정으로 남은 보충·복습은 현재 이월 태스크를 완료한 뒤 다시 배분해 주세요')
+            continue
+        source = live[0] if live else min(carried, key=lambda task: (
+            task.row['origin_task_id'] is not None, task.row['created_at'], task.id))
+        # All placements of one durable book share completion facts. Moving its
+        # live child must include reopened ancestor pages, without duplicating it.
+        requirements[:] = [item for item in requirements if item.id != source.id]
+        if remaining:
+            requirements.append(WorkRequirement(source.id, source.row['subject_id'], source.row['task_type'],
+                remaining, earliest_day, indivisible=True))
+            if source.id not in supersede:
+                supersede.append(source.id)
+
+
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
                               subject_overrides=None, earliest_day=None, movable_task_ids=(),
@@ -442,6 +492,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                 if remaining:
                     requirements.append(WorkRequirement(task.id, task.row['subject_id'], task.row['task_type'],
                         tuple(remaining), earliest_day, indivisible=True))
+    _restore_carryover_residuals(data.tasks, catalog, affected, requirements, supersede, earliest_day)
     zone = ZoneInfo(timezone_name)
     for task, parts in sorted(pending_fixed, key=lambda item: (item[0].row['scheduled_date'], item[0].row['starts_at'] is None, item[0].id)):
         row, day = task.row, task.row['scheduled_date']
