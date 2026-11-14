@@ -17,7 +17,7 @@ from app.db import schema as t
 from app.domain.onboarding import CONFIRMATION_COLUMNS, subject_view
 from app.domain.ranges import PageSpan, subtract
 from app.domain.scheduling import (AllocationInput, Subject, UnitScope, FixedTask, FixedRange,
-    free_slots)
+    free_slots, WorkRequirement, ScopePart)
 from app.repositories.events import EventRepository
 from app.services.onboarding_events import event_intervals
 
@@ -255,7 +255,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
 
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                               material_structure_overrides=None, affected_subject_ids=None,
-                              subject_overrides=None, earliest_day=None,
+                              subject_overrides=None, earliest_day=None, movable_task_ids=(),
                               calendar_event_overrides=None, calendar_exception_overrides=None):
     """Keep learning facts and active started placements while reallocating rest.
 
@@ -265,7 +265,7 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     """
     if (not subject_ids and material_structure_overrides is None and subject_overrides is None
             and affected_subject_ids is None and calendar_event_overrides is None
-            and calendar_exception_overrides is None):
+            and calendar_exception_overrides is None and not movable_task_ids):
         raise PlanInputError('재배분할 과목이나 변경할 입력을 선택해 주세요')
     earliest_day = today if earliest_day is None else earliest_day
     if type(earliest_day) is not date or earliest_day < today:
@@ -294,7 +294,12 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
         sessions[row['task_id']].append(dict(row))
     consumed_sessions = set(connection.scalars(select(t.study_records.c.session_id).where(
         t.study_records.c.task_id.in_([task.id for task in data.tasks]), t.study_records.c.session_id.is_not(None))))
-    learned, fixed, supersede = defaultdict(list), [], []
+    if not isinstance(movable_task_ids, (tuple, list)) or any(type(value) is not str for value in movable_task_ids):
+        raise PlanInputError('이동할 태스크 ID 목록이 필요해요')
+    movable = set(movable_task_ids)
+    if len(movable) != len(movable_task_ids) or not movable <= {task.id for task in data.tasks if task.row['subject_id'] in affected}:
+        raise PlanInputError('본인의 재배분 대상 태스크만 중복 없이 이동할 수 있어요')
+    learned, fixed, supersede, requirements = defaultdict(list), [], [], []
     pending_fixed = []
     for task in data.tasks:
         if task.row['subject_id'] not in included:
@@ -307,15 +312,15 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                         learned[unit.material_id].append(PageSpan(unit.material_id, span['start_page'], span['end_page']))
         if task.row['status'] in ('carried_over', 'excluded'):
             continue
-        if task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
+        if task.id not in movable and task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
             raise PendingObligations('기한이 지난 보충·복습을 먼저 이월한 뒤 과목을 추가해 주세요')
         protected_session = any(session['status'] in ('running', 'paused') or (
             session['status'] in ('ended', 'auto_stopped') and session['id'] not in consumed_sessions)
             for session in sessions[task.id])
         is_fixed = (task.row['subject_id'] not in affected or not task.paged or protected_session
-            or task.row['status'] == 'completed' or (
+            or task.row['status'] == 'completed' or (task.id not in movable and (
                 task.row['task_type'] in ('remedial', 'review') or task.row['scheduled_date'] < earliest_day
-                and task.row['scheduled_date'] >= today or task.record is not None and task.row['scheduled_date'] >= today))
+                and task.row['scheduled_date'] >= today or task.record is not None and task.row['scheduled_date'] >= today)))
         active_parts = []
         for span in task.paged:
             unit = catalog.get(span['unit_id'])
@@ -330,6 +335,17 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
             pending_fixed.append((task, tuple(active_parts)))
         else:
             supersede.append(task.id)
+            if task.row['task_type'] in ('remedial', 'review'):
+                remaining = []
+                for span in task.paged:
+                    unit = catalog[span['unit_id']]
+                    done = [PageSpan(unit.material_id, row['start_page'], row['end_page']) for row in task.done_ranges
+                        if row['unit_id'] == unit.id and row['start_page'] is not None and row['end_page'] is not None]
+                    remaining.extend(ScopePart(unit.id, part) for part in subtract(
+                        (PageSpan(unit.material_id, span['start_page'], span['end_page']),), done))
+                if remaining:
+                    requirements.append(WorkRequirement(task.id, task.row['subject_id'], task.row['task_type'],
+                        tuple(remaining), earliest_day))
     zone = ZoneInfo(timezone_name)
     for task, parts in sorted(pending_fixed, key=lambda item: (item[0].row['scheduled_date'], item[0].row['starts_at'] is None, item[0].id)):
         row, day = task.row, task.row['scheduled_date']
@@ -356,4 +372,5 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
             raise PlanInputError('기존 배치의 날짜와 분량을 확인해 주세요') from exc
     units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.material_id]) if unit.subject_id in affected else ())
                   for unit in catalog.values())
-    return replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed)), supersede, request
+    return replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed),
+                   requirements=tuple(requirements)), supersede, request
