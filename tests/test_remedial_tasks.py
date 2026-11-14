@@ -134,3 +134,25 @@ def test_full_relearn_can_be_first_pass_only_with_actual_record_proof(api_client
     conn.execute(update(t.learning_passes).where(t.learning_passes.c.id==c['initial']).values(completion_kind='full_relearn',evidence_key='direct:'+'b'*64,evidence_snapshot=snapshot));conn.commit()
     submit(api_client,conn,c)
     assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==int(has_record)
+
+
+def test_allocation_snapshot_keeps_exact_original_speed_when_subject_settings_change(api_client,domain_connection,remedial_case):
+    from fractions import Fraction
+    c,conn=remedial_case,domain_connection
+    conn.execute(update(t.subjects).where(t.subjects.c.id==c['subject_id']).values(minutes_per_page=2.5))
+    conn.execute(update(t.units).where(t.units.c.id==c['units'][0]['id']).values(difficulty='mid'));conn.commit()
+    quiz,body,result=submit(api_client,conn,c)
+    links=[dict(row) for row in conn.execute(select(t.remedial_obligation_blocks)).mappings()]
+    assert links
+    for link in links:
+        snapshot=link['allocation_snapshot']
+        task=conn.execute(select(t.study_tasks).where(t.study_tasks.c.block_id==link['block_id'])).mappings().one()
+        assert snapshot['schemaVersion']=='remedial-allocation-v1' and snapshot['taskId']==task['id']
+        assert snapshot['date']==task['scheduled_date'].isoformat()
+        duration=Fraction(*snapshot['end'])-Fraction(*snapshot['start'])
+        assert duration==sum((part['to']-part['from']+1)*Fraction(*part['baseline'])*Fraction(*part['multiplier']) for part in snapshot['parts'])
+        assert all(part['baseline']==[5,2] and part['multiplier']==[6,5] for part in snapshot['parts'])
+    conn.execute(update(t.subjects).where(t.subjects.c.id==c['subject_id']).values(minutes_per_page=7))
+    conn.execute(update(t.units).where(t.units.c.id==c['units'][0]['id']).values(difficulty='high'));conn.commit()
+    assert api_client.post(f'/api/quiz/{quiz}/submit',headers=c['headers'],json=body).json()['data']==result
+    assert [dict(row) for row in conn.execute(select(t.remedial_obligation_blocks)).mappings()]==links

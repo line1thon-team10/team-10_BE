@@ -136,7 +136,15 @@ def schedule_obligation(conn, user, obligation_id, now):
         block_id, task_id = str(uuid4()), str(uuid4())
         conn.execute(t.study_blocks.insert().values(id=block_id, subject_id=subject['id'], unit_id=unit['id'],
             task_type='remedial', created_at=now))
-        conn.execute(t.remedial_obligation_blocks.insert().values(obligation_id=obligation_id, block_id=block_id))
+        conn.execute(t.remedial_obligation_blocks.insert().values(obligation_id=obligation_id, block_id=block_id,
+            allocation_snapshot={
+                'schemaVersion':'remedial-allocation-v1', 'generatedAt':now.isoformat(), 'taskId':task_id,
+                'date':placement.day.isoformat(), 'start':[placement.start.numerator,placement.start.denominator],
+                'end':[placement.end.numerator,placement.end.denominator], 'parts':[
+                    {'unitId':part.unit_id, 'materialId':part.span.material_id, 'from':part.span.start, 'to':part.span.end,
+                     'baseline':[part.baseline_minutes_per_page.numerator,part.baseline_minutes_per_page.denominator],
+                     'multiplier':[part.difficulty_multiplier.numerator,part.difficulty_multiplier.denominator]}
+                    for part in placement.parts]}))
         conn.execute(t.study_tasks.insert().values(id=task_id, plan_id=data.plan['id'], subject_id=subject['id'],
             block_id=block_id, task_type='remedial', title=unit['title']+' 보충', scheduled_date=placement.day,
             starts_at=_instant(placement.day.isoformat(), [placement.start.numerator, placement.start.denominator], user['timezone']),
