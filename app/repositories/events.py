@@ -1,5 +1,7 @@
 """Calendar rows owned through both event.user_id and optional subject ownership."""
-from sqlalchemy import Connection, or_, select
+from uuid import uuid4
+
+from sqlalchemy import Connection, or_, select, update
 
 from app.db import schema as t
 
@@ -37,3 +39,20 @@ class EventRepository:
 
     def has_approved_plan(self):
         return self.connection.scalar(select(t.plans.c.id).where(t.plans.c.user_id == self.user_id)) is not None
+
+    def create(self, values, at):
+        event_id = str(uuid4())
+        self.connection.execute(t.calendar_events.insert().values(
+            id=event_id, user_id=self.user_id, subject_id=None, revision=1, created_at=at, updated_at=at, **values))
+        return event_id
+
+    def update(self, event_id, values, at):
+        if not values:
+            return True
+        changed = self.connection.execute(update(t.calendar_events).where(*self._owned(), t.calendar_events.c.id == event_id)
+            .values(**values, revision=t.calendar_events.c.revision + 1, updated_at=at))
+        return changed.rowcount == 1
+
+    def delete(self, event_id, at):
+        # Keep exception/history rows; a deleted parent never contributes time.
+        return self.update(event_id, {"deleted_at": at}, at)

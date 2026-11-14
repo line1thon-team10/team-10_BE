@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from dataclasses import replace
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -12,6 +12,7 @@ from app.schemas.onboarding_events import EventCreate, EventPatch
 from app.db import schema as t
 from app.domain.user import User
 from app.repositories.users import UserRepository
+from app.repositories.locking import lock_user
 from app.services.onboarding_events import OnboardingEventsService, event_intervals
 
 
@@ -207,3 +208,241 @@ def test_stored_utc_dates_are_projected_in_user_timezone_not_database_date(domai
     assert row["date"] == MONDAY.isoformat() and row["start"] == "00:30"
     stored = conn.execute(select(t.calendar_events)).mappings().one()
     assert stored["starts_at"].date() == MONDAY - timedelta(days=1)
+
+
+def stored_event(conn, event_id):
+    return dict(conn.execute(select(t.calendar_events).where(t.calendar_events.c.id == event_id)).mappings().one())
+
+
+def assert_error(code, action, status):
+    with pytest.raises(ApiError) as error:
+        action()
+    assert (error.value.code, error.value.status) == (code, status)
+
+
+def test_create_weekly_anchors_first_selected_day_in_current_local_week(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    result = OnboardingEventsService(conn, user).create(EventCreate.model_validate(payload(days=[3, 1])))
+    event = result["events"][0]
+    assert event == {"id": event["id"], "kind": "class", "title": "수업", "days": [1, 3], "date": None,
+                     "start": "09:00", "end": "10:00", "added": False}
+    assert result["addedId"] is None and result["summary"]["fixedMinutes"] == 120
+    row = stored_event(conn, event["id"])
+    instant = row["starts_at"].replace(tzinfo=timezone.utc)
+    assert instant == at(MONDAY, "09:00")
+    assert row["recurrence_rule"] == "FREQ=WEEKLY;BYDAY=MO,WE" and row["recurrence_until"] is None
+    assert row["revision"] == 1 and row["subject_id"] is None
+    assert conn.execute(select(t.plans)).first() is None
+
+
+@pytest.mark.parametrize("zone,day,start,end,stored_date", [
+    ("Asia/Seoul", "2026-11-09", "00:30", "01:30", "2026-11-08"),
+    ("America/Los_Angeles", "2026-11-09", "22:00", "23:00", "2026-11-10"),
+])
+def test_create_date_event_stores_utc_and_returns_requested_local_date(domain_connection, events_user, zone, day, start, end, stored_date):
+    conn, user = domain_connection, events_user
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(timezone=zone))
+    # The mutation must reread the changed timezone instead of trusting stale auth data.
+    result = OnboardingEventsService(conn, user).create(EventCreate.model_validate(
+        payload(days=None, date=day, start=start, end=end)))
+    event = result["events"][0]
+    assert (event["days"], event["date"], event["start"], event["end"]) == (None, day, start, end)
+    row = stored_event(conn, event["id"])
+    assert row["starts_at"].date().isoformat() == stored_date
+    assert row["starts_at"].replace(tzinfo=timezone.utc) == at(date.fromisoformat(day), start, zone)
+    assert row["recurrence_rule"] is None and row["recurrence_until"] is None
+
+
+def test_partial_patch_preserves_original_recurrence_bounds_and_exceptions(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    first = MONDAY - timedelta(days=12)
+    event = add_event(conn, user, day=first, recurrence_rule="FREQ=WEEKLY;BYDAY=WE,FR",
+                      recurrence_until=MONDAY + timedelta(days=4))
+    exception = add_exception(conn, event, MONDAY + timedelta(days=2))
+    before, saved_exception = stored_event(conn, event["id"]), dict(conn.execute(select(t.calendar_event_exceptions)).mappings().one())
+    view = OnboardingEventsService(conn, user).patch(event["id"], EventPatch(title="수정된 수업", kind="job"))
+    after = stored_event(conn, event["id"])
+    for key in ("starts_at", "ends_at", "recurrence_rule", "recurrence_until", "created_at", "source_text"):
+        assert after[key] == before[key]
+    assert after["revision"] == 2 and after["title"] == "수정된 수업" and after["event_type"] == "job"
+    assert dict(conn.execute(select(t.calendar_event_exceptions)).mappings().one()) == saved_exception
+    assert saved_exception["id"] == exception["id"]
+    assert view["summary"]["fixedMinutes"] == 60 and view["addedId"] is None
+    updated = OnboardingEventsService(conn, user).patch(event["id"], EventPatch(start="08:00"))
+    row = stored_event(conn, event["id"])
+    assert row["starts_at"].replace(tzinfo=timezone.utc) == at(first, "08:00")
+    assert row["ends_at"] == before["ends_at"] and row["recurrence_until"] == before["recurrence_until"]
+    assert updated["summary"]["fixedMinutes"] == 120
+
+
+def test_patch_noop_preserves_revision_and_legacy_subminute_precision(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, starts_at=at(MONDAY, "09:00:30"), ends_at=at(MONDAY, "10:00:15"))
+    before = stored_event(conn, event["id"])
+    for changes in ({}, payload(days=None, date=MONDAY.isoformat())):
+        OnboardingEventsService(conn, user).patch(event["id"], EventPatch.model_validate(changes))
+        assert stored_event(conn, event["id"]) == before
+
+
+@pytest.mark.parametrize("changes", [{"start": "10:00"}, {"end": "08:00"}, {"date": "2026-11-14"}, {"days": None}])
+def test_patch_merges_before_validation_and_preserves_row_on_invalid_result(domain_connection, events_user, changes):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, recurrence_rule="FREQ=WEEKLY;BYDAY=MO,WE")
+    before = stored_event(conn, event["id"])
+    assert_error("INVALID_INPUT", lambda: OnboardingEventsService(conn, user).patch(
+        event["id"], EventPatch.model_validate(changes)), 422)
+    assert stored_event(conn, event["id"]) == before
+
+
+def test_patch_explicit_null_switches_weekly_and_date_without_erasing_exception_rows(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, recurrence_rule="FREQ=WEEKLY;BYDAY=MO", recurrence_until=MONDAY + timedelta(days=14))
+    add_exception(conn, event, MONDAY)
+    service = OnboardingEventsService(conn, user)
+    one_off = service.patch(event["id"], EventPatch(days=None, date="2026-11-14"))
+    assert one_off["events"][0]["days"] is None and one_off["events"][0]["date"] == "2026-11-14"
+    assert one_off["summary"]["fixedMinutes"] == 60
+    assert stored_event(conn, event["id"])["recurrence_until"] is None
+    assert_error("INVALID_INPUT", lambda: service.patch(event["id"], EventPatch(days=[3, 5])), 422)
+    weekly = service.patch(event["id"], EventPatch(days=[3, 5], date=None))
+    assert weekly["events"][0]["days"] == [3, 5] and weekly["events"][0]["date"] is None
+    assert weekly["summary"]["fixedMinutes"] == 120
+    row = stored_event(conn, event["id"])
+    assert row["starts_at"].replace(tzinfo=timezone.utc) == at(MONDAY + timedelta(days=2), "09:00")
+    assert len(conn.execute(select(t.calendar_event_exceptions)).all()) == 1
+
+
+def test_changing_weekdays_preserves_original_start_boundary_and_until(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, day=MONDAY + timedelta(days=2), recurrence_rule="FREQ=WEEKLY;BYDAY=WE,FR",
+                      recurrence_until=MONDAY + timedelta(days=10))
+    OnboardingEventsService(conn, user).patch(event["id"], EventPatch(days=[1, 5]))
+    row = stored_event(conn, event["id"])
+    assert row["starts_at"].replace(tzinfo=timezone.utc) == at(MONDAY + timedelta(days=4), "09:00")
+    assert row["recurrence_until"] == MONDAY + timedelta(days=10)
+
+
+def test_delete_soft_deletes_parent_and_keeps_exception_rows(domain_connection, events_user):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user, recurrence_rule="FREQ=WEEKLY;BYDAY=MO,WE")
+    exception = add_exception(conn, event, MONDAY)
+    service = OnboardingEventsService(conn, user)
+    result = service.delete(event["id"])
+    assert result["events"] == [] and result["summary"]["fixedMinutes"] == 0 and result["addedId"] is None
+    row = stored_event(conn, event["id"])
+    assert row["deleted_at"] is not None and row["revision"] == 2
+    assert conn.scalar(select(t.calendar_event_exceptions.c.id)) == exception["id"]
+    assert_error("EVENT_NOT_FOUND", lambda: service.delete(event["id"]), 404)
+    assert_error("EVENT_NOT_FOUND", lambda: service.patch(event["id"], EventPatch(title="복구 불가")), 404)
+
+
+@pytest.mark.parametrize("operation", ["patch", "delete"])
+def test_mutation_owner_chain_hides_foreign_and_missing_events_even_after_approval(domain_connection, events_user, operation):
+    conn, user = domain_connection, events_user
+    other = User.anonymous(now=NOW)
+    UserRepository(conn).add(other)
+    foreign_subject = add_subject(conn, other.id)
+    ids = [add_event(conn, other.to_mapping())["id"], add_event(conn, user, subject_id=foreign_subject)["id"], str(uuid4())]
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(onboarding_status="completed"))
+    service = OnboardingEventsService(conn, user)
+    before = [dict(row) for row in conn.execute(select(t.calendar_events)).mappings()]
+    for event_id in ids:
+        action = lambda: service.patch(event_id, EventPatch(title="다른 사람")) if operation == "patch" else service.delete(event_id)
+        assert_error("EVENT_NOT_FOUND", action, 404)
+    assert [dict(row) for row in conn.execute(select(t.calendar_events)).mappings()] == before
+
+
+@pytest.mark.parametrize("guard", ["completed", "plan"])
+def test_initial_mutations_stop_after_approval_even_with_stale_user_and_new_draft_subject(domain_connection, events_user, guard):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user)
+    service = OnboardingEventsService(conn, user)
+    if guard == "completed":
+        conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(onboarding_status="completed"))
+    else:
+        conn.execute(t.plans.insert().values(id=str(uuid4()), user_id=user["id"], revision=9, created_at=NOW, approved_at=NOW))
+    add_subject(conn, user["id"])
+    before = stored_event(conn, event["id"])
+    for action in (lambda: service.create(EventCreate.model_validate(payload())),
+                   lambda: service.patch(event["id"], EventPatch(title="금지")), lambda: service.delete(event["id"])):
+        assert_error("ONBOARDING_COMPLETED", action, 409)
+    assert stored_event(conn, event["id"]) == before
+    assert len(conn.execute(select(t.calendar_events)).all()) == 1
+    assert conn.scalar(select(t.plans.c.revision)) == (9 if guard == "plan" else None)
+
+
+@pytest.mark.parametrize("operation", ["create", "patch", "delete"])
+def test_approval_race_holds_user_lock_and_rechecks_after_commit(api_client, domain_connection, events_user, operation):
+    from app.db import session
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user)
+    conn.commit()
+    lock_user(conn, UUID(user["id"]))
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(onboarding_status="completed"))
+    def invoke(competitor):
+        service = OnboardingEventsService(competitor, user)
+        if operation == "create":
+            return service.create(EventCreate.model_validate(payload()))
+        if operation == "patch":
+            return service.patch(event["id"], EventPatch(title="경합"))
+        return service.delete(event["id"])
+    try:
+        with session.engine.connect() as competitor:
+            if competitor.dialect.name == "sqlite":
+                competitor.exec_driver_sql("PRAGMA busy_timeout=20")
+                competitor.commit()
+            assert_error("REQUEST_IN_PROGRESS", lambda: invoke(competitor), 409)
+        conn.commit()
+        with session.engine.connect() as competitor:
+            assert_error("ONBOARDING_COMPLETED", lambda: invoke(competitor), 409)
+    finally:
+        conn.rollback()
+    assert stored_event(conn, event["id"])["revision"] == 1
+    assert len(conn.execute(select(t.calendar_events)).all()) == 1
+
+
+@pytest.mark.parametrize("operation", ["create", "patch", "delete"])
+def test_service_write_and_returned_calendar_share_caller_transaction(domain_connection, events_user, monkeypatch, operation):
+    conn, user = domain_connection, events_user
+    event = add_event(conn, user)
+    before = stored_event(conn, event["id"])
+    conn.commit()
+    def fail_projection(self):
+        raise RuntimeError("projection failed")
+    monkeypatch.setattr(OnboardingEventsService, "calendar", fail_projection)
+    with pytest.raises(RuntimeError, match="projection failed"), conn.begin():
+        service = OnboardingEventsService(conn, user)
+        if operation == "create":
+            service.create(EventCreate.model_validate(payload()))
+        elif operation == "patch":
+            service.patch(event["id"], EventPatch(title="롤백"))
+        else:
+            service.delete(event["id"])
+    assert stored_event(conn, event["id"]) == before
+    assert len(conn.execute(select(t.calendar_events)).all()) == 1
+
+
+@pytest.mark.parametrize("day,start,end", [("2026-03-08", "02:30", "03:30"), ("2026-11-01", "01:30", "02:30")])
+def test_ambiguous_or_missing_local_time_is_422_without_event_write(domain_connection, events_user, day, start, end):
+    conn, user = domain_connection, events_user
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(timezone="America/New_York"))
+    assert_error("INVALID_INPUT", lambda: OnboardingEventsService(conn, user).create(EventCreate.model_validate(
+        payload(days=None, date=day, start=start, end=end))), 422)
+    assert conn.execute(select(t.calendar_events)).first() is None
+
+
+def test_regular_today_uses_user_timezone_while_demo_date_controls_week(domain_connection, events_user, monkeypatch):
+    from app.core import clock
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 9, 0, 30, tzinfo=timezone.utc).astimezone(tz)
+    monkeypatch.setattr(clock, "datetime", FrozenDatetime)
+    conn, user = domain_connection, events_user
+    conn.execute(update(t.users).where(t.users.c.id == user["id"]).values(demo_date=None, timezone="America/Los_Angeles"))
+    regular = OnboardingEventsService(conn, user).create(EventCreate.model_validate(payload(days=[1])))
+    assert (regular["today"], regular["weekStart"]) == ("2026-11-08", "2026-11-02")
+    assert stored_event(conn, regular["events"][0]["id"])["starts_at"].replace(tzinfo=timezone.utc) == at(
+        date(2026, 11, 2), "09:00", "America/Los_Angeles")
+    demo = OnboardingEventsService(conn, user).calendar()
+    assert (demo["today"], demo["weekStart"]) == ("2026-11-11", "2026-11-09")
