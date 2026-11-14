@@ -51,8 +51,9 @@ def test_day9_put_restore_saved_submit_result_and_replay(
     client, conn = api_client, domain_connection
 
     active = _data(client.get("/api/study/sessions/active", headers=headers))
-    assert active is not None
-    _data(client.post(f"/api/study/sessions/{active['id']}/end", headers=headers))
+    assert active is not None and active["minutes"] == 42
+    ended = _data(client.post(f"/api/study/sessions/{active['id']}/end", headers=headers))
+    assert ended["minutes"] == 42
     recorded = client.post("/api/records", headers={**headers, "Idempotency-Key": str(uuid4())}, json={
         "taskId": active["taskId"], "sessionId": active["id"],
         "result": "partial", "toPage": 13,
