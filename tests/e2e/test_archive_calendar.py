@@ -75,3 +75,14 @@ def test_archive_same_day_order_uses_instants_during_dst_fallback(api_client,wor
     archive(w,archived_at=archived)
     value=w.get(api_client,'/api/calendar?from=2026-11-01&to=2026-11-01')
     assert {row['id'] for row in value['study']}=={early}
+
+
+def test_unknown_legacy_cutoff_never_advances_but_actual_records_remain(api_client,world):
+    w=world;past,future,review=future_rows(w)
+    archive(w,applied=False,archived_at=None)
+    before=w.get(api_client,'/api/calendar?from=2026-11-08&to=2026-11-15')
+    assert {row['id'] for row in before['study']}=={past}
+    w.conn.execute(update(t.users).where(t.users.c.id==w.user).values(demo_date=date(2026,11,15)))
+    after=w.get(api_client,'/api/calendar?from=2026-11-08&to=2026-11-15')
+    assert after['study']==before['study']
+    assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==future))=='planned'
