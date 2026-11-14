@@ -343,17 +343,34 @@ def test_legacy_applied_is_distinct_and_never_reconstructed_or_executed(migratio
         assert service.repository.get(user, identifier) == before
 
 
-def test_owned_old_writer_candidate_without_state_requires_a_new_preview(domain_connection, owner):
+@pytest.mark.parametrize("history", ["ready", "selected", "unselected_sibling"])
+def test_owned_old_writer_candidate_without_state_preserves_known_application(domain_connection, owner, history):
     conn = domain_connection
     request_id, identifier = str(uuid4()), str(uuid4())
     conn.execute(t.plan_change_requests.insert().values(id=request_id, user_id=owner, kind="goal", status="ready",
         input_payload={}, created_at=NOW, updated_at=NOW))
     conn.execute(t.plan_proposals.insert().values(id=identifier, request_id=request_id, proposal_type="change",
         description="old writer", changes={"status": "completed"}, created_at=NOW))
+    selected = identifier
+    if history == "unselected_sibling":
+        selected = str(uuid4())
+        conn.execute(t.plan_proposals.insert().values(id=selected, request_id=request_id, proposal_type="change",
+            description="selected sibling", changes={"status": "completed"}, created_at=NOW))
+    if history != "ready":
+        conn.execute(update(t.plan_change_requests).where(t.plan_change_requests.c.id == request_id).values(
+            status="accepted", accepted_proposal_id=selected, decided_at=NOW))
     conn.commit()
+    service = ProposalService(conn, clock=lambda: NOW)
     with pytest.raises(ApiError) as error:
-        ProposalService(conn, clock=lambda: NOW).apply(owner, identifier, domain=domain(), target=TARGET)
+        service.apply(owner, identifier, domain=domain(), target=TARGET)
     assert_api(error, "PREVIEW_STALE", 409)
-    assert "과거 미리보기" in error.value.message
+    if history == "selected":
+        assert "이미 적용된" in error.value.message and "복원할 수 없어요" in error.value.message
+    else:
+        assert "과거 미리보기" in error.value.message
     assert conn.scalar(select(func.count()).select_from(t.plan_proposal_states)) == 0
     assert conn.scalar(select(t.users.c.onboarding_status).where(t.users.c.id == owner)) == "draft"
+    for method in (service.apply, service.cancel):
+        with pytest.raises(ApiError) as mismatch:
+            method(owner, identifier, domain=domain(kind="different"), target=TARGET)
+        assert_api(mismatch, "NO_PREVIEW", 404)

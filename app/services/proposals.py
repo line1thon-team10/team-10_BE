@@ -232,7 +232,12 @@ class ProposalService:
             raise ApiError("NO_PREVIEW", "미리보기 ID가 올바르지 않아요", 400) from None
 
     def _candidate(self, context: PreviewContext, identifier: str, domain: PreviewDomain, target_json: str) -> dict:
-        state = self.repository.get(context.user.id, identifier)
+        try:
+            state = self.repository.get(context.user.id, identifier)
+        except LegacyProposalUnavailable as error:
+            if error.known_kind is not None and error.known_kind != domain.kind:
+                raise ApiError("NO_PREVIEW", "이 작업의 미리보기가 아니에요", 404) from None
+            raise
         if state["kind"] != domain.kind:
             raise ApiError("NO_PREVIEW", "이 작업의 미리보기가 아니에요", 404)
         if state["target"] is not None and _json(state["target"]) != target_json:
