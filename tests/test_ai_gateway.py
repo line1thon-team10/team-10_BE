@@ -286,7 +286,9 @@ PROVIDER = ProviderSpec(FunctionRef(__name__, "fake_provider"))
 VALIDATOR = FunctionRef(__name__, "fake_validator")
 
 
-def execute_fake(payload=None, *, context=None, budget=4, cached=None):
+# Result/telemetry checks allow the interactive contract's 20-second budget,
+# including a cold ARM64 spawn. Deadline tests pass their short budget explicitly.
+def execute_fake(payload=None, *, context=None, budget=20, cached=None):
     key = identity(input=payload or {}, validation_context=context or {"pages": [1, 2], "evidence": "source"})
     result = ProcessExecutor().execute(key, provider=PROVIDER, validator=VALIDATOR,
                                       deadline=time.monotonic() + budget, cleanup_timeout=0.5,
