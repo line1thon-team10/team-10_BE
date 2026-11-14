@@ -1,4 +1,6 @@
 """오늘의 퀴즈 S8 · 결과 S8-2 · 더 풀기 (QZ) — 프론트 EP.quizToday / EP.quiz"""
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import Connection
@@ -7,6 +9,7 @@ from app.core.auth import current_user
 from app.core.clock import today_for
 from app.core.responses import ApiError, ok
 from app.db.session import get_conn
+from app.schemas.quiz import SubmitIn
 from app.services.quiz import QuizService
 from app.services.study import OPEN_RATE
 
@@ -55,41 +58,30 @@ def _check_open(svc: QuizService, session: dict) -> None:
 
 
 @router.get("/{key}")
-def quiz_set(key: str, saved: int = 0, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+def quiz_set(key: UUID, saved: int = 0, quizId: UUID | None = None,
+            user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """문항 (S8). key = 과목 ID(오늘 퀴즈) 또는 퀴즈 ID(더 풀기). 정답·해설은 보내지 않아요"""
     svc = QuizService(conn, user, today_for(user))
-    session = svc.session(key)
+    session = svc.session(str(key), quiz_id=str(quizId) if quizId is not None else None)
     _check_open(svc, session)
     return ok(svc.set_view(session, saved=bool(saved)))
 
 
-class Answer(BaseModel):
-    questionId: str
-    choice: int | None = None
-    text: str | None = None
-    confidence: str | None = None
-
-
-class SubmitIn(BaseModel):
-    answers: list[Answer]
-    savedGrading: bool = False
-
-
 @router.post("/{key}/submit")
-def quiz_submit(key: str, body: SubmitIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+def quiz_submit(key: UUID, body: SubmitIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     """제출 → 채점(서술형은 AI) → 단원 점수·오답 노트 반영 → 결과 (S8-2, P3)"""
     svc = QuizService(conn, user, today_for(user))
-    session = svc.session(key)
+    session = svc.session(str(key), quiz_id=str(body.quizId))
     _check_open(svc, session)
-    svc.submit(session, [a.model_dump() for a in body.answers])
+    svc.submit(session, [a.model_dump(mode="json") for a in body.answers])
     fresh = QuizService(conn, user, svc.today)
     return ok(fresh.result_view(fresh.session(session["id"])))
 
 
 @router.get("/{key}/result")
-def quiz_result(key: str, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+def quiz_result(key: UUID, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     svc = QuizService(conn, user, today_for(user))
-    return ok(svc.result_view(svc.session(key)))
+    return ok(svc.result_view(svc.session(str(key))))
 
 
 class MoreIn(BaseModel):

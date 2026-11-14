@@ -55,7 +55,7 @@ def test_package_state_metrics_and_learning_evidence(api_client, demo_user, doma
     assert conn.scalar(select(func.count()).select_from(t.questions)) == 45
 
 
-def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_focus):
+def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_focus, domain_connection):
     headers = auth(demo_user)
     before = api_client.get("/api/today",headers=headers).json()["data"]
     assert before["progress"] == {"doneCount":2,"totalCount":3,"donePages":18,"totalPages":27,"rate":67}
@@ -74,8 +74,15 @@ def test_focus_end_partial_record_crosses_threshold(api_client, demo_user, end_f
     assert quiz.status_code == 200 and len(quiz.json()["data"]["questions"]) == 6
     questions = quiz.json()["data"]["questions"]
     assert any(q["type"] == "essay" for q in questions)
-    # 이번 시연에서 새 문항은 실제 기록한 AI2 p.12–13만 사용한다.
-    assert all(12 <= int(q["page"].removeprefix("p.")) <= 13 for q in questions if q["tag"] is None)
+    assert all("page" not in q for q in questions)
+    # 풀이 응답에서 근거를 숨겨도 출제 범위는 실제 기록한 AI2 p.12–13이어야 한다.
+    fresh_ids = [q["id"] for q in questions if q["tag"] is None]
+    pages = domain_connection.scalars(
+        select(t.question_sources.c.start_page)
+        .join(t.quiz_items, t.quiz_items.c.question_id == t.question_sources.c.question_id)
+        .where(t.quiz_items.c.id.in_(fresh_ids))).all()
+    assert len(pages) == len(fresh_ids) > 0
+    assert all(12 <= page <= 13 for page in pages)
 
 
 def test_overdue_has_no_focus_and_requests_replan(api_client, demo_user):

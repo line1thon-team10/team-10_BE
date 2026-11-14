@@ -41,13 +41,19 @@ class QuizService:
         self.data = StudyData(conn, user["id"])
 
     # ---------- 조회 ----------
-    def session(self, key: str) -> dict:
-        """key = 퀴즈 ID(더 풀기 등) 또는 과목 ID(그 과목의 오늘 퀴즈)"""
+    def session(self, key: str, quiz_id: str | None = None) -> dict:
+        """명시한 quiz_id는 새 세트를 만들지 않고 경로·소유 과목까지 검증한다."""
+        owned_subjects = select(t.subjects.c.id).where(t.subjects.c.user_id == self.user["id"])
         s = self.conn.execute(select(t.quiz_sessions).where(
-            t.quiz_sessions.c.id == key, t.quiz_sessions.c.user_id == self.user["id"])).mappings().first()
+            t.quiz_sessions.c.id == (quiz_id if quiz_id is not None else key),
+            t.quiz_sessions.c.user_id == self.user["id"],
+            t.quiz_sessions.c.subject_id.is_(None) | t.quiz_sessions.c.subject_id.in_(owned_subjects)
+        )).mappings().first()
         if s:
+            if quiz_id is not None and key not in (s["id"], s["subject_id"]):
+                raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
             return dict(s)
-        if key not in self.data.subject_by_id:
+        if quiz_id is not None or key not in self.data.subject_by_id:
             raise ApiError("NO_QUIZ", "퀴즈를 찾지 못했어요", 404)
         return self.ensure_daily(key)
 
@@ -59,22 +65,26 @@ class QuizService:
 
     def items(self, session_id: str) -> list[dict]:
         rows = self.conn.execute(
-            select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.sort_order, t.quiz_items.c.inclusion_reason,
-                   t.questions, t.quiz_attempts.c.id.label("attempt_id"), t.quiz_attempts.c.answer,
+            select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.question_id,
+                   t.quiz_items.c.sort_order, t.quiz_items.c.inclusion_reason,
+                   *(column for column in t.questions.c if column.name != "id"),
+                   t.units.c.material_id,
+                   t.quiz_attempts.c.id.label("attempt_id"), t.quiz_attempts.c.answer,
                    t.quiz_attempts.c.confidence, t.quiz_attempts.c.is_correct, t.quiz_attempts.c.essay_score,
                    t.quiz_attempts.c.got_points, t.quiz_attempts.c.missing_points,
                    t.quiz_attempts.c.grading_status)
             .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
+            .join(t.units, t.questions.c.unit_id == t.units.c.id)
             .outerjoin(t.quiz_attempts, t.quiz_attempts.c.quiz_item_id == t.quiz_items.c.id)
             .where(t.quiz_items.c.quiz_session_id == session_id).order_by(t.quiz_items.c.sort_order)).mappings()
         out = [dict(r) for r in rows]
         if out:
             srcs = {}
             for r in self.conn.execute(select(t.question_sources).where(
-                    t.question_sources.c.question_id.in_([x["id"] for x in out]))).mappings():
+                    t.question_sources.c.question_id.in_([x["question_id"] for x in out]))).mappings():
                 srcs.setdefault(r["question_id"], dict(r))
             for x in out:
-                x["source"] = srcs.get(x["id"])
+                x["source"] = srcs.get(x["question_id"])
         return out
 
     # ---------- 구성 ----------
@@ -181,10 +191,10 @@ class QuizService:
     def question_view(self, x: dict) -> dict:
         qtype = "choice" if x["type"] in ("choice", "ox") else x["type"]  # 화면은 OX도 객관식 모양
         u = self.data.units.get(x["unit_id"])
-        src = x.get("source")
-        return {"id": x["id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
+        return {"id": x["item_id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
                 "unitNo": unit_no(u["code"]) if u else None,
-                "page": f"p.{src['start_page']}" if src else None, "prompt": x["prompt"],
+                "materialId": x["material_id"], "unitId": x["unit_id"],
+                "prompt": x["prompt"],
                 "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
 
     def set_view(self, session: dict, saved: bool = False) -> dict:
@@ -192,6 +202,7 @@ class QuizService:
         subject = self.data.subject_by_id.get(session["subject_id"], {})
         comp, _ = self.composition(items)
         return {
+            "quizId": session["id"],
             "saved": saved or session["is_fallback"], "subjectId": session["subject_id"] if session["type"] == "daily"
             else session["id"], "custom": session["type"] != "daily",
             "resultFor": session["subject_id"] if session["type"] != "daily" else session["subject_id"],
@@ -201,13 +212,33 @@ class QuizService:
         }
 
     # ---------- 채점 ----------
+    def _validated_answers(self, items: list[dict], answers: list[dict]) -> dict[str, dict]:
+        """전체 답안의 항목·타입을 확인한 뒤에만 채점과 저장을 시작한다."""
+        by_item = {answer["questionId"]: answer for answer in answers}
+        if len(by_item) != len(answers) or set(by_item) != {item["item_id"] for item in items}:
+            raise ApiError("INVALID_INPUT", "현재 퀴즈의 모든 문항을 정확히 한 번씩 제출해 주세요", 422)
+        if any(answer.get("confidence") is None for answer in answers):
+            raise ApiError("CONFIDENCE_REQUIRED", "모든 문항에 확실/애매를 골라 주세요")
+        for item in items:
+            answer = by_item[item["item_id"]]
+            if answer["confidence"] not in CONF_KO:
+                raise ApiError("INVALID_INPUT", "확신도는 확실/애매 중에서 골라 주세요", 422)
+            if item["type"] in ("choice", "ox"):
+                choice = answer.get("choice")
+                if (type(choice) is not int or not 0 <= choice < len(item["choices"] or [])
+                        or answer.get("text") is not None):
+                    raise ApiError("INVALID_INPUT", "객관식 답은 유효한 보기 번호로 제출해 주세요", 422)
+            elif not isinstance(answer.get("text"), str) or answer.get("choice") is not None:
+                raise ApiError("INVALID_INPUT", "단답·서술형 답은 문자열로 제출해 주세요", 422)
+        return by_item
+
     def _grade_essay(self, q: dict, text: str):
         if not text.strip():
             return 0, [], ["답안을 입력하지 않았어요."], "graded"
         src = q.get("source") or {}
         try:
             r = ai.module("essay_grader").grade_essay(
-                {"id": q["code"] or q["id"], "question": q["prompt"], "answer": q["correct_answer"],
+                {"id": q["code"] or q["question_id"], "question": q["prompt"], "answer": q["correct_answer"],
                  "page": src.get("start_page") or 1, "source_text": src.get("quote") or ""}, text)
             return r["score"], r["strengths"], r["missing_points"], "graded"
         except Exception:  # noqa: BLE001 — AI 실패·키 없음은 저장된 채점으로 (NF-10)
@@ -220,23 +251,20 @@ class QuizService:
         if session["status"] == "submitted":
             raise ApiError("QUIZ_FINALIZED", "이미 제출한 퀴즈예요", 409)
         items = self.items(session["id"])
-        by_q = {a["questionId"]: a for a in answers}
-        if any(not by_q.get(x["id"], {}).get("confidence") for x in items):
-            raise ApiError("CONFIDENCE_REQUIRED", "모든 문항에 확실/애매를 골라 주세요")
+        by_item = self._validated_answers(items, answers)
         now = _now()
         fallback = False
         for x in items:
-            a = by_q[x["id"]]
+            a = by_item[x["item_id"]]
             score, good, miss, status = None, None, None, "graded"
             if x["type"] in ("choice", "ox"):
-                idx = a.get("choice")
-                picked = x["choices"][idx]["text"] if isinstance(idx, int) and 0 <= idx < len(x["choices"] or []) else None
+                picked = x["choices"][a["choice"]]["text"]
                 answer, correct = str(picked or ""), _norm(picked) == _norm(x["correct_answer"])
             elif x["type"] == "short":
-                answer = a.get("text") or ""
+                answer = a["text"]
                 correct = bool(answer.strip()) and _norm(answer) == _norm(x["correct_answer"])
             else:
-                answer = a.get("text") or ""
+                answer = a["text"]
                 score, good, miss, status = self._grade_essay(x, answer)
                 correct = score >= 85
                 fallback = fallback or status == "fallback"
@@ -244,7 +272,7 @@ class QuizService:
                 id=str(uuid.uuid4()), quiz_item_id=x["item_id"], answer=answer, confidence=a["confidence"],
                 is_correct=correct, grading_status=status, essay_score=score, got_points=good, missing_points=miss,
                 answered_at=now, answered_date=self.today, finalized_at=now, graded_at=now, mastery_applied_at=now))
-            self._update_weak(x["id"], correct and a["confidence"] == "sure", now)
+            self._update_weak(x["question_id"], correct and a["confidence"] == "sure", now)
         self.conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == session["id"]).values(
             status="submitted", current_position=len(items), grading_status="completed", is_fallback=fallback,
             submitted_at=now, finalized_at=now, graded_at=now))
@@ -326,7 +354,8 @@ class QuizService:
             src = x.get("source")
             essay = x["type"] == "essay"
             out_items.append({
-                "questionId": x["id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "materialId": x["material_id"], "unitId": x["unit_id"],
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
                 "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
                 "confidence": x["confidence"], "correct": bool(x["is_correct"]),
@@ -343,7 +372,8 @@ class QuizService:
         for h in hist:
             u = data.units[h["unit_id"]]
             no, title = unit_no(u["code"]), u["title"]
-            unit_changes.append({"unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
+            unit_changes.append({"materialId": u["material_id"], "unitId": u["id"],
+                                 "unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
                                  "grade": h["level"], "note": "회복 모드" if h["recovery_mode"] else None})
             unit_tasks = [x for x in data.tasks if data.unit_of(x) and data.unit_of(x)["id"] == u["id"]
                           and x.row["status"] not in ("carried_over", "excluded")]
@@ -356,7 +386,7 @@ class QuizService:
                     before_blocks.append("done")  # 오늘 쌓은 회색 블록이 등급 색으로 (P3)
                 else:
                     before_blocks.append(h["previous_level"] or "done")
-            book_changes.append({"unitNo": no, "title": title,
+            book_changes.append({"materialId": u["material_id"], "unitId": u["id"], "unitNo": no, "title": title,
                                  "before": {"score": h["previous_score"], "grade": h["previous_level"], "blocks": before_blocks},
                                  "after": {"score": h["score"], "grade": h["level"], "blocks": after_blocks},
                                  "recovering": bool(h["recovery_mode"])})
@@ -375,8 +405,11 @@ class QuizService:
         if session["type"] == "extra":
             scope = self.conn.execute(select(t.quiz_scopes.c.unit_id).where(
                 t.quiz_scopes.c.quiz_session_id == session["id"])).scalar()
+            result["unitId"] = scope
+            result["materialId"] = data.units[scope]["material_id"] if scope in data.units else None
             result["unitNo"] = unit_no(data.units[scope]["code"]) if scope in data.units else None
-            result["moreUnitChange"] = ({"unitNo": result["unitNo"], "before": unit_changes[0]["before"],
+            result["moreUnitChange"] = ({"materialId": result["materialId"], "unitId": scope,
+                                         "unitNo": result["unitNo"], "before": unit_changes[0]["before"],
                                          "after": unit_changes[0]["after"]} if unit_changes else None)
         else:
             extras = self.conn.execute(select(t.quiz_sessions).where(
