@@ -167,6 +167,8 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
     sessions = defaultdict(list)
     for row in connection.execute(select(t.study_sessions).where(t.study_sessions.c.user_id == user_id)).mappings():
         sessions[row['task_id']].append(dict(row))
+    consumed_sessions = set(connection.scalars(select(t.study_records.c.session_id).where(
+        t.study_records.c.task_id.in_([task.id for task in data.tasks]), t.study_records.c.session_id.is_not(None))))
     learned, fixed, supersede = defaultdict(list), [], []
     pending_fixed = []
     for task in data.tasks:
@@ -182,7 +184,9 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
             continue
         if task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
             raise PendingObligations('기한이 지난 보충·복습을 먼저 이월한 뒤 과목을 추가해 주세요')
-        is_fixed = not task.paged or task.row['task_type'] in ('remedial', 'review') or bool(sessions[task.id]) or task.row['status'] == 'completed' or (
+        is_fixed = not task.paged or task.row['task_type'] in ('remedial', 'review') or any(
+            session['status'] in ('running', 'paused') or (session['status'] in ('ended', 'auto_stopped')
+                and session['id'] not in consumed_sessions) for session in sessions[task.id]) or task.row['status'] == 'completed' or (
             task.record is not None and task.row['scheduled_date'] >= today)
         active_parts = []
         for span in task.paged:

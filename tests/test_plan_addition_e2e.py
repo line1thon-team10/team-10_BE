@@ -29,13 +29,18 @@ def addition_case(api_client, domain_connection, plan_case):
     return {**case, 'added': added, 'added_material': material, 'added_unit': unit, 'old_task': original}
 
 
-def test_addition_preserves_recorded_pages_and_unmoved_remedial(api_client, domain_connection, addition_case):
+@pytest.mark.parametrize('consumed_focus', [False, True])
+def test_addition_preserves_recorded_pages_and_unmoved_remedial(api_client, domain_connection, addition_case, consumed_focus):
     conn, case = domain_connection, addition_case
     task = case['old_task']
     conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == task['id']).values(
         scheduled_date=TODAY - timedelta(days=1), starts_at=None, ends_at=None, status='partial'))
-    record = str(uuid4())
-    conn.execute(t.study_records.insert().values(id=record, task_id=task['id'], result='partial',
+    record, session_id = str(uuid4()), str(uuid4()) if consumed_focus else None
+    if session_id:
+        conn.execute(t.study_sessions.insert().values(id=session_id, user_id=case['user'], task_id=task['id'],
+            status='ended', started_at=NOW-timedelta(days=1), ended_at=NOW-timedelta(days=1)+timedelta(minutes=15),
+            measured_seconds=900, study_date=TODAY-timedelta(days=1), created_at=NOW))
+    conn.execute(t.study_records.insert().values(id=record, task_id=task['id'], session_id=session_id, result='partial',
         study_date=TODAY - timedelta(days=1), recorded_at=NOW, updated_at=NOW))
     conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()), record_id=record,
         unit_id=case['unit'], start_page=1, end_page=5))
