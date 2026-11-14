@@ -28,7 +28,8 @@ def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get
         raise ApiError("NO_PLAN", "아직 계획이 없어요. 계획을 먼저 만들어 주세요", 404)
     today = records.record_date(user, at)
     prog = data.progress(today)
-    return ok({
+    pending_replan = Planner(conn, user).pending_recovery() is not None
+    response = {
         "date": today.isoformat(),
         "event": day_summary(conn, user, data, today, at),
         "subjects": [{"id": s["id"], "name": s["name"], "color": s["color"],
@@ -44,8 +45,22 @@ def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get
         "notice": _notice(conn, user, today),
         "tutorSuggestions": _tutor_suggestions(data, today),
         "paceAlert": PaceService(conn, user).alert(),
-        "replan": Planner(conn, user).replan_view(),
-    })
+        "replan": None,
+    }
+    if pending_replan:
+        from app.services.replan_options import ReplanOptionsService
+        engine = conn.engine
+        # Persist the day-summary notice before releasing the user lock for the
+        # bounded allocator. A later preview failure must not lose that receipt.
+        conn.commit()
+        conn.close()
+        try:
+            response['replan'] = ReplanOptionsService(engine).options(user['id'])
+        except ApiError as error:
+            if error.code != 'NO_REPLAN':
+                raise
+        response['paceAlert'] = None
+    return ok(response)
 
 
 def _tutor_suggestions(data: StudyData, today) -> list[str]:
