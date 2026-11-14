@@ -32,12 +32,18 @@ def find_task(data: StudyData, task_id: str) -> Task:
     return task
 
 
-def owned_task(data: StudyData, task_id: str) -> Task:
+def owned_task(data: StudyData, task_id: str, *, allow_planless_review=False) -> Task:
     repository = RecordRepository(data.conn)
     context = repository.task_context(task_id, data.user_id)
+    task = None
+    if context is None and allow_planless_review:
+        context = repository.planless_review(task_id, data.user_id)
+        if context is not None:
+            record, done_ranges = repository.record_snapshot(task_id)
+            task = Task(dict(context), record=record, done_ranges=done_ranges)
     if context is None:
         raise ApiError("TASK_NOT_FOUND", "태스크를 찾지 못했어요", 404)
-    task = find_task(data, task_id)
+    task = task or find_task(data, task_id)
     ranges = repository.ranges(task_id)
     if any(item["range_subject_id"] != task.row["subject_id"] or (
         item["concept_id"] is not None and item["concept_unit_id"] != item["unit_id"]
