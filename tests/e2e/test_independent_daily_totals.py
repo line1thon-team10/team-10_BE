@@ -42,7 +42,10 @@ def prepare(w, end_focus):
 def test_close_failure_rolls_back_denominator_and_carry_then_same_key_retries(
         api_client, progress_world, end_focus, monkeypatch):
     w = progress_world
-    _, task = prepare(w, end_focus)
+    unit, task = prepare(w, end_focus)
+    # Carry targets the next existing study day; an empty future must not
+    # manufacture tomorrow. Keep today's denominator at ten pages.
+    w.task((unit, 11, 20), day=w.day + timedelta(days=1))
     before = totals(w)
     before_tasks = w.conn.execute(select(t.study_tasks).where(t.study_tasks.c.plan_id == w.plan['id'])).all()
     w.conn.commit()
@@ -62,6 +65,11 @@ def test_close_failure_rolls_back_denominator_and_carry_then_same_key_retries(
     assert result.status_code == 200, result.text
     assert service(w).view(w.day)['plan'] == 10
     assert w.conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id == task)) == 'carried_over'
+    child = w.conn.execute(select(t.study_tasks).where(t.study_tasks.c.origin_task_id == task)).mappings().one()
+    assert child['scheduled_date'] == w.day + timedelta(days=1)
+    assert child['estimated_minutes'] == 15  # 25 minutes * six remaining / ten planned
+    carried = w.conn.execute(select(t.study_task_ranges).where(t.study_task_ranges.c.task_id == child['id'])).mappings().one()
+    assert (carried['start_page'], carried['end_page']) == (5, 10)
 
 
 def test_cross_task_pdf_union_is_distinct_from_task_denominator(api_client, progress_world, end_focus):
