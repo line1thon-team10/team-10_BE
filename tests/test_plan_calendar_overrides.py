@@ -58,3 +58,16 @@ def test_calendar_candidate_owner_boundaries(api_client,domain_connection,additi
     if bad=='unknown_remove': options={'calendar_event_overrides':{str(uuid4()):None}}
     if bad=='foreign_exception': options={'calendar_exception_overrides':{foreign['id']:[]}}
     with pytest.raises(PlanInputError): prepare(conn,case,**options)
+
+
+@pytest.mark.parametrize('bad',['clock_type','recurrence_type','exception_date_type'])
+def test_malformed_calendar_candidate_returns_input_error(api_client,domain_connection,addition_case,bad):
+    conn,case=domain_connection,addition_case
+    user=dict(conn.execute(select(t.users).where(t.users.c.id==case['user'])).mappings().one())
+    event=add_event(conn,user,day=TODAY)
+    options={'calendar_event_overrides':{event['id']:{**event}}}
+    if bad=='clock_type': options['calendar_event_overrides'][event['id']]['starts_at']='09:00'
+    if bad=='recurrence_type': options['calendar_event_overrides'][event['id']]['recurrence_rule']=123
+    if bad=='exception_date_type': options={'calendar_exception_overrides':{event['id']:[{
+        'event_id':event['id'],'occurrence_date':[],'kind':'cancelled'}]}}
+    with pytest.raises(PlanInputError): prepare(conn,case,**options)

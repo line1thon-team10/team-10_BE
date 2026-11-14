@@ -281,7 +281,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
                 busy.extend(interval for interval in event_intervals(event, exceptions[event["id"]], week, timezone_name)
                             if today <= interval.day < last_exam)
                 week += timedelta(days=7)
-    except (ValueError, KeyError, OverflowError) as exc:
+    except (ValueError, KeyError, OverflowError, TypeError, AttributeError) as exc:
         raise PlanInputError("저장된 일정의 반복 규칙과 날짜를 확인해 주세요") from exc
     return AllocationInput(today, tuple(subjects), tuple(scopes), tuple(busy))
 
