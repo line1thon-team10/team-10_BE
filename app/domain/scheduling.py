@@ -205,6 +205,28 @@ class Slot:
 
 
 @dataclass(frozen=True, slots=True)
+class StudyWindow:
+    """Constrain selected new-study pages without restricting adjacent old work."""
+    id: str
+    ranges: tuple[PageSpan, ...]
+    dates: tuple[date, ...]
+    max_minutes: Number | None = None
+
+    def __post_init__(self):
+        _id(self.id)
+        object.__setattr__(self, "ranges", normalize(self.ranges))
+        dates = tuple(self.dates)
+        for day in dates:
+            _date(day)
+        object.__setattr__(self, "dates", tuple(sorted(set(dates))))
+        if self.max_minutes is not None:
+            cap = exact(self.max_minutes)
+            if cap <= 0:
+                raise ValueError("Daily study limit must be positive")
+            object.__setattr__(self, "max_minutes", cap)
+
+
+@dataclass(frozen=True, slots=True)
 class AllocationInput:
     start_date: date
     subjects: tuple[Subject, ...]
@@ -212,11 +234,12 @@ class AllocationInput:
     busy: tuple[BusyInterval, ...] = ()
     fixed: tuple[FixedTask, ...] = ()
     requirements: tuple[WorkRequirement, ...] = ()
+    study_windows: tuple[StudyWindow, ...] = ()
 
     def __post_init__(self):
         _date(self.start_date)
         for name, item_type in (("subjects", Subject), ("units", UnitScope), ("busy", BusyInterval),
-                                ("fixed", FixedTask), ("requirements", WorkRequirement)):
+                                ("fixed", FixedTask), ("requirements", WorkRequirement), ("study_windows", StudyWindow)):
             object.__setattr__(self, name, _tuple(getattr(self, name), item_type))
 
 
