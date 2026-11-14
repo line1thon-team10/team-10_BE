@@ -95,3 +95,23 @@ def test_failed_voice_approval_rolls_back_insert_and_can_retry(api_client,domain
     monkeypatch.setattr(schedule_voice,'VOICE_DOMAIN',original)
     assert apply(api_client,case,candidate).status_code==200
     assert conn.scalar(select(func.count()).select_from(t.calendar_events))==1
+
+
+def test_voice_schedule_reallocates_only_unrecorded_pages(api_client,domain_connection,voice_case):
+    from tests.test_onboarding_events import at
+    conn,case=domain_connection,voice_case
+    task=case['old_task']
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==task['id']).values(scheduled_date=TODAY,
+        starts_at=at(TODAY,'15:00'),ends_at=at(TODAY,'15:50'),status='partial'))
+    record=str(uuid4())
+    conn.execute(t.study_records.insert().values(id=record,task_id=task['id'],result='partial',study_date=TODAY,recorded_at=NOW,updated_at=NOW))
+    conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()),record_id=record,unit_id=case['unit'],start_page=1,end_page=5))
+    facts=(conn.execute(select(t.study_records)).all(),conn.execute(select(t.study_record_ranges)).all());conn.commit()
+    candidate=preview(api_client,case)
+    assert candidate.status_code==200,candidate.text
+    moves=candidate.json()['data']['moves']
+    assert len(moves)==1 and moves[0]['taskId']==task['id']
+    assert sorted(page for piece in moves[0]['pieces'] for page in range(piece['from'],piece['to']+1))==list(range(6,21))
+    assert apply(api_client,case,candidate.json()['data']['previewId']).status_code==200
+    assert (conn.execute(select(t.study_records)).all(),conn.execute(select(t.study_record_ranges)).all())==facts
+    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==task['id']))=='carried_over'
