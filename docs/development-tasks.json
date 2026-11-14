@@ -359,7 +359,7 @@
       "id": "R-02",
       "title": "범위별 기록 저장·정정 API",
       "lane": "study",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "R-01"
@@ -392,16 +392,18 @@
       "branch": "feat/study-record-ranges",
       "base_sha": "a05ebf05d7bb907eec63dd933be9205b4210df2b",
       "head_sha": "3426dbc32310593650edc58005f91b2c632a07c4",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/19",
       "validation_evidence": [
         "Worker SQLite+PG records223 + demo22 passed; independent review pending",
         "Astra245regression+768snapshot comparisons passed; P2 carried/excluded placement revival found, worker fixing; none PATCH policy clarification required",
-        "Worker fix3426dbc:269SQLite+PG tests passed; root independently reruns original6 failure cases on immutable archive"
+        "Worker fix3426dbc:269SQLite+PG tests passed; root independently reruns original6 failure cases on immutable archive",
+        "Final3426dbc: original six independent failure cases passed. Actions43541475416 candidate6b09c45:1101passed1skipped. Integrated f89d50a tree6fe98d0 exactly matches tested candidate tree."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "integration_sha": "f89d50aa81f2868263ab837c6a34ae10524e036f"
     },
     {
       "id": "R-03",
@@ -1810,8 +1812,8 @@
       "id": "P-01",
       "title": "가용 시간 기반 계획 배치 엔진",
       "lane": "planning",
-      "status": "review",
-      "assignee": "/root/onboarding_implementation",
+      "status": "running",
+      "assignee": "/root/study_implementation",
       "depends_on": [
         "POL-01",
         "R-01"
@@ -1836,9 +1838,10 @@
       "branch": "feat/plan-allocator",
       "base_sha": "1e7144c",
       "head_sha": "19718b844529288f92e8c7500563319749b4f8cc",
-      "pr_url": null,
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/20",
       "validation_evidence": [
-        "Worker222passed (68allocator+154ranges); 100 independent tiny oracle comparisons;90pages bench median130.49ms; Astra review pending"
+        "Worker222passed (68allocator+154ranges); 100 independent tiny oracle comparisons;90pages bench median130.49ms; Astra review pending",
+        "Astra P2: day-local subject/ID ties lose later reservation optimum. Fix bd33d63 implements whole reservation L1 vector first; final handoff/re-review pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -3049,8 +3052,8 @@
       "id": "QA-01",
       "title": "런타임 계약·소유권 회귀 검사",
       "lane": "quality",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root",
       "depends_on": [
         "SYS-02"
       ],
@@ -3069,13 +3072,16 @@
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "test/runtime-contract-inventory",
+      "base_sha": "75eae091916ce3b116bf1137ddf3b294a626f673",
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "5790058: importable runtime registry audit. SQLite+PG inventory/auth/owner/input boundaries11passed; domain-specific404 vs422 honored, broad response probes and review pending."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-contract-tests"
     },
     {
       "id": "OPS-01",

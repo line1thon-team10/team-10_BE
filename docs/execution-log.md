@@ -34,3 +34,10 @@
 - 최종 검토 `0bfbe9ecf0999b6a3ad2d61a82f6487a1f2837e1`. 과거 앱 SHA의 오래된 apply.sh가 라벨 검사를 건너뛰는 P2를 발견해, Compose는 앱 SHA/apply.sh는 workflow SHA로 분리했다. 독립 모의 실행29개 통과, 잔여 findings 없음.
 - Actions [43539867574](https://github.com/line1thon-team10/team-10_BE/actions/runs/43539867574)의 실제 후보 merge `896209c`(0bfbe9e + 6259288), pinned AI `6d74ffb`: **900 passed, 1 skipped**,344.07초. 이미지 발행·RPI 배포 없는 PR 테스트다.
 - 로컬 통합에서도 배포 실패/라벨/복구 경계21개 통과. Q-02는 schema lease0006으로 진행 중, R-02는 이월/excluded 배치가 기록 정정으로 부활하는 검토 지적을 수정 중이다.
+
+## R-02 최종 통합과 다음 검토
+
+- PR #19 최종3426dbc는 이월/제외된 task의 기록을 정정해도 배치 상태와 자식 이력을 되살리지 않는다. 기존 계약의 PATCH 제한도 수정해, 이미 있는0쪽 기록을 전체 범위로 정정할 수 있도록 명시했다.
+- 독립 검토의 원래 실패6개를 immutable archive에서 재실행하여 모두 통과했다. Actions [43541475416](https://github.com/line1thon-team10/team-10_BE/actions/runs/43541475416)의 후보6b09c45는1101 passed/1 skipped. 로컬 통합f89d50a의 파일 tree6fe98d0는 해당 후보와 정확히 같다.
+- P-01은 하루 단위 동점 처리 때문에 후순위 예약 목표를 놓치는 반례를 발견했다. 정책을 줄이지 않고 전체 예약 우선순위를 먼저 비교하도록 수정 중이며 원래 PR CI 통과를 수정본 승인으로 간주하지 않는다.
+- QA-01은 실제 등록된 경로의 인증/소유권/오류 경계를 검사하는 독립 harness를 개발 중이다. 온보딩의 잘못된 draft 컨텍스트는 기존 명세대로404이며 모든 잘못된 ID가422라는 가정은 적용하지 않는다.
