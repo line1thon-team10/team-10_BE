@@ -12,6 +12,7 @@ from app.core.clock import now_utc, today_for
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.onboarding import ConversationMessage, GOAL_COLUMNS, GoalUpdate
+from app.domain.onboarding_voice_evidence import validate_voice_evidence
 from app.repositories.locking import UserBusyError, lock_user
 from app.repositories.proposals import canonical_hash
 from app.schemas.onboarding_events import EventCreate
@@ -146,6 +147,7 @@ class OnboardingDialogueService:
                     calendar._lock()
                     calendar._initial_draft()
                     event = EventCreate.model_validate(value['event'])
+                    validate_voice_evidence(command['text'], event, today=claim['context']['today'])
                     try:
                         values = calendar._values(event)
                     except ApiError:
