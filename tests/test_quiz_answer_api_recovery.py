@@ -124,7 +124,8 @@ def test_recovery_rejects_foreign_set_and_material_even_without_answers(api_clie
     elif corrupt == "parent":
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case["quiz"]).values(subject_id=other["subject"]))
     elif corrupt == "material":
-        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(material_id=other["material"]))
+        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(
+            material_id=other["material"], code="FOREIGN2", sort_order=2))
     else:
         conn.execute(update(t.quiz_items).where(t.quiz_items.c.id == case["essay_item"]).values(question_id=other["essay"]))
     before = snapshot(conn)

@@ -159,7 +159,8 @@ def test_set_item_and_parent_ownership(api_client, answer_case, domain_connectio
         conn.execute(update(t.quiz_items).where(t.quiz_items.c.id == other["essay_item"]).values(question_id=case["essay"]))
         case["essay_item"] = other["essay_item"]
     elif variant == "foreign_material":
-        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(material_id=other["material"]))
+        conn.execute(update(t.units).where(t.units.c.id == case["unit"]).values(
+            material_id=other["material"], code="FOREIGN2", sort_order=2))
     else:
         conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case["quiz"]).values(subject_id=other["subject"]))
     before = snapshot(conn)
