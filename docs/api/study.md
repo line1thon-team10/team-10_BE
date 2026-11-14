@@ -182,3 +182,12 @@ toPage 또는 completedRanges 중 정확히 하나를 보낸다. 응답: `taskId
 completedRanges는 해당 task 범위의 처음부터 toPage까지 완료했다는 **전체 교체 스냅샷**이다. 생략된 range는 미완료로 간주한다. partial에는 한 쪽 이상, 전체보다 적은 완료량이 필요하다. 모든 범위 완료는 done, 0쪽은 none으로 보낸다. 중복/타인 rangeId와 범위 밖 페이지는 `422 INVALID_INPUT`, `toPage`와 completedRanges 동시 전송은 거절한다. 단일 범위에 한해 기존 toPage를 허용한다. PATCH 정정에도 같은 교체 의미를 적용하되 결과가 전체/0쪽이면 서버가 done/none으로 산정한다.
 
 home notice.items와 paceAlert.rows에도 대상 `ranges`와 서버 계산 `pages`를 반환한다. FE는 범위 선택·자료 열기에서 materialId를 보존한다. 이월 및 계획 재배치로 task ID가 바뀌어도 기존 학습 범위를 중복 완료 처리하지 않는다.
+
+### P1의 조회 시 발급
+
+`GET /api/today`의 `data.event`는 기록 응답과 같은 P1 event 또는 null이다.
+23:30 이후 추가 기록 없이 홈을 조회해도 실제 완료비율70% 이상이면 한 번 발급한다.
+POST records와 GET today는 같은 사용자/현지날짜의 발급 기록을 공유한다.
+Idempotency-Key를 붙인 기록 재전송은 최초 응답을 재생하지만 새 알림 행은 만들지 않는다.
+발급 판정은 반올림 전 일반 계획 달성률이며, 퀴즈 열림 안내는 출제 가능한 범위의 별도 비율로 판단한다.
+시험용 demo_date는 날짜만 대체하며23:30 경계 시각은 사용자 시간대의 서버 시각을 사용한다.
