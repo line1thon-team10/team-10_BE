@@ -8,7 +8,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 import pytest
-from sqlalchemy import inspect, select, update
+from sqlalchemy import MetaData, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import schema as t
@@ -57,23 +57,33 @@ def populated(conn):
     return user
 
 
-def snapshot(conn):
-    return {table.name:rows(conn,table) for table in t.metadata.sorted_tables}
+def historical_schema(conn):
+    schema = MetaData()
+    schema.reflect(conn, only=lambda name, _: name != 'alembic_version')
+    return schema
+
+
+def snapshot(conn, schema=None):
+    schema = historical_schema(conn) if schema is None else schema
+    return {name: rows(conn, table) for name, table in schema.tables.items()}
 
 
 def test_populated_upgrade_downgrade_preserves_every_row_and_schema(migration_connection):
     conn=migration_connection;populated(conn)
-    before=snapshot(conn);conn.commit()
+    # Compare every original column across upgrades that add new nullable columns.
+    # The separate metadata comparison still validates the complete current schema.
+    original_schema=historical_schema(conn)
+    before=snapshot(conn,original_schema);conn.commit()
     config=migration_config(conn)
     for _ in range(2):
         command.upgrade(config,'head')
-        assert snapshot(conn)==before
+        assert snapshot(conn,original_schema)==before
         assert compare_metadata(MigrationContext.configure(conn),t.metadata)==[]
         inspector=inspect(conn)
         for check in CONTRACT['checks']:
             assert check['name'] in {c['name'] for c in inspector.get_check_constraints(check['table'])}
         conn.commit();command.downgrade(config,PREVIOUS)
-        assert snapshot(conn)==before
+        assert snapshot(conn,original_schema)==before
         for check in CONTRACT['checks']:
             assert check['name'] not in {c['name'] for c in inspect(conn).get_check_constraints(check['table'])}
         if conn.dialect.name=='sqlite':
