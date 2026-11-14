@@ -65,8 +65,16 @@ def _groq_client(timeout_seconds):
     key = os.environ.get("GROQ_API_KEY")
     if not key or not key.strip():
         raise RuntimeError("Essay provider is not configured")
+    import httpx
     from groq import Groq
-    return Groq(api_key=key, max_retries=0, timeout=timeout_seconds)
+    # One observed SDK invocation must not hide redirects or transport retries.
+    transport = httpx.HTTPTransport(retries=0)
+    client = httpx.Client(transport=transport, follow_redirects=False, timeout=timeout_seconds)
+    try:
+        return Groq(api_key=key, max_retries=0, timeout=timeout_seconds, http_client=client)
+    except BaseException:
+        client.close()
+        raise
 
 
 class _RawResponse(Exception):

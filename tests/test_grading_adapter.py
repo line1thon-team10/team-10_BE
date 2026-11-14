@@ -124,7 +124,7 @@ def test_missing_key_does_not_initialize_sdk_or_report_a_request(monkeypatch):
     assert events == []
 
 
-@pytest.mark.parametrize("status", [200, 429, 500])
+@pytest.mark.parametrize("status", [200, 302, 429, 500])
 def test_actual_groq_sdk_has_zero_retries_and_receives_remaining_timeout(monkeypatch, status):
     import groq
     original = groq.Groq
@@ -133,10 +133,14 @@ def test_actual_groq_sdk_has_zero_retries_and_receives_remaining_timeout(monkeyp
         calls.append(request)
         body = {"id": "mock-sdk", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(grade())},
             "finish_reason": "stop"}], "created": 0, "model": adapter.MODEL_VERSION, "object": "chat.completion"}
-        return httpx.Response(status, json=body if status == 200 else {"error": {"message": "mock failure"}}, request=request)
+        return httpx.Response(status, json=body if status == 200 else {"error": {"message": "mock failure"}},
+            headers={"location": "https://redirect-must-not-be-followed.invalid/"}, request=request)
     def factory(**kwargs):
         settings.append(kwargs.copy())
-        return original(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(transport)))
+        configured_client = kwargs.pop("http_client")
+        assert configured_client.follow_redirects is False
+        configured_client.close()
+        return original(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(transport), follow_redirects=False))
     monkeypatch.setattr(groq, "Groq", factory)
     monkeypatch.setenv("GROQ_API_KEY", "fake-local-test-key")
     ident = identity()
