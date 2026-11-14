@@ -9,7 +9,7 @@
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from fractions import Fraction
 
 from sqlalchemy import Connection, func, select
@@ -318,13 +318,5 @@ class StudyData:
         }
 
     def recent_days(self, today: date) -> list[dict]:
-        days = []
-        for i in range(6, -1, -1):
-            day = today - timedelta(days=i)
-            tasks = self.tasks_on(day)
-            if day < today:
-                tasks = [x for x in tasks if x.row["status"] in ("completed", "partial")]
-            days.append({"date": day.isoformat(),
-                         "blocks": [{"state": self.block_state(x, today),
-                                     "taskId": x.id if day == today else None} for x in tasks]})
-        return days
+        from app.services.book_views import BookViews
+        return BookViews(self, today).recent_days()
