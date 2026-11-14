@@ -28,10 +28,10 @@ def unchanged_domain(conn):
 
 def test_multi_material_concept_union_and_readonly_get_then_exact_approval(api_client, domain_connection, plan_case):
     conn, case = domain_connection, plan_case
-    for start, end in [(1, 10), (5, 15)]:
+    for order, (start, end) in enumerate([(1, 10), (5, 15)], start=1):
         identifier = str(uuid4())
         conn.execute(t.concepts.insert().values(id=identifier, unit_id=case['unit'], code=identifier,
-            title='Overlapping concept', sort_order=1, start_page=start, end_page=end,
+            title='Overlapping concept', sort_order=order, start_page=start, end_page=end,
             created_at=NOW, updated_at=NOW))
     material = dict(conn.execute(select(t.materials).where(t.materials.c.id == case['material'])).mappings().one())
     unit = dict(conn.execute(select(t.units).where(t.units.c.id == case['unit'])).mappings().one())
