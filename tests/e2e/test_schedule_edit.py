@@ -154,6 +154,8 @@ def test_calendar_reallocation_links_pending_obligation_without_replacing_origin
     key=f"{event['id']}@{TODAY}"
     candidate=preview(api_client,case['user'],key,{'date':TODAY.isoformat(),'start':'09:00','end':'10:00'})
     assert candidate.status_code==200,candidate.text
+    moved=next(row for row in candidate.json()['data']['moves'] if row['taskId']==case['old_task']['id'])
+    assert sorted(page for piece in moved['pieces'] for page in range(piece['from'],piece['to']+1))==list(range(1,21))
     assert conn.execute(select(t.remedial_obligation_blocks)).all()==[];conn.commit()
     response=apply(api_client,case['user'],key,candidate.json()['data']['previewId'])
     assert response.status_code==200,response.text

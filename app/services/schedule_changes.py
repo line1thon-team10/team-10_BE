@@ -381,8 +381,10 @@ def _move_view(data,changes):
         if task.id not in changes['supersedeIds']: continue
         pieces=[]
         for placement in changes['placements']:
+            if placement['kind']!=task.row['task_type']: continue
             cursor=Fraction(*placement['start'])
             for part in placement['parts']:
+                if placement['kind']!='study' and part['requirementId']!=task.id: continue
                 cost=Fraction(*part['baseline'])*Fraction(*part['multiplier'])
                 for old in task.paged:
                     if old['unit_id']!=part['unitId']: continue
