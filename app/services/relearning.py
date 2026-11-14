@@ -26,7 +26,7 @@ class RelearningService:
             .join(t.subjects,t.subjects.c.id==t.materials.c.subject_id)
             .where(t.units.c.id==str(body.unitId),t.subjects.c.id==str(body.subjectId),t.subjects.c.user_id==self.user['id'],
                 t.subjects.c.status=='active',t.units.c.retired_at.is_(None))).mappings().first()
-        if unit is None:raise ApiError('NO_UNIT','재학습할 단원을 찾지 못했어요',404)
+        if unit is None:raise ApiError('UNIT_NOT_FOUND','재학습할 단원을 찾지 못했어요',404)
         concepts=self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id==unit['id'],t.concepts.c.retired_at.is_(None))).mappings().all()
         required=StudyData._unit_scope(unit,concepts)
         if unit['quantity_basis']!='page' or not required:

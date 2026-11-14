@@ -45,6 +45,7 @@ def test_invalid_relearn_is_atomic(api_client,progress_world,bad):
     before=w.conn.scalar(select(func.count()).select_from(t.study_tasks))
     response=request(api_client,w,unit,key)
     assert response.status_code==(404 if bad in ('foreign','retired') else 422),response.text
+    if bad in ('foreign','retired'):assert response.json()['error']['code']=='UNIT_NOT_FOUND'
     assert w.conn.scalar(select(func.count()).select_from(t.study_tasks))==before
 
 
