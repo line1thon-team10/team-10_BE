@@ -28,7 +28,7 @@ class MonthlyReportService(MonthlyService):
         if until < first:
             return result
 
-        totals = {first + timedelta(days=offset): self.totals.view(first + timedelta(days=offset))
+        totals = {first + timedelta(days=offset): self.totals.view(first + timedelta(days=offset),data=self.data,visibility=self.visibility)
             for offset in range((until-first).days+1)}
         plan = sum(row['plan'] for row in totals.values())
         done = sum(row['done'] for row in totals.values())
@@ -42,7 +42,7 @@ class MonthlyReportService(MonthlyService):
             if first <= day <= until:
                 frozen = any(row['subjectId'] == task.row['subject_id'] and row['finalized']
                     for row in totals[day]['subjects'])
-                if task.row['status'] != 'excluded' and (frozen or task.row['status'] != 'carried_over'):
+                if self.visibility.task(task) and task.row['status'] != 'excluded' and (frozen or task.row['status'] != 'carried_over'):
                     planned_minutes += task.row['estimated_minutes'] or 0
                     planned_days.add(day)
             if task.record and task.record['result'] in ('completed', 'partial'):
