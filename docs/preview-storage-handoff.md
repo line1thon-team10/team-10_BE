@@ -34,6 +34,10 @@ ID·updated_at과 의미 있는 필드를 포함하고, 집합인 배열은 도�
 `canonical_object`는 dict 또는 원문 JSON object를 받아 방어적으로 복사한다.
 `canonical_hash`는 이를 UTF-8, 정렬된 객체 키, 공백 없는 구분자로 직렬화해 SHA256을 만든다.
 문자열 내용과 배열 순서는 유지한다. 날짜/UUID 등은 도메인이 명시적으로 문자열로 정규화한다.
+JSON 숫자는 저장 후에도 같은 해시를 얻도록 값 기준으로 정규화한다. 정수값 float는
+JSON의 십진 표현 기준 int로 바꾸며 `-0.0`은0, `1e23`은10의23승이다.
+일반 소수와 bool은 구분해 보존한다. 이는 PostgreSQL JSONB가 재조회할 때 숫자 표현을
+바꾸는 차이를 흡수하며 입력 문자열의 공백이나 배열 순서를 바꾸는 규칙은 아니다.
 
 - NaN/Infinity, 비문자열 객체 키, 순환, 잘못된 surrogate, NUL을 거절한다. NUL은 값과 키 모두 해당한다.
 - 원문 JSON은 중복키를 탐지한다. Unicode escape로 표현만 다른 중복키도 거절한다.
@@ -50,6 +54,9 @@ ID·updated_at과 의미 있는 필드를 포함하고, 집합인 배열은 도�
 - `get(user_id, proposal_id)`: 저장된 후보/상태/원 응답/변경안을 조회한다.
 - `ready(user_id, kind=..., input_hash=...)`: 아직 선택되지 않은 ready 요청의 ready 후보를 조회한다.
   날짜/의존 버전 freshness나 임의 시간 만료는 여기서 판정하지 않는다.
+  `get`과 `ready`는 후보·요청·상태를 한 joined SELECT의 동일 snapshot으로 읽는다.
+  조회 중 다른 트랜잭션이 승인/삭제해도 서로 다른 시점의 상태를 섞지 않는다.
+  조회가 승인 권한을 예약하지는 않으므로 SYS-05는 적용 잠금 안에서 다시 검증한다.
 - `mark_applied(..., expected_revision, response, now, schema_version=1)`: request의
   ready→accepted 선택 CAS와 후보의 ready→applied CAS를 한 savepoint에 묶는다.
   같은 request의 다른 후보가 이미 선택됐으면 실패한다. 같은 후보 재호출은 최초 결과·시각·버전을 반환한다.
@@ -120,3 +127,8 @@ TEST_POSTGRES_URL="$LOCAL_TEST_POSTGRES_URL" .venv/bin/python -m pytest -q \
 `NODE_PATH`로 원본 BE의 generator 의존성을 읽기 전용 사용해 `test_gen_schema.js`가 통과했고,
 `gen_schema.js` 재생성 후 `git diff --exit-code -- app/db/schema.py`도 통과했다.
 생성 결과43 tables/84 FKs, Alembic 단일 head는 `0007_preview_storage`다.
+
+독립 검토에서 숫자 JSONB round-trip 해시 불일치와 여러 SELECT 사이의 승인 상태 혼합을
+발견해 각각 별도 커밋으로 보정했다. 숫자/저장/전이140개, 이어서 migration과 실제 별도
+PostgreSQL writer의 승인·삭제 경쟁까지185 passed/3 SQLite-only skips를 확인했다.
+기존 검토 재현 사례는 최종 수정 SHA에서 별도 재검증한다.
