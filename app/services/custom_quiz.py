@@ -21,6 +21,8 @@ class CustomQuizService:
         replay=receipt.replay()
         if replay is not None:return replay
         selector=QuizSelection(self.conn,self.user,today_for(self.user));subject_id=str(body.subjectId)
+        if subject_id not in selector.data.subject_by_id:
+            raise ApiError('SUBJECT_NOT_FOUND','과목을 찾지 못했어요',404)
         completed=selector.completed(subject_id,today_only=False)
         seen=set();scopes=[];units={}
         for scope in body.scopes:
@@ -30,7 +32,7 @@ class CustomQuizService:
             seen.add(identity)
             unit=selector.data.units.get(uid)
             if unit is None or unit['subject_id']!=subject_id:
-                raise ApiError('NO_UNIT','단원을 찾지 못했어요',404)
+                raise ApiError('NO_UNITS','단원을 찾지 못했어요',404)
             if not unit['quiz_enabled']:
                 raise ApiError('INVALID_INPUT','출제할 수 없는 자료예요',422)
             effective=(PageSpan(unit['material_id'],scope.from_page,scope.to),)

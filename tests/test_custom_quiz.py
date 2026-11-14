@@ -63,6 +63,7 @@ def test_invalid_scopes_never_create_quiz(api_client,progress_world,bad):
     before=w.conn.scalar(select(func.count()).select_from(t.quiz_sessions))
     response=create(api_client,w,scopes,**changes)
     assert response.status_code==(404 if bad=='foreign' else 422),response.text
+    if bad=='foreign':assert response.json()['error']['code']=='NO_UNITS'
     assert w.conn.scalar(select(func.count()).select_from(t.quiz_sessions))==before
 
 
@@ -87,3 +88,9 @@ def test_custom_finalized_answer_updates_mastery_once(api_client,progress_world)
     assert first.json()['data']['unitChanges'][0]['unitId']==unit['id']
     assert api_client.post('/api/quiz/'+data['quizId']+'/submit',headers=headers,json=body).json()==first.json()
     assert w.conn.scalar(select(func.count()).select_from(t.mastery_history).where(t.mastery_history.c.quiz_session_id==data['quizId']))==1
+
+
+def test_foreign_subject_uses_documented_error(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,5)
+    response=create(api_client,w,[scope(unit,1,5)],subjectId=str(uuid4()))
+    assert response.status_code==404 and response.json()['error']['code']=='SUBJECT_NOT_FOUND'
