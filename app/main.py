@@ -13,7 +13,7 @@ from app.config import CORS_ORIGINS, DATABASE_URL, DEMO_MODE
 from app.core.cache import ApiNoStoreMiddleware
 from app.core.responses import install_error_handlers, ok
 from app.db.session import check_db_revision
-from app.routers import books, calendar, custom_quiz, demo, empty_time, materials, monthly, onboarding, onboarding_events, pace, plan, plan_additions, plan_today, quiz, quiz_answers, record_interpret, relearning, review_notes, schedule_changes, schedule_voice, session, study, subjects, today, tutor, units
+from app.routers import books, calendar, custom_quiz, demo, empty_time, materials, monthly, onboarding, onboarding_events, pace, plan, plan_additions, plan_rebuild, plan_resplit, plan_today, quiz, quiz_answers, record_interpret, relearning, review_notes, schedule_changes, schedule_voice, session, study, subjects, today, tutor, units
 
 
 @asynccontextmanager
@@ -69,3 +69,7 @@ def health(ai: bool = False):
     if ai:
         data["ai"] = ai_engine.status()
     return ok(data)
+
+app.include_router(plan_resplit.router)
+
+app.include_router(plan_rebuild.router)

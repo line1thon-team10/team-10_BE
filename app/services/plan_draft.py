@@ -274,6 +274,9 @@ class PlanDraftService:
                 raise ApiError('NO_PREVIEW', '미리보기를 찾지 못했어요', 404 if error.foreign else 400) from None
             except (LegacyProposalUnavailable, LegacyResponseUnavailable):
                 raise ApiError('PREVIEW_STALE', '과거 후보를 확인할 수 없어요. 새 후보를 요청해 주세요', 409) from None
+            from app.services.plan_resplit import approval_candidate
+            candidate = approval_candidate(conn, user_id, candidate)
+            preview_id = candidate['proposal_id']
             domains = {INITIAL_DOMAIN.kind: INITIAL_DOMAIN, ADDITION_DOMAIN.kind: ADDITION_DOMAIN}
             if candidate['kind'] not in domains:
                 raise ApiError('NO_PREVIEW', '초기 계획 또는 과목 추가 후보가 아니에요', 404)
