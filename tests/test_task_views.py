@@ -1,6 +1,6 @@
 """Shared read projection and its real home/focus HTTP consumers."""
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from app.db import schema as t
 from app.services.study import StudyData
 from app.services.task_views import TaskView
+from tests.test_focus_state import active, action, clock
 from tests.test_record_ranges import configure_ranges, post
 from tests.test_record_transactions import headers, task_for
 
@@ -209,3 +210,111 @@ def test_today_uses_only_this_tasks_record_snapshot(api_client, demo_user, domai
     view = home_task(api_client, demo_user, task.id)
     assert view["donePages"] == 0
     assert view["doneTo"] is view["ranges"][0]["doneTo"] is None
+
+
+RANGE_FIELDS = ("ranges", "pages", "donePages", "from", "to", "doneTo", "unitNo")
+
+
+def assert_focus_range_view(session, expected):
+    assert {key: session["task"][key] for key in RANGE_FIELDS} == {key: expected[key] for key in RANGE_FIELDS}
+    first = expected["ranges"][0] if expected["ranges"] else None
+    assert session["material"] == ({"id": first["materialId"], "page": first["from"]} if first else None)
+
+
+def test_every_focus_endpoint_keeps_shared_fields_through_response_model(api_client, clock, demo_user, domain_connection):
+    task, ranges = configure_ranges(domain_connection, demo_user, [("b", 12, 16), ("a", 12, 16), ("a", 15, 20)])
+    result = post(api_client, demo_user, task, "partial", completedRanges=[
+        {"rangeId": ranges[0]["id"], "toPage": 16}, {"rangeId": ranges[1]["id"], "toPage": 13}])
+    assert result.status_code == 200, result.text
+    expected = home_task(api_client, demo_user, task.id)
+    assert (expected["pages"], expected["donePages"]) == (14, 7)
+    assert [item["doneTo"] for item in expected["ranges"]] == [16, 13, None]
+    first = active(api_client, demo_user)
+    assert_focus_range_view(first, expected)
+    paths = [
+        ("get", f"/api/study/sessions/{first['id']}", None, "active"),
+        ("post", "/api/study/sessions", {"taskId": task.id}, "active"),
+        ("post", f"/api/study/sessions/{first['id']}/pause", None, "paused"),
+        ("post", f"/api/study/sessions/{first['id']}/resume", None, "active"),
+        ("post", f"/api/study/sessions/{first['id']}/end", None, "ended"),
+    ]
+    for method, path, body, status in paths:
+        response = api_client.request(method, path, headers=headers(demo_user), json=body)
+        assert response.status_code == 200, response.text
+        session = response.json()["data"]
+        assert_focus_range_view(session, expected)
+        assert (session["status"], session["task"]["minutes"], session["minutes"]) == (status, 25, 42)
+        assert session["quote"] == first["quote"]
+
+
+@pytest.mark.parametrize("spans,count,done_to", [([(12, 13), (17, 30)], 6, 13), ([(17, 30)], 4, None), ([(1, 30)], 9, 20)])
+def test_focus_and_home_clip_snapshot_islands_without_inventing_prefix(api_client, clock, demo_user, domain_connection,
+                                                                     spans, count, done_to):
+    conn = domain_connection
+    task = task_for(conn, demo_user, "AI2")
+    record_id = str(uuid4())
+    conn.execute(t.study_records.insert().values(id=record_id, task_id=task.id, result="partial",
+                 recorded_at=clock[0], study_date=task.row["scheduled_date"], updated_at=clock[0]))
+    for start, end in spans:
+        conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()), record_id=record_id,
+                     unit_id=task.ranges[0]["unit_id"], start_page=start, end_page=end))
+    conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == task.id).values(status="partial"))
+    conn.commit()
+
+    expected = home_task(api_client, demo_user, task.id)
+    assert (expected["pages"], expected["donePages"], expected["unitNo"]) == (9, count, 2)
+    assert expected["doneTo"] == expected["ranges"][0]["doneTo"] == done_to
+    assert_focus_range_view(active(api_client, demo_user), expected)
+
+
+def test_focus_and_home_use_latest_record_snapshot_only(api_client, clock, demo_user, domain_connection):
+    conn = domain_connection
+    task = task_for(conn, demo_user, "AI2")
+    for at, end in [(clock[0] - timedelta(days=1), 20), (clock[0], 13)]:
+        record_id = str(uuid4())
+        conn.execute(t.study_records.insert().values(id=record_id, task_id=task.id, result="partial",
+                     recorded_at=at, study_date=task.row["scheduled_date"], updated_at=at))
+        conn.execute(t.study_record_ranges.insert().values(id=str(uuid4()), record_id=record_id,
+                     unit_id=task.ranges[0]["unit_id"], start_page=12, end_page=end))
+    conn.commit()
+    expected = home_task(api_client, demo_user, task.id)
+    assert (expected["donePages"], expected["doneTo"]) == (2, 13)
+    assert_focus_range_view(active(api_client, demo_user), expected)
+
+
+@pytest.mark.parametrize("nominal", [False, True])
+def test_focus_and_home_unpaged_task_returns_no_material_or_page_completion(api_client, clock, demo_user,
+                                                                         domain_connection, nominal):
+    task = task_for(domain_connection, demo_user, "AI2")
+    if nominal:
+        domain_connection.execute(update(t.study_task_ranges).where(t.study_task_ranges.c.task_id == task.id)
+                                  .values(start_page=None, end_page=None, planned_minutes=25))
+    else:
+        domain_connection.execute(t.study_task_ranges.delete().where(t.study_task_ranges.c.task_id == task.id))
+    domain_connection.commit()
+    expected = home_task(api_client, demo_user, task.id)
+    session = active(api_client, demo_user)
+    assert_focus_range_view(session, expected)
+    assert session["status"] == "active"
+    assert session["task"]["pages"] == session["task"]["donePages"] == 0
+    assert session["task"]["unitNo"] is session["task"]["doneTo"] is None
+
+
+def test_historical_focus_keeps_common_view_after_retirement_and_archival(api_client, clock, demo_user, domain_connection):
+    task = task_for(domain_connection, demo_user, "AI2")
+    domain_connection.commit()
+    result = post(api_client, demo_user, task, "partial", toPage=13)
+    assert result.status_code == 200, result.text
+    first = active(api_client, demo_user)
+    ended = action(api_client, demo_user, first["id"], "end")
+    assert ended.status_code == 200, ended.text
+    conn = domain_connection
+    conn.execute(update(t.subjects).where(t.subjects.c.id == first["subjectId"]).values(status="archived"))
+    conn.execute(update(t.units).where(t.units.c.id == task.ranges[0]["unit_id"]).values(retired_at=clock[0]))
+    conn.commit()
+    response = api_client.get(f"/api/study/sessions/{first['id']}", headers=headers(demo_user))
+    assert response.status_code == 200, response.text
+    history = response.json()["data"]
+    assert_focus_range_view(history, first["task"])
+    assert (history["task"]["unitNo"], history["task"]["doneTo"], history["task"]["donePages"]) == (2, 13, 2)
+    assert history["status"] == "ended"
