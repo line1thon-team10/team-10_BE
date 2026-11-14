@@ -6,7 +6,7 @@ from uuid import uuid4
 from alembic import command
 from alembic.migration import MigrationContext
 import pytest
-from sqlalchemy import event, inspect, select, update
+from sqlalchemy import MetaData, event, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import schema as t
@@ -18,14 +18,20 @@ NEW = '0011_contract_invariants'
 
 
 def records(conn):
+    # Historical revisions do not contain columns added by the current app.
+    # Reflect every real table/column; revision changes are asserted separately.
+    historical = MetaData()
+    historical.reflect(conn, only=lambda name, _: name != 'alembic_version')
     return {name: conn.execute(select(table).order_by(*table.primary_key)).all()
-            for name, table in t.metadata.tables.items()}
+            for name, table in historical.tables.items()}
 
 
 def shape(conn):
     inspector = inspect(conn)
-    return json.dumps({name: (inspector.get_check_constraints(name), inspector.get_indexes(name),
-                   inspector.get_foreign_keys(name)) for name in inspector.get_table_names()},
+    return json.dumps({name: (inspector.get_columns(name), inspector.get_pk_constraint(name),
+                   inspector.get_unique_constraints(name), inspector.get_check_constraints(name),
+                   inspector.get_indexes(name), inspector.get_foreign_keys(name))
+                   for name in inspector.get_table_names()},
                    default=str, sort_keys=True)
 
 
