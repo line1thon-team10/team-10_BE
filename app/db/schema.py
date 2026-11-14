@@ -482,6 +482,7 @@ remedial_obligation_blocks = Table(
     "remedial_obligation_blocks", metadata,
     Column("obligation_id", UUID, ForeignKey("remedial_obligations.id"), nullable=False),
     Column("block_id", UUID, ForeignKey("study_blocks.id"), nullable=False, unique=True),
+    Column("allocation_snapshot", JSONB, nullable=True),
     PrimaryKeyConstraint("obligation_id", "block_id"),
 )
 
