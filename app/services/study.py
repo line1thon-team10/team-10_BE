@@ -137,7 +137,7 @@ class StudyData:
 
     # ---------- 조회 ----------
     def tasks_on(self, day: date) -> list[Task]:
-        tasks = [x for x in self.tasks if x.row["scheduled_date"] == day
+        tasks = [x for x in self.tasks if x.row["subject_id"] in self.subject_by_id and x.row["scheduled_date"] == day
                  and x.row["status"] not in ("carried_over", "excluded")]
         return sorted(tasks, key=lambda x: x.row["origin_task_id"] is None)  # 이월된 태스크가 맨 위
 
