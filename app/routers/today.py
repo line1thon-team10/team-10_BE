@@ -12,6 +12,7 @@ from app.schemas.records import FixIn, RecordIn, UUIDString
 from app.repositories.record_requests import RecordRequestRepository, record_request_key
 from app.services.day_notices import day_summary
 from app.services.planner import Planner
+from app.services.pace import PaceService
 from app.services import records
 from app.services.study import StudyData, unit_no
 
@@ -42,7 +43,7 @@ def get_today(user: dict = Depends(current_user), conn: Connection = Depends(get
         "recentDays": data.recent_days(today),
         "notice": _notice(conn, user, today),
         "tutorSuggestions": _tutor_suggestions(data, today),
-        "paceAlert": None,    # 속도 보정 알림 (PL-07) — 측정 기록 3일치가 쌓이면
+        "paceAlert": PaceService(conn, user).alert(),
         "replan": Planner(conn, user).replan_view(),
     })
 
