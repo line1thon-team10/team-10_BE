@@ -66,7 +66,8 @@ def prepare_structure(conn, user_id, body):
         row = {'id': unit_id, 'material_id': material['id'], 'code': f'unit_{item.no:02d}',
             'title': _title(item.title), 'sort_order': item.no, 'quantity_basis': 'page',
             'start_page': item.from_, 'end_page': item.to, 'difficulty': item.difficulty,
-            'in_scope': item.inExam, 'evidence': [] if replaced else deepcopy(old['evidence'] or [])}
+            'in_scope': item.inExam, 'evidence': [] if replaced else deepcopy(old['evidence'] or []),
+            'mastery_score': None if replaced else old['mastery_score']}
         units.append(row)
         for index, concept in enumerate(item.concepts, 1):
             concepts.append({'id': str(uuid4()) if replaced else concept.id, 'unit_id': unit_id,
