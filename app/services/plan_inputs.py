@@ -42,7 +42,7 @@ def initial_allocation_input(connection, user_id: str, *, today: date,
                              subject_ids=subject_ids, existing=False)
 
 
-def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing):
+def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None):
     """Resolve owned draft subjects, concept unions and actual calendar intervals.
 
     quiz_enabled is deliberately not an admission condition: a manual outline
@@ -57,7 +57,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
         t.subjects.c.user_id == user_id, t.subjects.c.status == "draft"
     ).order_by(t.subjects.c.id)).mappings()]
     if subject_ids is not None:
-        if not isinstance(subject_ids, tuple) or not subject_ids or any(type(item) is not str for item in subject_ids):
+        if not isinstance(subject_ids, tuple) or (not subject_ids and not existing) or any(type(item) is not str for item in subject_ids):
             raise PlanInputError("선택할 draft 과목 ID 목록이 필요해요")
         try:
             selected = tuple(str(UUID(item)) for item in subject_ids)
@@ -66,7 +66,7 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
         if len(set(selected)) != len(selected) or not set(selected) <= {row["id"] for row in rows}:
             raise PlanInputError("중복 없이 본인의 draft 과목을 선택해 주세요")
         rows = [row for row in rows if row["id"] in selected]
-    if not rows:
+    if not rows and not existing:
         raise PlanInputError("계획할 draft 과목이 필요해요")
     if existing:
         rows += [dict(row) for row in connection.execute(select(t.subjects).where(
@@ -94,13 +94,62 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     unit_rows = [dict(row) for row in connection.execute(select(t.units).where(
         t.units.c.material_id.in_(by_material), t.units.c.retired_at.is_(None)
     ).order_by(t.units.c.material_id, t.units.c.sort_order, t.units.c.id)).mappings()]
-    if {row["material_id"] for row in unit_rows} != set(by_material):
-        raise PlanInputError("자료별 페이지 목차를 확인해 주세요")
     concepts = defaultdict(list)
     for row in connection.execute(select(t.concepts).where(
             t.concepts.c.unit_id.in_([unit["id"] for unit in unit_rows]), t.concepts.c.retired_at.is_(None)
     ).order_by(t.concepts.c.unit_id, t.concepts.c.sort_order, t.concepts.c.id)).mappings():
         concepts[row["unit_id"]].append(dict(row))
+    overrides = {} if material_structure_overrides is None else material_structure_overrides
+    if not isinstance(overrides, dict) or not set(overrides) <= set(by_material):
+        raise PlanInputError('본인 과목의 자료 구조만 변경할 수 있어요')
+    all_unit_ids, all_concept_ids = set(), set()
+    for material_id, structure in overrides.items():
+        if not isinstance(structure, dict) or set(structure) != {'units', 'concepts'}:
+            raise PlanInputError('후보 단원과 개념 구조가 필요해요')
+        candidate_units, candidate_concepts = structure['units'], structure['concepts']
+        if not isinstance(candidate_units, list) or not candidate_units or not isinstance(candidate_concepts, list):
+            raise PlanInputError('빈 자료 구조로 계획을 만들 수 없어요')
+        replacement = []
+        identifiers = set()
+        for row in candidate_units:
+            if not isinstance(row, dict):
+                raise PlanInputError('단원 후보가 올바르지 않아요')
+            try:
+                identifier = str(UUID(row['id']))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                raise PlanInputError('단원 후보 UUID가 올바르지 않아요') from None
+            if not {'sort_order', 'start_page', 'end_page', 'in_scope'} <= set(row) or type(row['in_scope']) is not bool:
+                raise PlanInputError('단원 후보의 범위·순서·시험 선택이 필요해요')
+            if identifier in all_unit_ids or row.get('material_id') != material_id:
+                raise PlanInputError('단원 후보가 중복되거나 자료 소속이 달라요')
+            current_material = connection.scalar(select(t.units.c.material_id).where(t.units.c.id == identifier))
+            if current_material is not None and current_material != material_id:
+                raise PlanInputError('다른 자료의 단원 ID를 사용할 수 없어요')
+            identifiers.add(identifier)
+            all_unit_ids.add(identifier)
+            replacement.append({'quantity_basis': 'page', 'difficulty': None, 'mastery_score': None,
+                                **row, 'id': identifier, 'retired_at': None})
+        unit_rows = [row for row in unit_rows if row['material_id'] != material_id] + replacement
+        for identifier in identifiers:
+            concepts[identifier] = []
+        for row in candidate_concepts:
+            if not isinstance(row, dict) or row.get('unit_id') not in identifiers:
+                raise PlanInputError('개념 후보의 단원 소속이 달라요')
+            try:
+                identifier = str(UUID(row['id']))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                raise PlanInputError('개념 후보 UUID가 올바르지 않아요') from None
+            if not {'start_page', 'end_page', 'in_scope'} <= set(row) or type(row['in_scope']) is not bool:
+                raise PlanInputError('개념 후보의 범위와 시험 선택이 필요해요')
+            if identifier in all_concept_ids:
+                raise PlanInputError('개념 후보가 중복돼요')
+            all_concept_ids.add(identifier)
+            current_unit = connection.scalar(select(t.concepts.c.unit_id).where(t.concepts.c.id == identifier))
+            if current_unit is not None and current_unit != row['unit_id']:
+                raise PlanInputError('다른 단원의 개념 ID를 사용할 수 없어요')
+            concepts[row['unit_id']].append({**row, 'id': identifier})
+    if {row["material_id"] for row in unit_rows} != set(by_material):
+        raise PlanInputError("자료별 페이지 목차를 확인해 주세요")
     scopes, bounds = [], defaultdict(list)
     for row in unit_rows:
         material = by_material[row["material_id"]]
@@ -149,21 +198,33 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     return AllocationInput(today, tuple(subjects), tuple(scopes), tuple(busy))
 
 
-def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids):
+def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
+                              material_structure_overrides=None, affected_subject_ids=None):
     """Keep learning facts and active started placements while reallocating rest.
 
     Only selected draft subjects are added. Every active study range is reduced
     by actual recorded pages; remedial/review ranges remain separate obligations.
     Superseded rows are retained (including records, quiz/book references).
     """
-    if not subject_ids:
+    if not subject_ids and material_structure_overrides is None:
         raise PlanInputError('추가할 draft 과목을 선택해 주세요')
     request = _allocation_input(connection, user_id, today=today, timezone_name=timezone_name,
-                                subject_ids=subject_ids, existing=True)
+                                subject_ids=subject_ids, existing=True, material_structure_overrides=material_structure_overrides)
     from app.services.study import StudyData
     data = StudyData(connection, user_id)
     included = {subject.id for subject in request.subjects}
     catalog = {unit.id: unit for unit in request.units}
+    affected = included if affected_subject_ids is None else set(affected_subject_ids)
+    if not affected or not affected <= included:
+        raise PlanInputError('재배분할 과목 소속이 올바르지 않아요')
+    historical = {row['id']: dict(row) for row in connection.execute(select(t.units, t.materials.c.subject_id)
+        .join(t.materials, t.materials.c.id == t.units.c.material_id).where(t.materials.c.subject_id.in_(included))).mappings()}
+    # Fixed placements keep their historical unit identity even when the current
+    # structure retires it. Empty scopes add no new learning obligations.
+    for identifier, row in historical.items():
+        if identifier not in catalog:
+            catalog[identifier] = UnitScope(identifier, row['subject_id'], row['material_id'], row['sort_order'],
+                                            (), row['difficulty'], row['mastery_score'])
     sessions = defaultdict(list)
     for row in connection.execute(select(t.study_sessions).where(t.study_sessions.c.user_id == user_id)).mappings():
         sessions[row['task_id']].append(dict(row))
@@ -179,12 +240,12 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                 if span['unit_id'] in catalog and span['start_page'] is not None and span['end_page'] is not None:
                     unit = catalog[span['unit_id']]
                     if task.row['task_type'] == 'study':
-                        learned[unit.id].append(PageSpan(unit.material_id, span['start_page'], span['end_page']))
+                        learned[unit.material_id].append(PageSpan(unit.material_id, span['start_page'], span['end_page']))
         if task.row['status'] in ('carried_over', 'excluded'):
             continue
-        if task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
+        if task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
             raise PendingObligations('기한이 지난 보충·복습을 먼저 이월한 뒤 과목을 추가해 주세요')
-        is_fixed = not task.paged or task.row['task_type'] in ('remedial', 'review') or any(
+        is_fixed = task.row['subject_id'] not in affected or not task.paged or task.row['task_type'] in ('remedial', 'review') or any(
             session['status'] in ('running', 'paused') or (session['status'] in ('ended', 'auto_stopped')
                 and session['id'] not in consumed_sessions) for session in sessions[task.id]) or task.row['status'] == 'completed' or (
             task.record is not None and task.row['scheduled_date'] >= today)
@@ -226,5 +287,6 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                 'completed' if row['status'] == 'completed' else 'started', day, first, last, parts))
         except ValueError as exc:
             raise PlanInputError('기존 배치의 날짜와 분량을 확인해 주세요') from exc
-    units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.id])) for unit in request.units)
+    units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.material_id]) if unit.subject_id in affected else ())
+                  for unit in catalog.values())
     return replace(request, units=units, fixed=tuple(fixed)), supersede, request
