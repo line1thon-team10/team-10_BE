@@ -78,6 +78,23 @@ Table child {
     fs.writeFileSync(configPath, JSON.stringify(invalid));
     assert.notEqual(generate().status, 0);
   }
+  fs.unlinkSync(configPath);
+  const contractPath = path.join(fixture, 'schema/contract-invariants.json');
+  fs.writeFileSync(contractPath, JSON.stringify({ indexes: [{ table: 'child', name: 'uq_current_parent',
+    columns: ['parent_id'], where: 'revision > 0' }] }));
+  result = generate();
+  assert.equal(result.status, 0, result.stderr);
+  output = fs.readFileSync(path.join(fixture, 'app/db/schema.py'), 'utf8');
+  assert.match(output, /Index\("uq_current_parent", child.c.parent_id, unique=True/);
+  for (const index of [
+    { table:'unknown', name:'bad', columns:['id'], where:'1=1' },
+    { table:'child', name:'bad', columns:['missing'], where:'1=1' },
+    { table:'child', name:'bad', columns:[], where:'1=1' },
+    { table:'child', name:'bad', columns:['id'], where:'' },
+  ]) {
+    fs.writeFileSync(contractPath, JSON.stringify({ indexes:[index] }));
+    assert.notEqual(generate().status, 0);
+  }
   console.log('schema generator: merged CHECK/CASCADE, explicit server defaults, backward compatibility and invalid configuration passed');
 } finally {
   fs.rmSync(fixture, { recursive: true, force: true });

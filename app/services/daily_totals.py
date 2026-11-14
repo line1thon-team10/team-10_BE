@@ -7,6 +7,7 @@ from app.core.clock import now_utc
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.progress import PageProgress
+from app.domain.ranges import PageSpan, page_count
 from app.services.records import lock_record_user, record_date
 from app.services.study import StudyData
 
@@ -25,13 +26,17 @@ class DailyTotalsService:
     @staticmethod
     def _current(data,day):
         grouped=defaultdict(lambda:{'planned_new_pages':0,'planned_total_pages':0,'planned_unpaged_minutes':0})
+        new_spans=defaultdict(list)
         for task in data.tasks_on(day):
             row=grouped[task.row['subject_id']]
             row['planned_total_pages']+=task.pages
             if task.row['task_type']=='study':
-                row['planned_new_pages']+=task.pages
+                new_spans[task.row['subject_id']].extend(
+                    PageSpan(part['material_id'],part['start_page'],part['end_page']) for part in task.paged)
             if not task.paged:
                 row['planned_unpaged_minutes']+=task.row['estimated_minutes'] or 0
+        for sid,spans in new_spans.items():
+            grouped[sid]['planned_new_pages']=page_count(spans)
         return grouped
 
     def snapshot(self,day,*,finalize=False,at=None):
