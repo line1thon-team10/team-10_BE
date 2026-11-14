@@ -5,7 +5,7 @@
     "state": "executing",
     "code_base_sha": "f47eac601d56d4767b4d82ec13c109550be9d1ff",
     "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
-    "fe_base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
+    "fe_base_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
     "ai_pinned_sha": "6d74ffb6c455a306e912252013d76f93e30a6210",
     "proposed_integration_branch": "integration/contract-v1",
     "max_workers": 3,
@@ -199,7 +199,7 @@
       "id": "SYS-05",
       "title": "미리보기 승인·stale·재시도 공통 서비스",
       "lane": "platform",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "SYS-04"
@@ -207,7 +207,8 @@
       "write_scope": [
         "BE/app/services/proposals.py",
         "BE/tests/test_proposals*.py",
-        "BE/docs/preview-application-handoff.md"
+        "BE/docs/preview-application-handoff.md",
+        "BE/app/repositories/proposals.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -224,10 +225,11 @@
       "optional": false,
       "branch": "feat/preview-application",
       "base_sha": "f22db928309cf55b3e3128811b271c37db84000f",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "a56e5af58beaa8956ee4d5762c28cefe56bebe9c",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/30",
       "validation_evidence": [
-        "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease."
+        "Assigned after SYS-04 integration. Root policy f22db92 fixes legacy missing-response behavior and existing/initial/draft revision boundaries. No schema or router lease.",
+        "Final397 passed/5 SQLite-only skips; same5 concurrency cases execute on PostgreSQL. Approved minimal repository lease distinguishes known old-writer selected accepted proposals without sidecars and known kind mismatches. Astra independent review pending at a56e5af."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -961,7 +963,7 @@
       "id": "Q-03",
       "title": "문항별 답안 저장·복구 API",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "Q-02"
@@ -972,7 +974,12 @@
         "BE/app/services/quiz.py",
         "BE/tests/test_quiz_answer_api.py",
         "BE/app/schemas/quiz_answers.py",
-        "BE/docs/quiz-answer-api-handoff.md"
+        "BE/docs/quiz-answer-api-handoff.md",
+        "BE/app/domain/quiz_answers.py",
+        "BE/app/repositories/quiz_answers.py",
+        "BE/tests/test_quiz_answer_text.py",
+        "BE/tests/test_quiz_answer_concepts.py",
+        "BE/tests/test_quiz_answer_receipt_metadata.py"
       ],
       "shared_resources": [
         "quiz-legacy"
@@ -993,10 +1000,11 @@
       "optional": false,
       "branch": "feat/quiz-answer-api",
       "base_sha": "9d1ddd7a40e37f74823950038581b18e1134fc58",
-      "head_sha": null,
-      "pr_url": null,
+      "head_sha": "0f746ed9a3c0383bfe3b8b6a215191575b8805ed",
+      "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/29",
       "validation_evidence": [
-        "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed."
+        "Owns app/main.py minimal router registration and quiz.py GET projection only. Legacy submit lacks user lock and calls AI inside its transaction; adding lock around AI rejected. Q-03/Q-02 seal tests are scoped, actual legacy HTTP submit/save race must close in Q-05 before any Q-03 deployment. Never count this known gap as passed.",
+        "Independent review found 3 P2 categories: Unicode/NUL storage divergence, invalid concept-unit linkage, and receipt replay after metadata changes. Root fixed each atomically (7d1f49d/83acd27/4022fa7). Original independent22 and additional70 SQLite+PG passed at immutable4022fa7; no remaining findings in changed code. Documentation-only0f746ed. Legacy submit deployment gate remains Q-05."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1011,7 +1019,7 @@
       "id": "Q-04",
       "title": "재시작 가능한 채점 실행기",
       "lane": "quiz",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "Q-02",
@@ -1059,11 +1067,12 @@
       "optional": false,
       "branch": "feat/durable-grading-worker",
       "base_sha": "bea6d7d19229f56741715f3cb74654360ad60519",
-      "head_sha": null,
+      "head_sha": "b6f3a3d97f0bfefccbef30445298d550dcd6cab1",
       "pr_url": null,
       "validation_evidence": [
         "Schema lease0008_grading_execution_mode->0007_preview_storage. Root requires persisted live/saved/backup mode; memory-only prepare/execute cannot protect expired saved leases after restart. Worker may merge7dd2d4 normally.",
-        "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05."
+        "Root approved explicit generator serverDefaults for execution_mode only. Existing mode never changed by normal enqueue; automatic worker uses persisted mode; explicit retry may change mode atomically only without valid running lease. Final public mode_conflict mapping deferred to Q-05.",
+        "Immutable92cd382 independent706 passed plus2 failed: corrupt whole-quiz ownership could starve later healthy jobs behind LIMIT100. Fixed by keyset scan/shared items validation/cache/cursor/deadline in3ba6cae, handoffb6f3a3d. Author361 regression and original2 passed; independent delta review pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -1147,7 +1156,8 @@
         "부분 채점 결과 미공개·이후 학습 변경에도 과거 before/after 불변·결과 근거 rects 검증",
         "Legacy finalized answers may lack recoverable choice or original response: preserve facts, distinguish reconstructed result provenance, never claim exact historical snapshot reconstruction",
         "Handle submitted legacy/demo quiz_sessions created after migration0006 by old submit or seed without quiz_submission_states; preserve original facts and explicitly mark reconstructed provenance when a response must be rebuilt.",
-        "Replace legacy POST submit transaction boundary; verify real HTTP answer-save/submit competition without holding a user lock or DB transaction during AI. This releases Q-03 deployment gate."
+        "Replace legacy POST submit transaction boundary; verify real HTTP answer-save/submit competition without holding a user lock or DB transaction during AI. This releases Q-03 deployment gate.",
+        "If a pre-finalization succeeded job fails validated_completed_result provenance checks, define an explicit retry/regrade path for the same current answer under lock; never silently reuse stale results or automatically regrade finalized historical snapshots."
       ],
       "operations": [
         "POST /api/quiz/:subjectId/submit",
@@ -2814,15 +2824,17 @@
       "optional": false,
       "branch": "docs/api-contract-handoff",
       "base_sha": "c8e250d9484a03eac005e12c24d1b703fc105626",
-      "head_sha": "4c715bf",
-      "pr_url": null,
+      "head_sha": "564224af7244a917ae71a83ca8b851ea2897be6c",
+      "pr_url": "https://github.com/line1thon-team10/team-10_FE/pull/4",
       "validation_evidence": [
         "Live origin/main and origin/dev both c8e250d verified before dedicated docs worktree creation. Documentation and fixture work only; no FE runtime changes or owner approval claim.",
-        "FE commitsfc706af baseline/C01-C22 mapping and4c715bf local HTTP fixtures/capture tool.14actual requests in5fixture files, source BE9d1ddd7, temporary SQLite cleaned. npm check baseline passed; final doc/fixture check and independent review pending. BE handoff76573d5, demo calculation source3bf62bb, root Document/API_change.md refreshed."
+        "FE commitsfc706af baseline/C01-C22 mapping and4c715bf local HTTP fixtures/capture tool.14actual requests in5fixture files, source BE9d1ddd7, temporary SQLite cleaned. npm check baseline passed; final doc/fixture check and independent review pending. BE handoff76573d5, demo calculation source3bf62bb, root Document/API_change.md refreshed.",
+        "Independent984423d review cleared record null-input handoff omission: actual HTTP null422/omission200; all5 fixture files/14 HTTP recaptured, no credentials. Remote FE then advanced to49c95c9; preserved via normal mergea19164a, updated docs564224a. npm check on merged baseline passed; refreshed doc delta review pending. Existing hybrid/proxy/seed/firstExam fixes must be reused, not reimplemented."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
-      "worktree": "FE-task-handoff"
+      "worktree": "FE-task-handoff",
+      "upstream_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e"
     },
     {
       "id": "FE-02",
@@ -3129,7 +3141,9 @@
       "base_sha": null,
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Upstream FE49c95c9 already supplies mock/hybrid/server mode, Vite proxy and Vercel /api+SPA rewrites. Verify/reuse these and real deployment; hybrid22 routes and mock approval->day9 seed are not real full contract implementation."
+      ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
@@ -3164,7 +3178,9 @@
       "base_sha": null,
       "head_sha": null,
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Upstream FE49c95c9 already replaces seed and sample PDFs with AI/DB/OS. Reconcile current values and remaining fixture/script gaps instead of rebuilding old c8e seed."
+      ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
         "FE/src/hooks/queryKeys.js"
