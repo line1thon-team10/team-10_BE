@@ -156,3 +156,25 @@ def test_allocation_snapshot_keeps_exact_original_speed_when_subject_settings_ch
     conn.execute(update(t.units).where(t.units.c.id==c['units'][0]['id']).values(difficulty='high'));conn.commit()
     assert api_client.post(f'/api/quiz/{quiz}/submit',headers=c['headers'],json=body).json()['data']==result
     assert [dict(row) for row in conn.execute(select(t.remedial_obligation_blocks)).mappings()]==links
+
+
+def test_allocation_failure_rolls_back_new_facts_and_submit_retry_creates_one_obligation(api_client,domain_connection,remedial_case,monkeypatch):
+    from sqlalchemy.engine import Connection
+    c,conn=remedial_case,domain_connection
+    quiz,items=make_quiz(conn,c,c['questions'][0],day=DAY)
+    body={'quizId':quiz,'answers':[{'questionId':row['id'],'choice':1,'confidence':'sure'} for row in items]}
+    original=Connection.execute
+    def fail(self,statement,*args,**kwargs):
+        if getattr(statement,'is_insert',False) and getattr(getattr(statement,'table',None),'name',None)=='remedial_obligation_blocks':
+            raise RuntimeError('forced allocation persistence failure')
+        return original(self,statement,*args,**kwargs)
+    monkeypatch.setattr(Connection,'execute',fail)
+    failed=api_client.post(f'/api/quiz/{quiz}/submit',headers=c['headers'],json=body)
+    assert failed.status_code==500
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==0
+    assert conn.scalar(select(func.count()).select_from(t.mastery_history).where(t.mastery_history.c.quiz_session_id==quiz))==0
+    assert conn.scalar(select(func.count()).select_from(t.quiz_attempts).join(t.quiz_items,t.quiz_attempts.c.quiz_item_id==t.quiz_items.c.id).where(t.quiz_items.c.quiz_session_id==quiz))==0
+    conn.commit();monkeypatch.setattr(Connection,'execute',original)
+    retry=api_client.post(f'/api/quiz/{quiz}/submit',headers=c['headers'],json=body)
+    assert retry.status_code==200,retry.text
+    assert conn.scalar(select(func.count()).select_from(t.remedial_obligations))==1
