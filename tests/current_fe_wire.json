@@ -1,0 +1,51 @@
+[
+  {
+    "method": "post",
+    "url": "/api/records",
+    "body": {
+      "taskId": "00000000-0000-4000-8000-000000000002",
+      "result": "done",
+      "sessionId": null
+    }
+  },
+  {
+    "method": "post",
+    "url": "/api/records",
+    "body": {
+      "taskId": "00000000-0000-4000-8000-000000000002",
+      "result": "partial",
+      "toPage": 13,
+      "sessionId": null
+    }
+  },
+  {
+    "method": "post",
+    "url": "/api/records",
+    "body": {
+      "taskId": "00000000-0000-4000-8000-000000000002",
+      "result": "none",
+      "sessionId": null
+    }
+  },
+  {
+    "method": "post",
+    "url": "/api/quiz/00000000-0000-4000-8000-000000000001/submit",
+    "body": {
+      "answers": [
+        {
+          "questionId": "00000000-0000-4000-8000-000000000003",
+          "choice": 0,
+          "text": null,
+          "confidence": "sure"
+        },
+        {
+          "questionId": "00000000-0000-4000-8000-000000000004",
+          "choice": null,
+          "text": "",
+          "confidence": "sure"
+        }
+      ],
+      "savedGrading": true
+    }
+  }
+]
