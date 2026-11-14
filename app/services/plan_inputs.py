@@ -17,7 +17,7 @@ from app.db import schema as t
 from app.domain.onboarding import CONFIRMATION_COLUMNS, subject_view
 from app.domain.ranges import PageSpan, subtract
 from app.domain.scheduling import (AllocationInput, Subject, UnitScope, FixedTask, FixedRange,
-    free_slots)
+    free_slots, WorkRequirement, ScopePart)
 from app.repositories.events import EventRepository
 from app.services.onboarding_events import event_intervals
 
@@ -42,7 +42,8 @@ def initial_allocation_input(connection, user_id: str, *, today: date,
                              subject_ids=subject_ids, existing=False)
 
 
-def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None):
+def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids, existing, material_structure_overrides=None,
+                      subject_overrides=None, calendar_event_overrides=None, calendar_exception_overrides=None):
     """Resolve owned draft subjects, concept unions and actual calendar intervals.
 
     quiz_enabled is deliberately not an admission condition: a manual outline
@@ -70,8 +71,24 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
         raise PlanInputError("계획할 draft 과목이 필요해요")
     if existing:
         rows += [dict(row) for row in connection.execute(select(t.subjects).where(
-            t.subjects.c.user_id == user_id, t.subjects.c.status == 'active',
-            t.subjects.c.exam_date > today).order_by(t.subjects.c.id)).mappings()]
+            t.subjects.c.user_id == user_id, t.subjects.c.status == 'active').order_by(t.subjects.c.id)).mappings()]
+    overrides = {} if subject_overrides is None else subject_overrides
+    if not isinstance(overrides, dict) or not set(overrides) <= {row['id'] for row in rows}:
+        raise PlanInputError('본인의 선택된 과목만 변경할 수 있어요')
+    for row in rows:
+        values = overrides.get(row['id'], {})
+        if not isinstance(values, dict) or not set(values) <= {'exam_date', 'target_grade', 'target_score', 'minutes_per_page'}:
+            raise PlanInputError('시험일·목표·기준 속도만 변경할 수 있어요')
+        if 'exam_date' in values and (type(values['exam_date']) is not date or values['exam_date'] <= today):
+            raise PlanInputError('시험일은 오늘보다 뒤여야 해요')
+        if 'target_grade' in values and (type(values['target_grade']) is not str or not values['target_grade'].strip()):
+            raise PlanInputError('목표 학점을 확인해 주세요')
+        row.update(values)
+    if existing:
+        rows = [row for row in rows if row['status'] == 'draft' or
+                (row['exam_date'] is not None and row['exam_date'] > today)]
+    if not rows:
+        raise PlanInputError('재배분할 유효한 과목이 필요해요')
     subjects = []
     for row in rows:
         if (row["status"] == "draft" and (not all(row[column] is not None for column in CONFIRMATION_COLUMNS.values())
@@ -184,6 +201,44 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
     exceptions = defaultdict(list)
     for row in repository.exceptions([event["id"] for event in events]):
         exceptions[row["event_id"]].append(row)
+    event_changes = {} if calendar_event_overrides is None else calendar_event_overrides
+    exception_changes = {} if calendar_exception_overrides is None else calendar_exception_overrides
+    if not isinstance(event_changes, dict) or not isinstance(exception_changes, dict):
+        raise PlanInputError('일정 후보는 ID별 변경 객체여야 해요')
+    by_event = {event['id']: event for event in events}
+    owned_subjects = set(connection.scalars(select(t.subjects.c.id).where(t.subjects.c.user_id == user_id)))
+    for identifier, candidate in event_changes.items():
+        try:
+            if str(UUID(identifier)) != identifier:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            raise PlanInputError('올바른 일정 UUID가 필요해요') from None
+        current = connection.execute(select(t.calendar_events.c.user_id, t.calendar_events.c.subject_id)
+            .where(t.calendar_events.c.id == identifier)).mappings().first()
+        if current and (current['user_id'] != user_id or current['subject_id'] is not None
+                        and current['subject_id'] not in owned_subjects):
+            raise PlanInputError('다른 사용자의 일정을 변경할 수 없어요')
+        if candidate is None:
+            if identifier not in by_event:
+                raise PlanInputError('제거할 본인의 일정이 없어요')
+            del by_event[identifier]
+            continue
+        if (not isinstance(candidate, dict) or candidate.get('id') != identifier or candidate.get('user_id') != user_id
+                or candidate.get('subject_id') is not None and candidate['subject_id'] not in owned_subjects
+                or not {'starts_at', 'ends_at', 'recurrence_rule', 'recurrence_until'} <= set(candidate)
+                or candidate.get('event_type') not in ('class', 'job', 'meet', 'other')):
+            raise PlanInputError('본인 일정의 올바른 후보가 필요해요')
+        if candidate.get('deleted_at') is not None:
+            by_event.pop(identifier, None)
+        else:
+            by_event[identifier] = dict(candidate)
+    for identifier, rows in exception_changes.items():
+        if identifier not in by_event or not isinstance(rows, list):
+            raise PlanInputError('유효한 본인 일정의 회차 변경만 지정해 주세요')
+        if any(not isinstance(row, dict) or row.get('event_id') != identifier for row in rows):
+            raise PlanInputError('회차 변경의 소속 일정이 달라요')
+        exceptions[identifier] = [dict(row) for row in rows]
+    events = list(by_event.values())
     last_exam = max(subject.exam_date for subject in subjects)
     busy = []
     try:
@@ -199,17 +254,26 @@ def _allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
 
 
 def existing_allocation_input(connection, user_id, *, today, timezone_name, subject_ids,
-                              material_structure_overrides=None, affected_subject_ids=None):
+                              material_structure_overrides=None, affected_subject_ids=None,
+                              subject_overrides=None, earliest_day=None, movable_task_ids=(),
+                              calendar_event_overrides=None, calendar_exception_overrides=None):
     """Keep learning facts and active started placements while reallocating rest.
 
     Only selected draft subjects are added. Every active study range is reduced
     by actual recorded pages; remedial/review ranges remain separate obligations.
     Superseded rows are retained (including records, quiz/book references).
     """
-    if not subject_ids and material_structure_overrides is None:
-        raise PlanInputError('추가할 draft 과목을 선택해 주세요')
+    if (not subject_ids and material_structure_overrides is None and subject_overrides is None
+            and affected_subject_ids is None and calendar_event_overrides is None
+            and calendar_exception_overrides is None and not movable_task_ids):
+        raise PlanInputError('재배분할 과목이나 변경할 입력을 선택해 주세요')
+    earliest_day = today if earliest_day is None else earliest_day
+    if type(earliest_day) is not date or earliest_day < today:
+        raise PlanInputError('재배분 시작일은 오늘 이후여야 해요')
     request = _allocation_input(connection, user_id, today=today, timezone_name=timezone_name,
-                                subject_ids=subject_ids, existing=True, material_structure_overrides=material_structure_overrides)
+                                subject_ids=subject_ids, existing=True, material_structure_overrides=material_structure_overrides,
+                                subject_overrides=subject_overrides, calendar_event_overrides=calendar_event_overrides,
+                                calendar_exception_overrides=calendar_exception_overrides)
     from app.services.study import StudyData
     data = StudyData(connection, user_id)
     included = {subject.id for subject in request.subjects}
@@ -230,7 +294,12 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
         sessions[row['task_id']].append(dict(row))
     consumed_sessions = set(connection.scalars(select(t.study_records.c.session_id).where(
         t.study_records.c.task_id.in_([task.id for task in data.tasks]), t.study_records.c.session_id.is_not(None))))
-    learned, fixed, supersede = defaultdict(list), [], []
+    if not isinstance(movable_task_ids, (tuple, list)) or any(type(value) is not str for value in movable_task_ids):
+        raise PlanInputError('이동할 태스크 ID 목록이 필요해요')
+    movable = set(movable_task_ids)
+    if len(movable) != len(movable_task_ids) or not movable <= {task.id for task in data.tasks if task.row['subject_id'] in affected}:
+        raise PlanInputError('본인의 재배분 대상 태스크만 중복 없이 이동할 수 있어요')
+    learned, fixed, supersede, requirements = defaultdict(list), [], [], []
     pending_fixed = []
     for task in data.tasks:
         if task.row['subject_id'] not in included:
@@ -243,12 +312,15 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
                         learned[unit.material_id].append(PageSpan(unit.material_id, span['start_page'], span['end_page']))
         if task.row['status'] in ('carried_over', 'excluded'):
             continue
-        if task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
+        if task.id not in movable and task.row['subject_id'] in affected and task.row['task_type'] in ('remedial', 'review') and task.row['scheduled_date'] < today and task.row['status'] != 'completed':
             raise PendingObligations('기한이 지난 보충·복습을 먼저 이월한 뒤 과목을 추가해 주세요')
-        is_fixed = task.row['subject_id'] not in affected or not task.paged or task.row['task_type'] in ('remedial', 'review') or any(
-            session['status'] in ('running', 'paused') or (session['status'] in ('ended', 'auto_stopped')
-                and session['id'] not in consumed_sessions) for session in sessions[task.id]) or task.row['status'] == 'completed' or (
-            task.record is not None and task.row['scheduled_date'] >= today)
+        protected_session = any(session['status'] in ('running', 'paused') or (
+            session['status'] in ('ended', 'auto_stopped') and session['id'] not in consumed_sessions)
+            for session in sessions[task.id])
+        is_fixed = (task.row['subject_id'] not in affected or not task.paged or protected_session
+            or task.row['status'] == 'completed' or (task.id not in movable and (
+                task.row['task_type'] in ('remedial', 'review') or task.row['scheduled_date'] < earliest_day
+                and task.row['scheduled_date'] >= today or task.record is not None and task.row['scheduled_date'] >= today)))
         active_parts = []
         for span in task.paged:
             unit = catalog.get(span['unit_id'])
@@ -263,6 +335,17 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
             pending_fixed.append((task, tuple(active_parts)))
         else:
             supersede.append(task.id)
+            if task.row['task_type'] in ('remedial', 'review'):
+                remaining = []
+                for span in task.paged:
+                    unit = catalog[span['unit_id']]
+                    done = [PageSpan(unit.material_id, row['start_page'], row['end_page']) for row in task.done_ranges
+                        if row['unit_id'] == unit.id and row['start_page'] is not None and row['end_page'] is not None]
+                    remaining.extend(ScopePart(unit.id, part) for part in subtract(
+                        (PageSpan(unit.material_id, span['start_page'], span['end_page']),), done))
+                if remaining:
+                    requirements.append(WorkRequirement(task.id, task.row['subject_id'], task.row['task_type'],
+                        tuple(remaining), earliest_day))
     zone = ZoneInfo(timezone_name)
     for task, parts in sorted(pending_fixed, key=lambda item: (item[0].row['scheduled_date'], item[0].row['starts_at'] is None, item[0].id)):
         row, day = task.row, task.row['scheduled_date']
@@ -289,4 +372,5 @@ def existing_allocation_input(connection, user_id, *, today, timezone_name, subj
             raise PlanInputError('기존 배치의 날짜와 분량을 확인해 주세요') from exc
     units = tuple(replace(unit, ranges=subtract(unit.ranges, learned[unit.material_id]) if unit.subject_id in affected else ())
                   for unit in catalog.values())
-    return replace(request, units=units, fixed=tuple(fixed)), supersede, request
+    return replace(request, start_date=earliest_day, units=units, fixed=tuple(fixed),
+                   requirements=tuple(requirements)), supersede, request
