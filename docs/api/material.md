@@ -79,6 +79,16 @@ GET의 `data` 및 저장 완료의 `data.structure`:
 
 unitId 필수, inExam 또는 비어 있지 않은 concepts 중 하나 이상 필요. 생략한 단원/개념 상태는 유지한다. concepts의 중복 ID, 다른 단원 소속 ID는 거절한다. 단원 체크 해제 시 개념의 선택 상태는 보존하되 유효 시험 범위에서는 제외한다.
 
-PUT/PATCH 모두 승인 계획이 없으면 바로 저장하고 `{applied:true,previewId:null,structure:위 구조}`를 반환한다. 승인 계획이 있으면 **아무것도 변경하지 않고** `{applied:false,previewId,structure:후보 구조,changes:[{label,before,after}],days:[{date,text}],note}`를 반환한다. changes 값은 표시용 string, note는 string|null이다. FE는 비교 화면을 표시한다.
+PUT/PATCH 모두 해당 과목이 draft이거나 승인 계획이 없으면 바로 저장하고 `{applied:true,previewId:null,structure:위 구조}`를 반환한다. 해당 과목이 active이고 승인 계획이 있으면 **아무것도 변경하지 않고** `{applied:false,previewId,structure:후보 구조,changes:[{label,before,after}],days:[{date,text}],note}`를 반환한다. changes 값은 표시용 string, note는 string|null이다. FE는 비교 화면을 표시한다.
 
 승인은 동일 PUT/PATCH 경로에 `{previewId}`만 전달한다. 성공 `{applied:true,previewId,structure:확정 구조}`. [후보 공통 규칙](decisions.md)을 적용해 해당 과목의 남은 범위만 재배분하고 기존 학습·퀴즈·책·보충은 보존한다. 구조 교체로 ID가 바뀌면 응답 구조를 다시 저장한다. 모든 시험 범위를 제외하거나 가용시간에 배정 불가하면 `409 PLAN_INFEASIBLE`, 승인 직전 다른 편집이 적용됐으면 `409 PREVIEW_STALE`이다.
+
+## 구조 편집의 적용 경계
+
+기존 사용자가 새 draft 과목을 추가하는 동안에는 기존 승인 계획이 있어도 draft 목차를 바로 편집한다. 이 저장은 기존 계획 revision이나 태스크를 변경하지 않는다. 목표와 일정 확인 및 초기 계획 승인 전부터 자료를 편집해야 하므로 전역 plan 존재만으로 모든 과목을 preview 경로에 넣지 않는다.
+
+활성 과목의 구조 preview는 현재 자료, 목표, 일정, 기록, 집중 세션, 계획 revision을 기준으로 계산한다. 계산 중에는 구조나 태스크를 저장하지 않으며, 같은 기준과 입력의 후보를 재사용한다. 승인 시 자료 구조와 남은 학습 태스크를 한 트랜잭션으로 반영하고, 같은 previewId는 최초 성공 응답을 재생한다. 날짜나 입력 변경, 다른 후보 승인 뒤에는 PREVIEW_STALE이다.
+
+페이지 범위 또는 개념 구성(추가/삭제/범위 변경)이 달라진 단원만 retire하고 새 단원과 개념 ID를 부여한다. 다른 단원은 유지한다. 제목, 순서, 난이도, 시험 선택만 변경하면 기존 ID 및 mastery를 유지한다. retire한 ID의 기록, 퀴즈, 책, 보충은 삭제하거나 신규 ID로 복제하지 않는다. 새 수동 구조의 evidence는 빈 배열이며 quizless=true다. 실제 학습한 페이지는 자료별 합집합으로 새 구조에서도 차감한다.
+
+탐색 자원 부족은 불가능 판정과 구분해 503 PLAN_SEARCH_LIMIT으로 반환한다. 과거의 미완료 보충이나 복습이 남은 경우에는 공통 계획 입력의 409 OVERDUE_OBLIGATIONS 경계를 사용하며, L-01의 날짜 정산과 이월 후 재요청한다. 해당 의무를 버리고 성공 후보를 만들지 않는다.
