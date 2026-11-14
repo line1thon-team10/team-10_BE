@@ -152,3 +152,33 @@ def test_remedial_pass_failure_rolls_back_entire_record(api_client, demo_user, d
     assert remedials(conn, uid) == []
     assert conn.scalar(select(t.study_records.c.id).where(t.study_records.c.task_id == task_id)) is None
     assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id == task_id)) == "planned"
+
+
+@pytest.mark.parametrize("proof", ["valid", "missing_records", "invalidated", "future"])
+def test_full_relearning_first_can_qualify_without_an_initial_pass(api_client, demo_user, domain_connection, proof):
+    from tests.test_planless_review_correction import direct_record
+    conn = domain_connection
+    template, _, _, full_id = direct_record(conn, demo_user)
+    uid = template.ranges[0]["unit_id"]
+    conn.execute(t.learning_passes.delete().where(
+        t.learning_passes.c.unit_id == uid, t.learning_passes.c.completion_kind == "initial"))
+    full = dict(conn.execute(select(t.learning_passes).where(t.learning_passes.c.id == full_id)).mappings().one())
+    snapshot = {**full["evidence_snapshot"], "materialId": template.ranges[0]["material_id"],
+                "directRequestHash": "a" * 64}
+    if proof == "missing_records":
+        snapshot["recordIds"] = []
+        snapshot["directRequestHash"] = "a" * 64
+    changes = {"evidence_snapshot": snapshot, "evidence_key": "direct:" + "b" * 64}
+    if proof == "invalidated":
+        changes["invalidated_at"] = full["completed_at"]
+    if proof == "future":
+        changes["completed_date"] = full["completed_date"] + timedelta(days=1)
+    conn.execute(update(t.learning_passes).where(t.learning_passes.c.id == full_id).values(**changes))
+    remedial = placement(conn, template, 12, 20, task_type="remedial")
+    obligation(conn, demo_user, template, [remedial])
+    conn.commit()
+    record(api_client, demo_user, remedial)
+    result = remedials(conn, uid)
+    assert len(result) == (1 if proof == "valid" else 0)
+    if result:
+        assert result[0]["pass_number"] == 3  # Historical numbering is not a valid-count field.

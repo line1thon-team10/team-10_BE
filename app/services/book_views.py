@@ -51,8 +51,17 @@ class BookViews:
                    t.quiz_sessions.c.finalized_at.is_not(None))))
 
     def ordered(self, block_id):
+        by_id = {task.id: task for task in self.tasks[block_id]}
+
+        def depth(task):
+            seen = {task.id}
+            while task.row["origin_task_id"] in by_id and task.row["origin_task_id"] not in seen:
+                task = by_id[task.row["origin_task_id"]]
+                seen.add(task.id)
+            return len(seen)
+
         return sorted(self.tasks[block_id], key=lambda task: (
-            task.row["scheduled_date"], task.row["created_at"], task.id))
+            task.row["scheduled_date"], task.row["created_at"], depth(task), task.id))
 
     def representative(self, block_id, day=None):
         tasks = self.ordered(block_id)

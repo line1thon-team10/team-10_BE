@@ -1,5 +1,6 @@
 from datetime import timedelta
 from uuid import uuid4
+from uuid import UUID
 
 from sqlalchemy import select, update
 
@@ -155,3 +156,17 @@ def test_direct_review_book_is_discoverable_without_daily_plan_growth(api_client
     fixed = next(b for b in unit(api_client, demo_user, uid)["blocks"] if b["id"] == direct["id"])
     assert fixed["state"] == "doing"
     assert fixed["task"]["donePages"] == 2
+
+
+def test_same_timestamp_completed_lineage_prefers_descendant(api_client, demo_user, domain_connection, monkeypatch):
+    from tests import test_initial_pass
+    conn = domain_connection
+    root = task_for(conn, demo_user)
+    values = iter([UUID(int=1), UUID(int=2)])
+    with monkeypatch.context() as patch:
+        patch.setattr(test_initial_pass, "uuid4", lambda: next(values))
+        tail = placement(conn, root, 12, 20, block_id=root.row["block_id"], origin=root.id)
+    conn.commit()
+    record(api_client, demo_user, tail)
+    book = unit(api_client, demo_user, root.ranges[0]["unit_id"])["blocks"][0]
+    assert book["task"]["id"] == tail
