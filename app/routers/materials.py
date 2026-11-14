@@ -10,7 +10,7 @@ from starlette.formparsers import MultiPartException
 from app.core.auth import current_user
 from app.core.responses import ApiError, ok
 from app.db.session import get_conn
-from app.schemas.materials import MaterialsResponse, MaterialUploadResponse, MaterialJobResponse
+from app.schemas.materials import MaterialsResponse, MaterialUploadResponse, MaterialJobResponse, MaterialTocRequest, MaterialTocResponse
 from app.services.material_storage import LimitedPdfParser, MaterialStorageService
 
 
@@ -73,3 +73,11 @@ def get_job(job_id: UUID, user: dict = Depends(current_user), conn: Connection =
     engine = conn.engine
     conn.close()
     return ok(MaterialAnalysisService(engine).view(user["id"], str(job_id)))
+
+
+@router.post("/toc", response_model=MaterialTocResponse)
+def parse_toc(body: MaterialTocRequest, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    from app.services.material_toc import MaterialTocService
+    engine = conn.engine
+    conn.close()
+    return ok(MaterialTocService(engine).parse(user["id"], str(body.subjectId), str(body.materialId), body.text))
