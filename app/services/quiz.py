@@ -365,7 +365,7 @@ class QuizService:
                 daily_increase_limit=r.daily_increase_limit, created_at=now))
 
     # ---------- 결과 ----------
-    def result_view(self, session: dict) -> dict:
+    def result_view(self, session: dict, *, seen=frozenset()) -> dict:
         repo = QuizAnswerRepository(self.conn)
         repo.items(self.user["id"], session["id"])
         state = repo.submission(self.user["id"], session["id"])
@@ -373,19 +373,27 @@ class QuizService:
             return deepcopy(state["result_snapshot"])
         if state is not None and not state["legacy"]:
             raise ApiError("AI_FAILED", "채점이 아직 끝나지 않았어요", 503)
-        return self._build_result_view(session)
+        if session["status"] != "submitted":
+            raise ApiError("NO_RESULT", "아직 제출한 퀴즈가 없어요", 404)
+        from app.services.quiz_finalization import legacy_result
+        return legacy_result(self.conn, self.user["id"], session["id"], seen=seen)
 
-    def _build_result_view(self, session: dict, *, before_blocks: dict | None = None) -> dict:
+    def _build_result_view(self, session: dict, *, before_blocks: dict | None = None, seen=frozenset()) -> dict:
         if session["status"] != "submitted":
             raise ApiError("NO_RESULT", "아직 푼 퀴즈가 없어요", 404)
         data = StudyData(self.conn, self.user["id"])  # 채점 뒤 점수로 다시 읽어요
+        # Archived/retired objects still identify historical result facts.
+        units = {row["id"]: dict(row) for row in self.conn.execute(select(t.units)
+            .join(t.materials, t.units.c.material_id == t.materials.c.id)
+            .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+            .where(t.subjects.c.user_id == self.user["id"])).mappings()}
         items = self.items(session["id"])
         out_items = []
         for i, x in enumerate(items):
             src = x.get("source")
             essay = x["type"] == "essay"
             out_items.append({
-                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(units[x["unit_id"]]["code"]),
                 "materialId": x["material_id"], "unitId": x["unit_id"],
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
                 "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
@@ -401,7 +409,9 @@ class QuizService:
             t.mastery_history.c.quiz_session_id == session["id"])).mappings().all()
         unit_changes, book_changes = [], []
         for h in hist:
-            u = data.units[h["unit_id"]]
+            if h["unit_id"] not in units:
+                raise ApiError("NO_RESULT", "결과 단원의 소유권을 확인하지 못했어요", 404)
+            u = units[h["unit_id"]]
             no, title = unit_no(u["code"]), u["title"]
             unit_changes.append({"materialId": u["material_id"], "unitId": u["id"],
                                  "unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
@@ -427,7 +437,8 @@ class QuizService:
                    "sureCorrect": sum(1 for x in out_items if x["correct"] and x["confidence"] == "sure"),
                    "unsureCorrect": sum(1 for x in out_items if x["correct"] and x["confidence"] == "unsure"),
                    "wrong": sum(1 for x in out_items if not x["correct"])}
-        subject = data.subject_by_id.get(session["subject_id"], {})
+        subject = self.conn.execute(select(t.subjects).where(t.subjects.c.id == session["subject_id"],
+            t.subjects.c.user_id == self.user["id"])).mappings().first() or {}
         result = {
             "quizId": session["id"], "subjectId": session["subject_id"], "name": subject.get("name"),
             "essayGrading": "saved" if session["is_fallback"] else "ai", "summary": summary, "items": out_items,
@@ -439,14 +450,17 @@ class QuizService:
             scope = self.conn.execute(select(t.quiz_scopes.c.unit_id).where(
                 t.quiz_scopes.c.quiz_session_id == session["id"])).scalar()
             result["unitId"] = scope
-            result["materialId"] = data.units[scope]["material_id"] if scope in data.units else None
-            result["unitNo"] = unit_no(data.units[scope]["code"]) if scope in data.units else None
+            result["materialId"] = units[scope]["material_id"] if scope in units else None
+            result["unitNo"] = unit_no(units[scope]["code"]) if scope in units else None
             result["moreUnitChange"] = ({"materialId": result["materialId"], "unitId": scope,
                                          "unitNo": result["unitNo"], "before": unit_changes[0]["before"],
                                          "after": unit_changes[0]["after"]} if unit_changes else None)
         else:
             extras = self.conn.execute(select(t.quiz_sessions).where(
                 t.quiz_sessions.c.parent_quiz_session_id == session["id"],
-                t.quiz_sessions.c.status == "submitted")).mappings().all()
-            result["more"] = [self.result_view(dict(e)) for e in extras]
+                t.quiz_sessions.c.user_id == self.user["id"],
+                t.quiz_sessions.c.status == "submitted", t.quiz_sessions.c.grading_status == "completed",
+                t.quiz_sessions.c.finalized_at.is_not(None))).mappings().all()
+            visited = seen | {session["id"]}
+            result["more"] = [self.result_view(dict(e), seen=visited) for e in extras if e["id"] not in visited]
         return result

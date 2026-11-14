@@ -5,6 +5,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, select, update
+from fastapi.encoders import jsonable_encoder
 
 from app.core.clock import now_utc
 from app.core.responses import ApiError
@@ -20,6 +21,41 @@ from app.services.study import OPEN_RATE
 
 def _pending():
     return ApiError("AI_FAILED", "채점이 아직 끝나지 않았어요. 같은 답안으로 다시 제출해 주세요", 503)
+
+
+def legacy_result(connection, user_id, quiz_id, *, seen=frozenset()):
+    """Freeze the first reconstruction from preserved facts, not a past response."""
+    user = lock_quiz_user(connection, {"id": user_id})
+    now = now_utc()
+    repo = QuizAnswerRepository(connection)
+    quiz = repo.quiz(user_id, quiz_id)
+    items = repo.items(user_id, quiz_id)
+    state = repo.submission(user_id, quiz_id)
+    if state is not None and state["result_snapshot"] is not None:
+        return deepcopy(state["result_snapshot"])
+    if (quiz["status"] != "submitted" or quiz["grading_status"] != "completed"
+            or quiz["finalized_at"] is None or (state is not None and not state["legacy"])):
+        raise _pending()
+    attempts = [dict(row) for row in connection.execute(select(t.quiz_attempts).where(
+        t.quiz_attempts.c.quiz_item_id.in_([item["id"] for item in items]))).mappings()]
+    if (not items or len(attempts) != len(items) or any(attempt["is_correct"] is None
+            or attempt["grading_status"] not in ("graded", "fallback") or attempt["finalized_at"] is None
+            or attempt["graded_at"] is None or attempt["confidence"] not in ("sure", "unsure")
+            for attempt in attempts)):
+        raise _pending()
+    if state is None:
+        # Old submit/seed writers can create finalized facts after migration0006.
+        # Preserve their times/scores; do not infer a choice index or input hash.
+        connection.execute(t.quiz_submission_states.insert().values(
+            quiz_session_id=quiz_id, sealed_at=quiz["finalized_at"], answer_set_hash=None,
+            input_recovered=False, sealed_answers=[], legacy=True,
+            legacy_snapshot=jsonable_encoder({"schemaVersion": "legacy-current-facts-v1", "session": quiz, "attempts": attempts})))
+        state = repo.submission(user_id, quiz_id)
+    today = user.get("demo_date") or now.astimezone(ZoneInfo(user.get("timezone") or "Asia/Seoul")).date()
+    result = QuizService(connection, user, today)._build_result_view(quiz, seen=seen)
+    stored = repo.store_result_snapshot(user_id, quiz_id, expected_hash=state["answer_set_hash"], snapshot=result,
+        provenance="legacy_reconstructed", schema_version="quiz-result-legacy-v1", now=now)
+    return deepcopy(stored["result_snapshot"])
 
 
 @dataclass(frozen=True)
