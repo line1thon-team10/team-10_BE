@@ -7,7 +7,7 @@ from itertools import combinations, permutations
 
 import pytest
 
-from app.domain.ranges import PageSpan, normalize
+from app.domain.ranges import PageSpan, normalize, page_count
 
 
 @pytest.mark.parametrize("material_id", ["pdf-a", "PDF-a", "강의자료", " pdf-a "])
@@ -156,3 +156,40 @@ def test_normalize_handles_huge_intervals_without_expanding_pages():
     end = 10**100
 
     assert normalize([PageSpan("pdf-a", end, end), PageSpan("pdf-a", 1, end - 1)]) == (PageSpan("pdf-a", 1, end),)
+
+
+@pytest.mark.parametrize(
+    "spans,expected",
+    [
+        ([], 0),
+        ([PageSpan("pdf-a", 7, 7)], 1),
+        ([PageSpan("pdf-a", 1, 3), PageSpan("pdf-a", 2, 4), PageSpan("pdf-b", 1, 2)], 6),
+        ([PageSpan("pdf-a", 1, 3), PageSpan("pdf-a", 5, 6)], 5),
+        ([PageSpan("pdf-a", 1, 3)] * 3, 3),
+    ],
+)
+def test_page_count_counts_unique_pages_with_inclusive_bounds(spans, expected):
+    result = page_count(_SingleUseIterable(spans))
+
+    assert type(result) is int
+    assert result == expected
+    assert result == len(_pages(spans))
+
+
+def test_page_count_is_additive_across_materials():
+    first_pdf = [PageSpan("pdf-a", 2, 5), PageSpan("pdf-a", 4, 7)]
+    second_pdf = [PageSpan("pdf-b", 2, 5), PageSpan("pdf-b", 7, 7)]
+
+    assert page_count(first_pdf + second_pdf) == page_count(first_pdf) + page_count(second_pdf) == 11
+
+
+def test_page_count_handles_huge_intervals_without_expanding_pages():
+    end = 10**100
+
+    assert page_count([PageSpan("pdf-a", 1, end), PageSpan("pdf-a", 2, end), PageSpan("pdf-b", end, end)]) == end + 1
+
+
+@pytest.mark.parametrize("spans", [None, "", [None], [PageSpan("pdf-a", 1, 1), ("pdf-a", 1, 2)]])
+def test_page_count_rejects_invalid_inputs(spans):
+    with pytest.raises(ValueError):
+        page_count(spans)

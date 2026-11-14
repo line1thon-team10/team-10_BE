@@ -49,3 +49,8 @@ def normalize(spans: Iterable[PageSpan]) -> tuple[PageSpan, ...]:
         else:
             merged.append(span)
     return tuple(merged)
+
+
+def page_count(spans: Iterable[PageSpan]) -> int:
+    """Count unique inclusive pages, counting the same page in different PDFs twice."""
+    return sum(span.end - span.start + 1 for span in normalize(spans))
