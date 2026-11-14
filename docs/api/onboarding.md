@@ -77,3 +77,11 @@ Event (일정 한 개, S1 · S2 공통)
 기존 초기 온보딩 경로를 유지한다. 승인된 계획에 과목을 추가할 때 `GET /api/onboarding?subjectId=…`, `POST /api/onboarding/message {subjectId,text}`로 draft 과목 컨텍스트를 지정한다. 해당 draft의 messages/chips/subjects/done만 반환하고 기존 활성 과목의 목표·시험·일정은 변경하지 않는다. 다른 사용자 또는 활성 과목을 컨텍스트로 전달하면404 SUBJECT_NOT_FOUND/409 ONBOARDING_COMPLETED. 초기 온보딩에서는 subjectId를 생략한다.
 
 subjects[].confirmedFields에 `{examDate:boolean,goal:boolean,goalTotal:boolean,goalEtc:boolean}`를 필수로 반환한다. 기타 정보에 명시적으로 '없음'이라고 확인한 경우 값은 null, 확인 상태는 true일 수 있다. done은 네 확인값과 유효한 시험일·목표를 기준으로 서버가 계산한다. FE는 null 여부로 done을 재계산하지 않는다. 자연어로 날짜/목표가 불명확하면 추가 질문만 하고 confirmed로 바꾸지 않는다.
+
+## 대화 해석과 재시도 (O-03)
+
+- `POST /api/onboarding/message`는 bounded AI gateway에서 소유 draft 과목 문맥만 해석한다. DB 트랜잭션 밖에서 공급자를 호출하며 SDK 재시도는 0, 공통 요청 예산과 실제 호출 사용량 기록을 적용한다. 실패/키 누락/시간초과를 확정된 목표로 저장하지 않는다.
+- 구조화 출력의 isConfirmed=false는 질문만 저장한다. true일 때도 네 confirmedFields를 따로 검사하며 각 true에는 현재 사용자 발화에 실제로 존재하는 인용 근거가 필요하다. 수정한 값만 해당 확인 상태를 무효화하고, 다른 칸에 false가 왔다는 이유로 기존 확인을 지우지 않는다. 목표 학점 확인에는 유효한 수치 목표도 필요하다.
+- 요청 전후에 현재 날짜·시간대·과목 상태/값·대화·일정·계획 기준을 비교한다. 해석 도중 변경은 `409 INPUT_STALE`이고 과목/대화 변경을 전혀 반영하지 않는다. 한 발화의 목표와 사용자/AI 메시지는 한 트랜잭션으로 저장한다.
+- 선택 헤더 `Idempotency-Key`(공백 없는 ASCII 1~128자)를 보내면 같은 사용자/경로/키의 성공 응답을 보관하고 응답 손실 후 그대로 재생한다. 다른 body로 키를 재사용하면 `409 IDEMPOTENCY_CONFLICT`, 진행 중이면 `409 REQUEST_IN_PROGRESS`다. 실패한 요청은 같은 키로 다시 시도할 수 있으며 lease 세대가 다른 늦은 응답은 저장하지 않는다.
+- 헤더를 생략한 요청은 새 발화다. 예를 들어 서로 다른 확인 질문에 두 번 답한 `없음`을 중복 제거하지 않는다. 클라이언트가 응답 손실을 구분해 재시도하려면 동일 키를 유지한다. 이 헤더는 기존 요청 body의 필수 필드를 늘리지 않는다.

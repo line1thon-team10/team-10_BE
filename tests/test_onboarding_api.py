@@ -108,16 +108,16 @@ def test_context_errors_do_not_expose_other_subjects(api_client, domain_connecti
     assert response.headers["Cache-Control"] == "no-store"
 
 
-def test_route_enforces_session_query_schema_and_does_not_add_message_stub(api_client, onboarding_user):
+def test_route_enforces_session_and_query_schema_with_real_message_endpoint(api_client, onboarding_user):
     response = api_client.get("/api/onboarding")
     assert response.status_code == 401 and response.json()["error"]["code"] == "NO_SESSION"
     response = api_client.get("/api/onboarding", headers=headers(onboarding_user), params={"unexpected": "x"})
     assert response.status_code == 422 and response.json()["error"]["code"] == "INVALID_INPUT"
-    response = api_client.post("/api/onboarding/message", headers=headers(onboarding_user), json={"text": "안녕하세요"})
-    assert response.status_code == 404
+    response = api_client.post("/api/onboarding/message", json={"text": "안녕하세요"})
+    assert response.status_code == 401 and response.json()["error"]["code"] == "NO_SESSION"
     paths = api_client.get("/openapi.json").json()["paths"]
     assert set(paths["/api/onboarding"]) == {"get"}
-    assert "/api/onboarding/message" not in paths
+    assert set(paths["/api/onboarding/message"]) == {"post"}
 
 
 def test_demo_approval_does_not_invent_four_field_confirmation(api_client, domain_connection, demo_user):
