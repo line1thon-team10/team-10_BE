@@ -7,11 +7,13 @@ from collections import defaultdict
 from fractions import Fraction
 from math import ceil
 from uuid import uuid4
+from types import SimpleNamespace
 
 from sqlalchemy import select, update
 
 from app.db import schema as t
 from app.domain.ranges import PageSpan, intersect, normalize, page_count, subtract
+from app.services.carryover import _slot
 
 AUTO_REASON = '어제에서 이월'
 LIVE = ('planned', 'partial', 'missed')
@@ -24,6 +26,8 @@ def _spans(rows):
 
 def reconcile_carryover(conn, task, *, user_id, at):
     """Recompute this block only, never erasing another remedial obligation."""
+    if task.row['plan_id'] is None:
+        return []
     tasks = [dict(row) for row in conn.execute(select(t.study_tasks)
         .join(t.subjects, t.subjects.c.id == t.study_tasks.c.subject_id)
         .where(t.study_tasks.c.block_id == task.row['block_id'], t.subjects.c.user_id == user_id)
@@ -76,7 +80,7 @@ def reconcile_carryover(conn, task, *, user_id, at):
     if available:
         first = candidates[0]['id']
         assignments[first] = normalize((*assignments[first], *available))
-    estimates = {}
+    estimates, slots = {}, {}
     for row in candidates:
         desired, old = assignments[row['id']], _spans(by_task[row['id']])
         if desired and (row['status'] not in LIVE or old != desired):
@@ -85,7 +89,10 @@ def reconcile_carryover(conn, task, *, user_id, at):
                 # A record edit is not authority to fabricate a feasible slot.
                 # Preserve the outstanding placement for a full replanning pass.
                 return []
-            estimates[row['id']] = minutes
+            slot = _slot(conn, SimpleNamespace(id=row['id'], row=row), row['scheduled_date'], minutes)
+            if slot is None:
+                return []
+            estimates[row['id']], slots[row['id']] = minutes, slot
     created = []
     for row in candidates:
         desired = assignments[row['id']]
@@ -97,7 +104,7 @@ def reconcile_carryover(conn, task, *, user_id, at):
             continue
         replacement_id = str(uuid4())
         values = {**row, 'id': replacement_id, 'origin_task_id': row['id'], 'status': 'planned',
-                  'starts_at': None, 'ends_at': None, 'estimated_minutes': estimates[row['id']], 'created_at': at}
+                  'starts_at': slots[row['id']][0], 'ends_at': slots[row['id']][1], 'estimated_minutes': estimates[row['id']], 'created_at': at}
         conn.execute(update(t.study_tasks).where(t.study_tasks.c.id == row['id']).values(status='carried_over'))
         conn.execute(t.study_tasks.insert().values(**values))
         uncovered, order = desired, 0
