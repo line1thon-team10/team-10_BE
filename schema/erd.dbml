@@ -432,6 +432,7 @@ Table remedial_obligations {
 Table remedial_obligation_blocks {
   obligation_id uuid [not null, ref: > remedial_obligations.id]
   block_id uuid [not null, unique, ref: > study_blocks.id]
+  allocation_snapshot jsonb [note: 'remedial-allocation-v1: 생성시각/태스크ID/일자/정확한시간과범위별기준속도·난이도Fraction. legacy null은속도보정제외']
   indexes { (obligation_id, block_id) [pk] }
 }
 
