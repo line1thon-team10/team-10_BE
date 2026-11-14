@@ -43,6 +43,7 @@ def ready(windows):
     ('수학과 자료구조 월요일 하루 60분', [window(A, [16], 60), window(B, [16, 23], 60)]),
     ('남은 전체 범위를 다시 배분해줘', []),
     ('다시 나눠줘', []),
+    ('내일부터 다시 나눠줘', [window(None, range(15, 24))]),
     ('현재 일정과 목표대로 재생성', []),
 ])
 def test_grounded_windows(text, expected):
