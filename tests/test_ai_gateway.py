@@ -1,13 +1,20 @@
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 from decimal import Decimal
+import multiprocessing
+import os
+from pathlib import Path
+import signal
+import struct
+import time
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, event, func, select, text
 
 from app.ai.gateway import (
-    DemoApproval, GatewayRequest, InvalidOutput, MaterialRevision, ResultIdentity, canonical_json, parse_json,
+    DemoApproval, FunctionRef, GatewayRequest, InvalidOutput, MaterialRevision, ProcessExecutor, ProviderSpec,
+    ResultIdentity, TelemetryError, _Telemetry, canonical_json, parse_json,
 )
 from app.ai.settings import AiSettings
 from app.core.responses import ApiError
@@ -205,3 +212,203 @@ def test_invalid_result_is_not_persisted_and_caller_connection_is_not_taken(resu
         AiResultRepository(domain_connection)
     assert not domain_connection.closed
     assert domain_connection.scalar(select(func.count()).select_from(t.users)) == 1
+
+
+# These are deterministic fake transports. No test in this module calls an AI service.
+# Module-level functions can be imported by the spawned execution process.
+def fake_provider(call, context):
+    payload = call.input
+    behavior = payload.get("behavior", "valid")
+    if behavior == "missing_credentials":
+        raise RuntimeError("secret credential details must not escape")
+    if behavior == "unobserved":
+        return {"page": 2, "evidence": "source"}
+    assert context.sdk_max_retries == 0 and context.remaining_seconds > 0
+    request_id = context.start_request()
+    if "pid_file" in payload:
+        Path(payload["pid_file"]).write_text(str(os.getpid()))
+    if behavior == "crash":
+        os._exit(7)
+    if behavior == "exception":
+        raise RuntimeError("secret provider response must not escape")
+    if behavior == "slow":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        time.sleep(payload["delay"])
+        Path(payload["late_file"]).write_text("unwanted late side effect")
+    time.sleep(payload.get("request_delay", 0))
+    if behavior == "malformed_telemetry":
+        context.finish_request(request_id, input_tokens=True)
+    elif behavior == "forged_telemetry":
+        context.finish_request(str(uuid4()))
+    else:
+        context.finish_request(request_id, **payload.get("measurements", {}))
+    if behavior == "multiple":
+        second = context.start_request(model="nested-model")
+        context.finish_request(second, input_tokens=10, output_tokens=2, provider_request_id="observed-2")
+    if behavior == "syntax_always" or behavior == "syntax_once" and not call.format_retry:
+        return '{"page":'
+    if behavior == "semantic":
+        return payload["raw"]
+    if behavior == "large":
+        return {"page": 2, "evidence": "source", "text": "x" * payload["size"]}
+    return {"page": 2, "evidence": "source"}
+
+
+def fake_validator(value, context):
+    if context.get("delay"):
+        time.sleep(context["delay"])
+    if type(value) is not dict or type(value.get("page")) is not int or value["page"] not in context["pages"]:
+        raise InvalidOutput("The referenced page is outside the selected range")
+    if value.get("evidence") != context["evidence"]:
+        raise InvalidOutput("The evidence is not supported by the material snapshot")
+    return value
+
+
+PROVIDER = ProviderSpec(FunctionRef(__name__, "fake_provider"))
+VALIDATOR = FunctionRef(__name__, "fake_validator")
+
+
+def execute_fake(payload=None, *, context=None, budget=4, cached=None):
+    key = identity(input=payload or {}, validation_context=context or {"pages": [1, 2], "evidence": "source"})
+    result = ProcessExecutor().execute(key, provider=PROVIDER, validator=VALIDATOR,
+                                      deadline=time.monotonic() + budget, cleanup_timeout=0.5,
+                                      cached_json=cached)
+    assert not multiprocessing.active_children()
+    return result
+
+
+def test_process_validates_result_and_reports_only_observed_transport_calls():
+    output = execute_fake()
+    assert output.failure is None and output.data == {"page": 2, "evidence": "source"}
+    assert len(output.usage) == 1 and output.usage[0].status == "succeeded"
+    assert output.usage[0].input_tokens is None and output.usage[0].estimated_cost is None
+    assert output.usage[0].latency_ms >= 0
+
+
+def test_nested_library_calls_are_individually_observed_with_unknown_metrics_left_null():
+    output = execute_fake({"behavior": "multiple"})
+    assert output.failure is None and len(output.usage) == 2
+    assert output.usage[0].input_tokens is None
+    assert output.usage[1].input_tokens == 10 and output.usage[1].model == "nested-model"
+    assert output.usage[1].provider_request_id == "observed-2" and output.usage[1].estimated_cost is None
+
+
+@pytest.mark.parametrize("behavior,succeeds", [("syntax_once", True), ("syntax_always", False)])
+def test_only_json_syntax_errors_receive_one_retry(behavior, succeeds):
+    output = execute_fake({"behavior": behavior})
+    assert (output.failure is None) is succeeds
+    assert len(output.usage) == 2
+
+
+@pytest.mark.parametrize("raw", ['{"page":NaN}', '{"page":1e999}', '{"page":2,"page":1}', 'null',
+                                  '{"page":true,"evidence":"source"}', '{"page":3,"evidence":"source"}',
+                                  '{"page":2,"evidence":"invented"}', '{"nested":[{"value":Infinity}]}'])
+def test_semantic_structure_evidence_range_and_nonfinite_errors_never_retry(raw):
+    output = execute_fake({"behavior": "semantic", "raw": raw})
+    assert output.data is None and output.failure == "invalid_or_failed"
+    assert len(output.usage) == 1  # A successful transport may still carry an invalid answer.
+    assert output.usage[0].status == "succeeded"
+
+
+@pytest.mark.parametrize("behavior,count", [("missing_credentials", 0), ("unobserved", 0), ("crash", 1),
+                                          ("exception", 1), ("malformed_telemetry", 1), ("forged_telemetry", 1)])
+def test_provider_failures_and_invalid_telemetry_are_fail_closed_and_reaped(behavior, count):
+    output = execute_fake({"behavior": behavior})
+    assert output.data is None and output.failure is not None
+    assert len(output.usage) == count and all(row.status == "failed" for row in output.usage)
+
+
+def test_timeout_kills_sigterm_ignoring_provider_and_does_not_leave_late_work(tmp_path):
+    pid_file, late_file = tmp_path / "pid", tmp_path / "late"
+    started = time.monotonic()
+    output = execute_fake({"behavior": "slow", "delay": 1.5, "pid_file": str(pid_file), "late_file": str(late_file)}, budget=1)
+    assert output.data is None and output.failure == "timeout" and len(output.usage) == 1
+    assert output.usage[0].status == "failed" and output.usage[0].latency_ms is None
+    assert time.monotonic() - started < 1.2
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+    assert not late_file.exists()
+
+
+def test_json_retry_uses_remaining_budget_instead_of_starting_a_new_timeout():
+    started = time.monotonic()
+    output = execute_fake({"behavior": "syntax_once", "request_delay": 0.65}, budget=1.5)
+    assert output.data is None and output.failure == "timeout"
+    assert len(output.usage) == 2 and output.usage[0].status == "succeeded" and output.usage[1].status == "failed"
+    assert time.monotonic() - started < 1.7
+
+
+def test_domain_validation_is_inside_the_same_killable_budget():
+    output = execute_fake(context={"pages": [1, 2], "evidence": "source", "delay": 2}, budget=1)
+    assert output.data is None and output.failure == "timeout"
+    assert len(output.usage) == 1 and output.usage[0].status == "succeeded"
+
+
+def test_cached_validation_has_zero_transport_calls_and_rejects_stale_invalid_data():
+    output = execute_fake(cached='{"page":2,"evidence":"source"}')
+    assert output.data == {"page": 2, "evidence": "source"} and output.usage == ()
+    bad = execute_fake(cached='{"page":7,"evidence":"source"}')
+    assert bad.data is None and bad.usage == ()
+
+
+def test_large_output_does_not_deadlock_pipe_or_defeat_deadline():
+    valid = execute_fake({"behavior": "large", "size": 2 * 1024 * 1024})
+    assert valid.failure is None and len(valid.data["text"]) == 2 * 1024 * 1024
+    oversized = execute_fake({"behavior": "large", "size": 9 * 1024 * 1024})
+    assert oversized.data is None and oversized.failure is not None and len(oversized.usage) == 1
+
+
+def partial_frame_child(connection, *args):
+    os.setsid()
+    os.write(connection.fileno(), struct.pack("!Q", 1024 * 1024) + b'{"type":')
+    time.sleep(10)
+
+
+def test_partial_large_frame_cannot_block_parent_receive_beyond_deadline(monkeypatch):
+    from app.ai import gateway
+    monkeypatch.setattr(gateway, "_execution_child", partial_frame_child)
+    started = time.monotonic()
+    output = execute_fake(budget=1)
+    assert output.failure == "timeout" and output.data is None
+    assert time.monotonic() - started < 1.2
+
+
+def test_failed_transport_cannot_be_disguised_as_success_with_a_fabricated_answer():
+    output = execute_fake({"measurements": {"status": "failed"}})
+    assert output.failure is not None and output.data is None
+    assert len(output.usage) == 1 and output.usage[0].status == "failed"
+
+
+@pytest.mark.parametrize("retries", [1, 6, True, None])
+def test_sdk_automatic_retries_are_forbidden(retries):
+    with pytest.raises(ValueError):
+        ProviderSpec(PROVIDER.function, sdk_max_retries=retries)
+
+
+@pytest.mark.parametrize("change", [{"input_tokens": -1}, {"output_tokens": True}, {"input_tokens": 2 ** 32},
+    {"estimated_cost": float("nan")}, {"estimated_cost": -1}, {"currency": "usd"}, {"provider_request_id": ""},
+    {"status": "pending"}, {"latency_ms": 0.1}, {"untrusted_owner": "id"}])
+def test_telemetry_rejects_invalid_measurements_without_fabricating_values(change):
+    collector, request_id = _Telemetry(), str(uuid4())
+    collector.accept({"type": "request_started", "id": request_id, "provider": "test", "model": "v1"})
+    event = {"type": "request_finished", "id": request_id, "status": "succeeded", "provider_request_id": None,
+             "input_tokens": None, "output_tokens": None, "estimated_cost": None, "currency": "USD", "latency_ms": 2}
+    event.update(change)
+    with pytest.raises(TelemetryError):
+        collector.accept(event)
+    assert collector.usage[0].status == "failed" and collector.usage[0].input_tokens is None
+
+
+def test_telemetry_rejects_duplicate_start_or_finish_and_forged_request_ids():
+    collector, request_id = _Telemetry(), str(uuid4())
+    start = {"type": "request_started", "id": request_id, "provider": "test", "model": "v1"}
+    collector.accept(start)
+    with pytest.raises(TelemetryError):
+        collector.accept(start)
+    end = {"type": "request_finished", "id": request_id, "status": "succeeded", "provider_request_id": None,
+           "input_tokens": 3, "output_tokens": 1, "estimated_cost": 0.0001, "currency": "USD", "latency_ms": 0}
+    collector.accept(end)
+    assert collector.usage[0].estimated_cost == 0.0001
+    for invalid in (end, {**end, "id": str(uuid4())}):
+        with pytest.raises(TelemetryError):
+            collector.accept(invalid)
