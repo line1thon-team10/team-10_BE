@@ -13,3 +13,9 @@ router = APIRouter(prefix='/api/monthly', tags=['월간 집계'])
 @router.get('')
 def monthly(query: Annotated[MonthQuery, Query()], user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
     return ok(MonthlyService(conn,user).view(query.month))
+
+
+@router.get('/report')
+def monthly_report(query: Annotated[MonthQuery, Query()], user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    from app.services.monthly_report import MonthlyReportService
+    return ok(MonthlyReportService(conn, user).report(query.month))
