@@ -103,3 +103,33 @@ def test_no_evidence_and_other_owner_files_cannot_supply_an_answer(api_client, t
     assert result.status_code == 503
     assert conn.scalar(select(func.count()).select_from(t.tutor_messages)) == 0
     assert conn.scalar(select(func.count()).select_from(t.ai_usage_logs)) == 0
+
+
+def test_same_page_number_in_two_pdfs_keeps_material_identity(api_client, tutor_case):
+    case = tutor_case
+    second = upload(api_client, case, pdf_bytes('Splay trees rotate accessed nodes. ' * 3)).json()['data']['materialId']
+    result = ask(api_client, case, 'Explain Splay trees')
+    assert result.status_code == 200, result.text
+    assert result.json()['data']['pages'] == [{'materialId': second, 'from': 1, 'to': 1}]
+
+
+def test_ambiguous_owned_subjects_do_not_guess_an_answer(api_client, tutor_case, domain_connection):
+    case, conn = tutor_case, domain_connection
+    upload(api_client, case, pdf_bytes('AVL rotations preserve the search tree ordering. ' * 3), subject=case['empty_subject'])
+    response = ask(api_client, case)
+    assert response.status_code == 503
+    assert conn.scalar(select(func.count()).select_from(t.ai_usage_logs)) == 0
+
+
+def test_parent_material_version_change_rejects_easy_without_provider(api_client, tutor_case, domain_connection):
+    from sqlalchemy import update
+    case, conn = tutor_case, domain_connection
+    parent = ask(api_client, case)
+    assert parent.status_code == 200, parent.text
+    conn.execute(update(t.materials).where(t.materials.c.id == case['materialId']).values(analysis_version='v2'))
+    before = conn.scalar(select(func.count()).select_from(t.ai_usage_logs))
+    conn.commit()
+    response = ask(api_client, case, 'Simplify', history_of(parent))
+    assert response.status_code == 503, response.text
+    assert conn.scalar(select(func.count()).select_from(t.ai_usage_logs)) == before
+    assert conn.scalar(select(func.count()).select_from(t.tutor_messages)) == 1
