@@ -421,3 +421,48 @@ def test_answer_arrays_have_no_arbitrary_thousand_item_limit(api_client, quiz_ca
     assert response.json()["data"]["summary"]["total"] == 1001
     assert response.json()["data"]["summary"]["correct"] == 1001
     assert [item["questionId"] for item in response.json()["data"]["items"]] == [item["id"] for item in items]
+
+
+@pytest.mark.parametrize("extra", [False, True], ids=["practice", "extra"])
+def test_question_and_result_views_preserve_unit_and_material_ids(api_client, quiz_case, domain_connection, extra):
+    case = quiz_case
+    unit = case["unit"]
+    if extra:
+        domain_connection.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == case["quiz_id"])
+                                  .values(type="extra"))
+        domain_connection.execute(t.quiz_scopes.insert().values(
+            id=str(uuid4()), quiz_session_id=case["quiz_id"], unit_id=unit["id"],
+            start_page=unit["start_page"], end_page=unit["end_page"]))
+        domain_connection.commit()
+    questions = api_client.get(f"/api/quiz/{case['quiz_id']}", headers=case["headers"]).json()["data"]["questions"]
+    assert all(q["materialId"] == unit["material_id"] and q["unitId"] == unit["id"] for q in questions)
+    submitted = api_client.post(f"/api/quiz/{case['quiz_id']}/submit", headers=case["headers"],
+                                json={"quizId": case["quiz_id"], "answers": case["answers"]})
+    assert submitted.status_code == 200, submitted.text
+    result = submitted.json()["data"]
+    for field in ("items", "unitChanges", "bookChanges"):
+        assert result[field]
+        assert all(item["materialId"] == unit["material_id"] and item["unitId"] == unit["id"]
+                   for item in result[field])
+    if extra:
+        assert result["unitId"] == unit["id"] and result["materialId"] == unit["material_id"]
+        assert result["moreUnitChange"]["unitId"] == unit["id"]
+        assert result["moreUnitChange"]["materialId"] == unit["material_id"]
+
+
+def test_identical_unit_numbers_keep_distinct_material_identity(api_client, quiz_case, domain_connection):
+    case = quiz_case
+    other = domain_connection.execute(select(t.questions.c.id, t.questions.c.unit_id,
+        t.units.c.material_id, t.materials.c.subject_id)
+        .join(t.units, t.questions.c.unit_id == t.units.c.id)
+        .join(t.materials, t.units.c.material_id == t.materials.c.id)
+        .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+        .where(t.subjects.c.user_id == case["user_id"], t.subjects.c.code == "DB")
+        .order_by(t.units.c.sort_order, t.questions.c.code)).mappings().first()
+    other_quiz, _ = create_quiz(domain_connection, case["user_id"], other["subject_id"], [other["id"]])
+    domain_connection.commit()
+    first = api_client.get(f"/api/quiz/{case['quiz_id']}", headers=case["headers"]).json()["data"]["questions"][0]
+    second = api_client.get(f"/api/quiz/{other_quiz}", headers=case["headers"]).json()["data"]["questions"][0]
+    assert first["unitNo"] == second["unitNo"] == 1
+    assert first["materialId"] == case["unit"]["material_id"] != second["materialId"] == other["material_id"]
+    assert first["unitId"] == case["unit"]["id"] != second["unitId"] == other["unit_id"]

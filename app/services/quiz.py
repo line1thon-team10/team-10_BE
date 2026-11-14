@@ -68,11 +68,13 @@ class QuizService:
             select(t.quiz_items.c.id.label("item_id"), t.quiz_items.c.question_id,
                    t.quiz_items.c.sort_order, t.quiz_items.c.inclusion_reason,
                    *(column for column in t.questions.c if column.name != "id"),
+                   t.units.c.material_id,
                    t.quiz_attempts.c.id.label("attempt_id"), t.quiz_attempts.c.answer,
                    t.quiz_attempts.c.confidence, t.quiz_attempts.c.is_correct, t.quiz_attempts.c.essay_score,
                    t.quiz_attempts.c.got_points, t.quiz_attempts.c.missing_points,
                    t.quiz_attempts.c.grading_status)
             .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
+            .join(t.units, t.questions.c.unit_id == t.units.c.id)
             .outerjoin(t.quiz_attempts, t.quiz_attempts.c.quiz_item_id == t.quiz_items.c.id)
             .where(t.quiz_items.c.quiz_session_id == session_id).order_by(t.quiz_items.c.sort_order)).mappings()
         out = [dict(r) for r in rows]
@@ -191,6 +193,7 @@ class QuizService:
         u = self.data.units.get(x["unit_id"])
         return {"id": x["item_id"], "type": qtype, "tag": TAGS.get(x["inclusion_reason"]),
                 "unitNo": unit_no(u["code"]) if u else None,
+                "materialId": x["material_id"], "unitId": x["unit_id"],
                 "prompt": x["prompt"],
                 "options": [c["text"] for c in x["choices"]] if x["choices"] else None}
 
@@ -352,6 +355,7 @@ class QuizService:
             essay = x["type"] == "essay"
             out_items.append({
                 "questionId": x["item_id"], "no": i + 1, "unitNo": unit_no(data.units[x["unit_id"]]["code"]),
+                "materialId": x["material_id"], "unitId": x["unit_id"],
                 "type": "choice" if x["type"] in ("choice", "ox") else x["type"], "tag": TAGS.get(x["inclusion_reason"]),
                 "prompt": x["prompt"], "page": f"p.{src['start_page']}" if src else None,
                 "confidence": x["confidence"], "correct": bool(x["is_correct"]),
@@ -368,7 +372,8 @@ class QuizService:
         for h in hist:
             u = data.units[h["unit_id"]]
             no, title = unit_no(u["code"]), u["title"]
-            unit_changes.append({"unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
+            unit_changes.append({"materialId": u["material_id"], "unitId": u["id"],
+                                 "unitNo": no, "title": title, "before": h["previous_score"], "after": h["score"],
                                  "grade": h["level"], "note": "회복 모드" if h["recovery_mode"] else None})
             unit_tasks = [x for x in data.tasks if data.unit_of(x) and data.unit_of(x)["id"] == u["id"]
                           and x.row["status"] not in ("carried_over", "excluded")]
@@ -381,7 +386,7 @@ class QuizService:
                     before_blocks.append("done")  # 오늘 쌓은 회색 블록이 등급 색으로 (P3)
                 else:
                     before_blocks.append(h["previous_level"] or "done")
-            book_changes.append({"unitNo": no, "title": title,
+            book_changes.append({"materialId": u["material_id"], "unitId": u["id"], "unitNo": no, "title": title,
                                  "before": {"score": h["previous_score"], "grade": h["previous_level"], "blocks": before_blocks},
                                  "after": {"score": h["score"], "grade": h["level"], "blocks": after_blocks},
                                  "recovering": bool(h["recovery_mode"])})
@@ -400,8 +405,11 @@ class QuizService:
         if session["type"] == "extra":
             scope = self.conn.execute(select(t.quiz_scopes.c.unit_id).where(
                 t.quiz_scopes.c.quiz_session_id == session["id"])).scalar()
+            result["unitId"] = scope
+            result["materialId"] = data.units[scope]["material_id"] if scope in data.units else None
             result["unitNo"] = unit_no(data.units[scope]["code"]) if scope in data.units else None
-            result["moreUnitChange"] = ({"unitNo": result["unitNo"], "before": unit_changes[0]["before"],
+            result["moreUnitChange"] = ({"materialId": result["materialId"], "unitId": scope,
+                                         "unitNo": result["unitNo"], "before": unit_changes[0]["before"],
                                          "after": unit_changes[0]["after"]} if unit_changes else None)
         else:
             extras = self.conn.execute(select(t.quiz_sessions).where(
