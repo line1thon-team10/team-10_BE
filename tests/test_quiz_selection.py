@@ -136,3 +136,14 @@ def test_invalid_bank_evidence_never_becomes_a_selected_item(api_client,progress
     for _ in range(4):add_question(w,unit)
     response=get(api_client,w)
     assert response.status_code==404 and response.json()['error']['code']=='NO_QUESTIONS'
+
+
+def test_manual_unit_without_analysis_evidence_remains_quizless(api_client,progress_world):
+    w=progress_world;unit=w.unit(1,10,evidence=[])
+    w.task((unit,1,10),done=[(unit,1,10)],status='completed')
+    for _ in range(5):add_question(w,unit)
+    response=get(api_client,w)
+    assert response.status_code==403 and response.json()['error']['code']=='QUIZ_LOCKED'
+    cards=api_client.get('/api/quiz/today',headers={'X-Anonymous-Id':w.user}).json()['data']
+    row=next(row for row in cards['subjects'] if row['subjectId']==w.subject['id'])
+    assert row['count']==0 and row['hasQuestions'] is False and row['open'] is False

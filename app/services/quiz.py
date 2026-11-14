@@ -129,32 +129,9 @@ class QuizService:
                 inclusion_reason=reason))
         return dict(self.conn.execute(select(t.quiz_sessions).where(t.quiz_sessions.c.id == sid)).mappings().one())
 
-    def make_more(self, subject_id: str, unit_number: int) -> dict:
-        base = next((s for s in reversed(self.daily_sessions(subject_id)) if s["status"] == "submitted"), None)
-        if not base:
-            raise ApiError("NO_RESULT", "오늘 퀴즈를 먼저 풀어 주세요")
-        unit = next((u for u in self.data.units.values()
-                     if u["subject_id"] == subject_id and unit_no(u["code"]) == unit_number), None)
-        if not unit:
-            raise ApiError("UNIT_NOT_FOUND", "단원을 찾지 못했어요", 404)
-        already = self.conn.execute(select(t.quiz_sessions.c.id).join(
-            t.quiz_scopes, t.quiz_scopes.c.quiz_session_id == t.quiz_sessions.c.id).where(
-            t.quiz_sessions.c.parent_quiz_session_id == base["id"], t.quiz_scopes.c.unit_id == unit["id"])).first()
-        if already:
-            raise ApiError("ALREADY", "이 단원은 오늘 더 풀기를 했어요")
-        attempted = set(self.conn.execute(
-            select(t.quiz_items.c.question_id).join(t.quiz_sessions, t.quiz_items.c.quiz_session_id == t.quiz_sessions.c.id)
-            .where(t.quiz_sessions.c.user_id == self.user["id"])).scalars())
-        pool = [q for q in self.conn.execute(select(t.questions.c.id).where(
-            t.questions.c.unit_id == unit["id"], t.questions.c.difficulty == "low").order_by(t.questions.c.code)).scalars()
-            if q not in attempted][:MORE_COUNT]
-        if not pool:
-            raise ApiError("NO_QUESTIONS", "이 단원은 더 풀 문항이 없어요", 404)
-        s = self._create(subject_id, "extra", [(q, "extra") for q in pool], parent=base["id"])
-        self.conn.execute(t.quiz_scopes.insert().values(
-            id=str(uuid.uuid4()), quiz_session_id=s["id"], unit_id=unit["id"],
-            start_page=unit["start_page"] or 0, end_page=unit["end_page"] or 0))
-        return {"quizId": s["id"], "count": len(pool)}
+    def make_more(self, subject_id: str, unit_id: str, difficulty: str | None = None) -> dict:
+        from app.services.extra_quiz import create_extra
+        return create_extra(self.conn, self.user, self.today, subject_id, unit_id, difficulty)
 
     # ---------- 화면 모양 ----------
     def round_of(self, items) -> str:

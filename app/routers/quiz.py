@@ -3,7 +3,7 @@ from uuid import UUID
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Connection
 
 from app.core.auth import current_user
@@ -102,11 +102,12 @@ def quiz_result(key: UUID, quizId: UUID | None = None,
 
 
 class MoreIn(BaseModel):
-    unitNo: int
+    model_config = ConfigDict(extra='forbid')
+    unitId: UUID
+    difficulty: Literal['low', 'mid', 'high'] | None = None
 
 
-@router.post("/{subject_id}/more")
-def quiz_more(subject_id: str, body: MoreIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
-    """더 풀기 (QZ-11): 같은 단원 안 푼 5문항 → { quizId, count }"""
-    svc = QuizService(conn, user, today_for(user))
-    return ok(svc.make_more(subject_id, body.unitNo))
+@router.post('/{subject_id}/more')
+def quiz_more(subject_id: UUID, body: MoreIn, user: dict = Depends(current_user), conn: Connection = Depends(get_conn)):
+    from app.services.extra_quiz import create_extra
+    return ok(create_extra(conn, user, today_for(user), str(subject_id), str(body.unitId), body.difficulty))

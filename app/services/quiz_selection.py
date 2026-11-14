@@ -41,7 +41,7 @@ class QuizSelection:
                 continue
             for planned in task.paged:
                 unit = self.data.units.get(planned['unit_id'])
-                if unit is None or not unit['quiz_enabled']:
+                if unit is None or not unit['quiz_enabled'] or not unit['evidence']:
                     continue
                 scope = intersect(self.data.unit_scopes[unit['id']],
                     [PageSpan(unit['material_id'], planned['start_page'], planned['end_page'])])
@@ -64,7 +64,7 @@ class QuizSelection:
         return requested
 
     def questions(self, subject_id, scopes, difficulty=None):
-        units = {uid:u for uid,u in self.data.units.items() if uid in scopes and u['subject_id']==subject_id and u['quiz_enabled']}
+        units = {uid:u for uid,u in self.data.units.items() if uid in scopes and u['subject_id']==subject_id and u['quiz_enabled'] and u['evidence']}
         concepts = {r['id']:dict(r) for r in self.conn.execute(select(t.concepts).where(t.concepts.c.unit_id.in_(units))).mappings()}
         questions = [dict(r) for r in self.conn.execute(select(t.questions).where(t.questions.c.unit_id.in_(units))
             .order_by(t.questions.c.code, t.questions.c.id)).mappings()]
