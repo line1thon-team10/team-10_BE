@@ -7,6 +7,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'ghcr.io/line1thon-team10/2026-line1-be@sha256:' + 'a' * 64
+BE_REVISION = 'b' * 40
+AI_REVISION = 'c' * 40
 
 
 @pytest.fixture
@@ -19,19 +21,27 @@ def deployment(tmp_path):
 printf '%s\\n' "$*" >> "$DEPLOY_LOG"
 if [[ -n "${FAIL_MATCH:-}" && "$*" == *"$FAIL_MATCH"* ]]; then exit 1; fi
 if [[ "$*" == *"pg_dump"* ]]; then echo '-- backup'; fi
+if [[ "$*" == "image inspect "* ]]; then
+  if [[ "$*" == *"org.opencontainers.image.revision"* ]]; then
+    printf '%s\\n' "$MOCK_BE_REVISION"
+  elif [[ "$*" == *"dev.line1.ai-revision"* ]]; then
+    printf '%s\\n' "$MOCK_AI_REVISION"
+  fi
+fi
 ''')
     docker.chmod(0o755)
     flock = binary / 'flock'
     flock.write_text('#!/usr/bin/env bash\nexit "${LOCK_FAILURE:-0}"\n')
     flock.chmod(0o755)
     env = {**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
-           'DEPLOY_LOG': str(tmp_path / 'docker.log')}
+           'DEPLOY_LOG': str(tmp_path / 'docker.log'),
+           'MOCK_BE_REVISION': BE_REVISION, 'MOCK_AI_REVISION': AI_REVISION}
     return tmp_path, env
 
 
-def run(deployment, image=IMAGE, **changes):
+def run(deployment, image=IMAGE, revisions=(), **changes):
     directory, env = deployment
-    result = subprocess.run(['bash', str(directory / 'apply.sh'), image],
+    result = subprocess.run(['bash', str(directory / 'apply.sh'), image, *revisions],
                             env={**env, **changes}, capture_output=True, text=True)
     log = directory / 'docker.log'
     return result, log.read_text() if log.exists() else ''
@@ -76,3 +86,37 @@ def test_backup_precedes_migration_and_success_records_digest(deployment):
     assert log.index('run --rm --no-deps migrate') < log.index('up -d --no-deps --wait')
     assert (directory / 'deployed-image.txt').read_text().strip() == IMAGE
     assert len(list((directory / 'backups').glob('*.sql'))) == 1
+
+
+@pytest.mark.parametrize('revisions', [
+    (BE_REVISION,), ('', AI_REVISION), (BE_REVISION[:-1], AI_REVISION),
+    (BE_REVISION.upper(), AI_REVISION), (BE_REVISION, AI_REVISION + '; touch injected'),
+])
+def test_invalid_revision_manifest_stops_before_docker(deployment, revisions):
+    result, log = run(deployment, revisions=revisions)
+    assert result.returncode == 2
+    assert log == ''
+
+
+@pytest.mark.parametrize('changes', [
+    {'MOCK_BE_REVISION': 'd' * 40}, {'MOCK_AI_REVISION': 'd' * 40},
+    {'MOCK_BE_REVISION': ''}, {'MOCK_AI_REVISION': '<no value>'},
+    {'FAIL_MATCH': 'image inspect'},
+])
+def test_image_revision_mismatch_keeps_existing_database_and_service(deployment, changes):
+    directory, _ = deployment
+    (directory / 'deployed-image.txt').write_text('previous-image\n')
+    result, log = run(deployment, revisions=(BE_REVISION, AI_REVISION), **changes)
+    assert result.returncode != 0
+    assert ' pull' in log
+    assert 'up -d --wait db' not in log
+    assert 'stop api' not in log and 'pg_dump' not in log and ' migrate' not in log
+    assert not (directory / 'backups').exists()
+    assert (directory / 'deployed-image.txt').read_text() == 'previous-image\n'
+
+
+def test_matching_image_is_verified_before_any_service_change(deployment):
+    result, log = run(deployment, revisions=(BE_REVISION, AI_REVISION))
+    assert result.returncode == 0, result.stderr
+    assert log.index(' pull') < log.index('image inspect') < log.index('up -d --wait db')
+    assert 'org.opencontainers.image.revision' in log and 'dev.line1.ai-revision' in log

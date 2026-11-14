@@ -3,6 +3,11 @@ on:
   push:
     branches: [main, feat/rpi-deployment]
   workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Full 40-character BE commit SHA to build and deploy'
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -33,13 +38,27 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     outputs:
       image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+      revision: ${{ steps.ai.outputs.revision }}
+      ai_revision: ${{ steps.ai.outputs.sha }}
     steps:
+      - name: Validate manual revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: '[[ "$REVISION" =~ ^[a-f0-9]{40}$ ]]'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
+      - name: Verify exact application revision
+        env:
+          EXPECTED_REVISION: ${{ inputs.revision || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
       - name: Read pinned AI commit
         id: ai
-        run: echo "sha=$(git rev-parse HEAD:vendor/team-10_AI)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(git rev-parse HEAD:vendor/team-10_AI)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: line1thon-team10/team-10_AI
@@ -47,6 +66,10 @@ jobs:
           path: vendor/team-10_AI
           ssh-key: ${{ secrets.AI_SUBMODULE_SSH_KEY }}
           persist-credentials: false
+      - name: Verify exact AI revision
+        env:
+          EXPECTED_AI: ${{ steps.ai.outputs.sha }}
+        run: test "$(git -C vendor/team-10_AI rev-parse HEAD)" = "$EXPECTED_AI"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
@@ -71,10 +94,10 @@ jobs:
           context: .
           push: true
           platforms: linux/arm64
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          tags: ${{ env.IMAGE }}:sha-${{ steps.ai.outputs.revision }}
           labels: |
             org.opencontainers.image.source=https://github.com/line1thon-team10/team-10_BE
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.ai.outputs.revision }}
             dev.line1.ai-revision=${{ steps.ai.outputs.sha }}
       - name: Require private image visibility
         env:
@@ -85,7 +108,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/rpi-deployment'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/rpi-deployment'
     runs-on: [self-hosted, Linux, ARM64, line1-deploy]
     timeout-minutes: 20
     permissions:
@@ -94,18 +117,35 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
+      - name: Verify deployment checkout matches tested application
+        env:
+          EXPECTED_REVISION: ${{ needs.build.outputs.revision }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+      # Keep verification tooling when deploying/rolling back an older app SHA.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .deployment-tools
+          persist-credentials: false
+      - name: Verify deployment tool revision
+        env:
+          EXPECTED_TOOLS: ${{ github.workflow_sha }}
+        run: test "$(git -C .deployment-tools rev-parse HEAD)" = "$EXPECTED_TOOLS"
       - name: Apply prebuilt image on RPI4
         env:
           BE_IMAGE: ${{ needs.build.outputs.image }}
+          EXPECTED_BE_REVISION: ${{ needs.build.outputs.revision }}
+          EXPECTED_AI_REVISION: ${{ needs.build.outputs.ai_revision }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           key=/home/ubuntu/.ssh/line1-deploy
           target=ubuntu@100.78.68.53
           ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" 'mkdir -p /home/ubuntu/apps/2026-line1'
-          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes deploy/compose.yml deploy/apply.sh "$target:/home/ubuntu/apps/2026-line1/"
+          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes deploy/compose.yml .deployment-tools/deploy/apply.sh "$target:/home/ubuntu/apps/2026-line1/"
           printf '%s\n' "$REGISTRY_TOKEN" | ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
-            "set -eu; export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; ln -s /home/ubuntu/.docker/cli-plugins \"\$DOCKER_CONFIG/cli-plugins\"; docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin >/dev/null; bash /home/ubuntu/apps/2026-line1/apply.sh '$BE_IMAGE'"
+            "set -eu; export DOCKER_CONFIG=\$(mktemp -d); trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT; ln -s /home/ubuntu/.docker/cli-plugins \"\$DOCKER_CONFIG/cli-plugins\"; docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin >/dev/null; bash /home/ubuntu/apps/2026-line1/apply.sh '$BE_IMAGE' '$EXPECTED_BE_REVISION' '$EXPECTED_AI_REVISION'"
       - name: Verify public endpoint
         run: curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors https://2026-line1.leehyowon14.dev/api/health
