@@ -170,11 +170,12 @@
       "optional": false,
       "branch": "feat/preview-storage",
       "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
-      "head_sha": "fa1a6730a668564a076532ded1936fbc29780bf7",
+      "head_sha": "13f1a829bf22a40653a4900c4074624010d809d0",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/26",
       "validation_evidence": [
         "Exclusive schema lease0007_preview_storage->0006_quiz_answer_storage; legacy unknown snapshots remainNULL. Five atomic implementation commits through9d71e75,110SQLite+PG passed; final verification in progress.",
-        "Finalfa1a673:222SQLite+PG passed; generator regeneration exact and single0007head. Astra review queued after S-01 fix recheck."
+        "Finalfa1a673:222SQLite+PG passed; generator regeneration exact and single0007head. Astra review queued after S-01 fix recheck.",
+        "Review found JSONB number hash mismatch and mixed read snapshots. Fixed8a65750 and3e7abe6, documented13f1a82. Root185passed/3SQLiteonlyskip; independent recheck pending."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -293,7 +294,7 @@
       "id": "AI-01",
       "title": "AI 호출·검증·저장 결과 공통 경로",
       "lane": "platform",
-      "status": "review",
+      "status": "integrated",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "SYS-02",
@@ -325,7 +326,8 @@
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/23",
       "validation_evidence": [
         "Originale9c7f9e149passed. Root reproduced NUL JSONB storage failure, fixed68b7314+docs45b91d8:161SQLite+PG passed. Astra independent final review running.",
-        "Final1719ec2:169SQLite+PG passed. Fixed NUL JSON, usage job-delete race, blocked process spawn and hidden transport failures. Astra original9repro tests+151gateway tests passed;0.5second spawn budget returned0.453516second timeout. Actions43546674865 pending."
+        "Final1719ec2:169SQLite+PG passed. Fixed NUL JSON, usage job-delete race, blocked process spawn and hidden transport failures. Astra original9repro tests+151gateway tests passed;0.5second spawn budget returned0.453516second timeout. Actions43546674865 pending.",
+        "Actions43546674865 final1719ec2 passed; mergedbea6d7d. Integration gateway+range tests156passed onSQLite, no PG env in this local targeted run. Prior final independent151gateway tests covered both DBs."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration"
@@ -566,7 +568,10 @@
         "BE/app/services/study.py",
         "BE/app/domain/progress.py",
         "BE/tests/test_progress_contract.py",
-        "BE/docs/progress-aggregates-handoff.md"
+        "BE/docs/progress-aggregates-handoff.md",
+        "BE/app/routers/quiz.py",
+        "BE/docs/api/books.md",
+        "BE/docs/api/quiz.md"
       ],
       "shared_resources": [
         "study-read-model"
@@ -591,7 +596,8 @@
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [
-        "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives."
+        "Exclusive StudyData/read-model lease; no quiz.py, schema, seed or app/main.py changes. Root approved using R-03 material-union primitives.",
+        "Minimum quiz_today/_check_open lease. Mastery weights use current effective concept union per nonoverlapping unit; ambiguous cross-unit overlap yieldsnull/0. Quiz uses material union of today eligible ranges, distinct from per-placement achievement."
       ],
       "integration_only_paths": [],
       "validation_mode": "task-specific-tests-and-integration",
@@ -975,8 +981,8 @@
       "id": "Q-04",
       "title": "재시작 가능한 채점 실행기",
       "lane": "quiz",
-      "status": "planned",
-      "assignee": null,
+      "status": "running",
+      "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "Q-02",
         "AI-01"
@@ -984,9 +990,17 @@
       "write_scope": [
         "BE/app/services/grading.py",
         "BE/app/workers/grading.py",
-        "BE/tests/test_grading_worker.py"
+        "BE/tests/test_grading_worker.py",
+        "BE/app/ai/grading_adapter.py",
+        "BE/docs/grading-worker-handoff.md",
+        "BE/deploy/compose.yml",
+        "BE/deploy/apply.sh",
+        "BE/tests/test_deployment.py",
+        "BE/app/repositories/grading_jobs.py"
       ],
-      "shared_resources": [],
+      "shared_resources": [
+        "ci-deploy"
+      ],
       "contract_files": [
         "quiz.md",
         "persistence.md"
@@ -994,18 +1008,23 @@
       "deliverable": "DB 트랜잭션 밖에서 채점하고 lease와 답안 revision이 유효할 때만 결과를 저장한다.",
       "acceptance": [
         "lease 만료·중복 worker·중간 crash·답안 수정 뒤 늦게 온 결과",
-        "AI 실패 시 답안 보존·미확정 점수 null·점수0..100/85 경계"
+        "AI 실패 시 답안 보존·미확정 점수 null·점수0..100/85 경계",
+        "Runnable CLI worker and explicit Compose service; stop all writing workers before backup/migration. Infra changes in separate atomic commit; no live deployment.",
+        "Automatic polling only queued/expired-running jobs; failed jobs need explicit retry. No repeated failed-key/provider calls in a hot loop. No source credentials or secrets in logs.",
+        "Pinned AI essay grader uses injected transport with SDK retries0, remaining timeout, real request usage. Malformed raw JSON reaches gateway syntax retry, semantic validation does not retry.",
+        "GatewayRequest.job_id references ai_jobs, never quiz_grading_jobs. Q-05 finalization alone writes attempts/mastery. Per-request overall budget must survive multiple jobs."
       ],
       "operations": [],
       "external_gates": [],
       "optional": false,
-      "branch": null,
-      "base_sha": null,
+      "branch": "feat/durable-grading-worker",
+      "base_sha": "bea6d7d19229f56741715f3cb74654360ad60519",
       "head_sha": null,
       "pr_url": null,
       "validation_evidence": [],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-grading-worker"
     },
     {
       "id": "S-01",
@@ -1555,7 +1574,7 @@
       "id": "O-02",
       "title": "온보딩 일정 CRUD·가용시간",
       "lane": "onboarding",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/onboarding_implementation",
       "depends_on": [
         "O-01"
@@ -1568,7 +1587,7 @@
         "BE/app/schemas/onboarding_events.py",
         "BE/docs/onboarding-events-handoff.md",
         "BE/app/seed/loader.py",
-        "BE/tests/test_seed_event_timezone.py"
+        "BE/tests/test_seed_calendar_time.py"
       ],
       "shared_resources": [],
       "contract_files": [
@@ -1589,10 +1608,11 @@
       "optional": false,
       "branch": "feat/onboarding-events",
       "base_sha": "2cdc874877860ca8ecd0c7910129d390b5145f42",
-      "head_sha": null,
+      "head_sha": "6a3608bf64ab16c453e17f3c8033c73c46c0dd35",
       "pr_url": null,
       "validation_evidence": [
-        "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression."
+        "Exclusive app/main.py route registration lease. Draft-only mutations, weekly current-Monday template, recurrence exceptions applied to08-23union, addedId=null for CRUD. Existing seed UTC mismatch is a separately committed bug fix with loader._at-only lease and SQLite/PG HTTP regression.",
+        "Final6a3608b:171new+seed tests and213existing tests, total384SQLite+PG passed. Independent review queued afterSYS04."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
