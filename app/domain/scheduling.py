@@ -59,6 +59,8 @@ class Subject:
     exam_confirmed: bool = False
     goal_confirmed: bool = False
     minutes_per_page: Number = Fraction(5, 2)
+    target_effective_date: date | None = None
+    previous_target_score: Number | None = None
 
     def __post_init__(self):
         _id(self.id)
@@ -71,10 +73,24 @@ class Subject:
             if not 0 <= target <= 100:
                 raise ValueError("Target must be in 0..100")
             object.__setattr__(self, "target_score", target)
+        if (self.target_effective_date is None) != (self.previous_target_score is None):
+            raise ValueError("A scheduled target needs both an effective date and the previous target")
+        if self.target_effective_date is not None:
+            _date(self.target_effective_date)
+            previous = exact(self.previous_target_score)
+            if not 0 <= previous <= 100:
+                raise ValueError("Previous target must be in 0..100")
+            object.__setattr__(self, "previous_target_score", previous)
         speed = exact(self.minutes_per_page)
         if speed <= 0:
             raise ValueError("Baseline minutes per page must be positive")
         object.__setattr__(self, "minutes_per_page", speed)
+
+    def target_on(self, day: date):
+        _date(day)
+        if self.target_effective_date is not None and day < self.target_effective_date:
+            return self.previous_target_score
+        return self.target_score
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +140,7 @@ class WorkRequirement:
     kind: Literal["remedial", "review"]
     parts: tuple[ScopePart, ...]
     not_before: date | None = None
+    indivisible: bool = False
 
     def __post_init__(self):
         _id(self.id)
@@ -134,6 +151,8 @@ class WorkRequirement:
         if not parts:
             raise ValueError("A page-backed obligation must contain ranges")
         object.__setattr__(self, "parts", parts)
+        if type(self.indivisible) is not bool:
+            raise ValueError("Indivisible must be boolean")
         if self.not_before is not None:
             _date(self.not_before)
 
@@ -205,6 +224,28 @@ class Slot:
 
 
 @dataclass(frozen=True, slots=True)
+class StudyWindow:
+    """Constrain selected new-study pages without restricting adjacent old work."""
+    id: str
+    ranges: tuple[PageSpan, ...]
+    dates: tuple[date, ...]
+    max_minutes: Number | None = None
+
+    def __post_init__(self):
+        _id(self.id)
+        object.__setattr__(self, "ranges", normalize(self.ranges))
+        dates = tuple(self.dates)
+        for day in dates:
+            _date(day)
+        object.__setattr__(self, "dates", tuple(sorted(set(dates))))
+        if self.max_minutes is not None:
+            cap = exact(self.max_minutes)
+            if cap <= 0:
+                raise ValueError("Daily study limit must be positive")
+            object.__setattr__(self, "max_minutes", cap)
+
+
+@dataclass(frozen=True, slots=True)
 class AllocationInput:
     start_date: date
     subjects: tuple[Subject, ...]
@@ -212,11 +253,17 @@ class AllocationInput:
     busy: tuple[BusyInterval, ...] = ()
     fixed: tuple[FixedTask, ...] = ()
     requirements: tuple[WorkRequirement, ...] = ()
+    study_windows: tuple[StudyWindow, ...] = ()
+    study_time_factor: Number = Fraction(1)
 
     def __post_init__(self):
         _date(self.start_date)
+        factor = exact(self.study_time_factor)
+        if not 0 < factor <= 1:
+            raise ValueError("Study time factor must be positive and at most one")
+        object.__setattr__(self, "study_time_factor", factor)
         for name, item_type in (("subjects", Subject), ("units", UnitScope), ("busy", BusyInterval),
-                                ("fixed", FixedTask), ("requirements", WorkRequirement)):
+                                ("fixed", FixedTask), ("requirements", WorkRequirement), ("study_windows", StudyWindow)):
             object.__setattr__(self, name, _tuple(getattr(self, name), item_type))
 
 
@@ -337,7 +384,7 @@ def allocation_score(subject: Subject, day: date, remaining_pages: int, mastery:
     _date(day)
     if subject.exam_date is None or subject.target_score is None or day >= subject.exam_date:
         return Fraction()
-    return subject.target_score / 100 * Fraction(1, (subject.exam_date - day).days) * remaining_pages * (1 - mastery)
+    return subject.target_on(day) / 100 * Fraction(1, (subject.exam_date - day).days) * remaining_pages * (1 - mastery)
 
 
 def reservations(subjects: Iterable[Subject], start_date: date) -> tuple[tuple[date, tuple[str, ...]], ...]:

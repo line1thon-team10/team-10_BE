@@ -29,6 +29,8 @@ class _Pool:
     release: date
     baseline: Fraction
     multiplier: Fraction
+    window_id: str | None = None
+    indivisible: bool = False
 
     @property
     def cost(self):
@@ -100,6 +102,15 @@ class _Allocator:
                 unit = self.units.get(part.unit_id)
                 if unit and (unit.subject_id != task.subject_id or unit.material_id != part.span.material_id):
                     raise ValueError("A fixed range cannot refer to another subject/material")
+        self.windows = {window.id: window for window in request.study_windows}
+        if len(self.windows) != len(request.study_windows):
+            raise ValueError("Study window identifiers must be unique")
+        covered_windows = ()
+        for window in request.study_windows:
+            if intersect(covered_windows, window.ranges):
+                raise ValueError("Study windows must not overlap")
+            covered_windows = normalize((*covered_windows, *window.ranges))
+        self.window_order = tuple(sorted(self.windows))
         self.pools = self._pools()
         self.initial = tuple(pool.pages for pool in self.pools)
         self.mastery = {subject: mastery_ratio(subject, request.units) for subject in self.subjects}
@@ -119,8 +130,16 @@ class _Allocator:
             remaining = subtract(unit.ranges, done)
             if remaining:
                 subject = self.subjects[unit.subject_id]
-                pools.append(_Pool(f"study:{unit.id}", subject.id, "study", unit.id, remaining,
-                                   self.request.start_date, subject.minutes_per_page, MULTIPLIERS[unit.difficulty]))
+                for window in sorted(self.windows.values(), key=lambda item: item.id):
+                    restricted = intersect(remaining, window.ranges)
+                    if restricted:
+                        pools.append(_Pool(f"study:{unit.id}:window:{window.id}", subject.id, "study", unit.id,
+                            restricted, self.request.start_date, subject.minutes_per_page,
+                            MULTIPLIERS[unit.difficulty] * self.request.study_time_factor, window.id))
+                        remaining = subtract(remaining, restricted)
+                if remaining:
+                    pools.append(_Pool(f"study:{unit.id}", subject.id, "study", unit.id, remaining,
+                        self.request.start_date, subject.minutes_per_page, MULTIPLIERS[unit.difficulty] * self.request.study_time_factor))
         for work in self.request.requirements:
             if work.subject_id not in self.subjects:
                 raise ValueError("An obligation must belong to an input subject")
@@ -144,7 +163,7 @@ class _Allocator:
                     unit, subject = self.units[unit_id], self.subjects[work.subject_id]
                     pools.append(_Pool(work.id, work.subject_id, work.kind, unit_id, remaining,
                                        max(work.not_before or self.request.start_date, self.request.start_date),
-                                       subject.minutes_per_page, MULTIPLIERS[unit.difficulty]))
+                                       subject.minutes_per_page, MULTIPLIERS[unit.difficulty], indivisible=work.indivisible))
         return tuple(sorted(pools, key=self._key))
 
     def _duration(self, counts):
@@ -160,7 +179,8 @@ class _Allocator:
 
     def _eligible(self, index, day):
         pool = self.pools[index]
-        return pool.release <= day < self.subjects[pool.subject_id].exam_date
+        return (pool.release <= day < self.subjects[pool.subject_id].exam_date
+                and (pool.window_id is None or day in self.windows[pool.window_id].dates))
 
     def _task_choices(self, remaining, day, capacity):
         capacity = min(capacity, MAX_TASK)
@@ -171,14 +191,16 @@ class _Allocator:
         for i, count in enumerate(remaining):
             if count and self._eligible(i, day):
                 pool = self.pools[i]
-                groups[(pool.subject_id, pool.kind)].append(i)
+                groups[(pool.subject_id, pool.kind, pool.requirement_id if pool.kind != "study" else None)].append(i)
         scores, choices = self._scores(remaining, day), []
-        for (subject_id, _), indices in groups.items():
+        for (subject_id, _, _), indices in groups.items():
             counts = [0] * len(remaining)
             def collect(position, duration):
                 self.budget.tick()
                 if position == len(indices):
                     if MIN_TASK <= duration <= capacity:
+                        if any(self.pools[i].indivisible and counts[i] != self.initial[i] for i in indices):
+                            return
                         vector = tuple(counts)
                         choices.append(((-scores[subject_id], self._key(self.pools[indices[0]]),
                                          -duration, tuple(-count for count in vector)), vector, duration))
@@ -208,7 +230,15 @@ class _Allocator:
             return self.fit_cache[cache_key]
         failed = set()
 
-        def search(counts, slot_index, start):
+        empty_usage = (Fraction(),) * len(self.window_order)
+
+        def next_slot(counts, slot_index, used):
+            following = slot_index + 1
+            if following < len(slots) and slots[following].day == slots[slot_index].day:
+                return search(counts, following, slots[following].start, used)
+            return search(counts, following, slots[following].start if following < len(slots) else Fraction(), empty_usage)
+
+        def search(counts, slot_index, start, used):
             self.budget.tick()
             if not any(counts):
                 return ()
@@ -216,8 +246,8 @@ class _Allocator:
                 return None
             slot = slots[slot_index]
             if slot.end - start < MIN_TASK:
-                return search(counts, slot_index + 1, slots[slot_index + 1].start if slot_index + 1 < len(slots) else Fraction())
-            key = counts, slot_index, start
+                return next_slot(counts, slot_index, used)
+            key = counts, slot_index, start, used
             if key in failed:
                 return None
             available = (Slot(slot.day, start, slot.end), *slots[slot_index + 1:])
@@ -226,7 +256,7 @@ class _Allocator:
                 return None
             grouped = defaultdict(Fraction)
             for count, pool in zip(counts, self.pools):
-                grouped[(pool.subject_id, pool.kind)] += count * pool.cost
+                grouped[(pool.subject_id, pool.kind, pool.requirement_id if pool.kind != "study" else None)] += count * pool.cost
             if any(0 < duration < MIN_TASK for duration in grouped.values()):
                 failed.add(key)
                 return None
@@ -237,17 +267,23 @@ class _Allocator:
                     failed.add(key)
                     return None
             for vector, duration in self._task_choices(counts, slot.day, slot.end - start):
-                rest = tuple(count - used for count, used in zip(counts, vector))
-                tail = search(rest, slot_index, start + duration)
+                consumption = tuple(sum((count * pool.cost for count, pool in zip(vector, self.pools)
+                    if pool.window_id == key), Fraction()) for key in self.window_order)
+                next_usage = tuple(a+b for a,b in zip(used, consumption))
+                if any(self.windows[key].max_minutes is not None and value > self.windows[key].max_minutes
+                       for key,value in zip(self.window_order, next_usage)):
+                    continue
+                rest = tuple(count - taken for count, taken in zip(counts, vector))
+                tail = search(rest, slot_index, start + duration, next_usage)
                 if tail is not None:
                     return (_Task(slot.day, start, start + duration, vector), *tail)
-            tail = search(counts, slot_index + 1, slots[slot_index + 1].start if slot_index + 1 < len(slots) else Fraction())
+            tail = next_slot(counts, slot_index, used)
             if tail is None:
                 failed.add(key)
             return tail
 
         try:
-            result = search(remaining, 0, slots[0].start if slots else Fraction())
+            result = search(remaining, 0, slots[0].start if slots else Fraction(), empty_usage)
         except RecursionError as exc:
             # A stack/resource boundary is never a proof of infeasibility.
             raise SearchLimit(self.budget.limit, self.budget.explored) from exc
