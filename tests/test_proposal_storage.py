@@ -74,6 +74,31 @@ def test_create_uses_explicit_owned_plan_basis_without_changing_revision(domain_
     assert dict(conn.execute(select(t.plans)).mappings().one()) == before
 
 
+@pytest.mark.parametrize("number", [-0.0, 1.0, 1e16, 1e20, 1e23, 1e308, 1.5, 1.0000000000000002, 1e-300])
+def test_candidate_number_hash_and_first_response_survive_reconnect(domain_connection, owner, number):
+    conn = domain_connection
+    value = {"nested": [{"amount": number}]}
+    repo = ProposalRepository(conn)
+    stored = candidate(conn, owner, normalized_input=value, dependency_versions=value,
+                       target=value, changes=value, preview_response=value)
+    assert stored["input_hash"] == canonical_hash(value) == canonical_hash(stored["normalized_input"])
+    for key in ("dependency_versions", "target", "changes", "preview_response"):
+        assert canonical_hash(stored[key]) == stored["input_hash"]
+    conn.commit()
+    schema = conn.exec_driver_sql("select current_schema()").scalar() if conn.dialect.name == "postgresql" else None
+    with conn.engine.connect() as reopened:
+        if schema:
+            reopened.exec_driver_sql(f'SET search_path TO "{schema}"')
+        other = ProposalRepository(reopened)
+        reloaded = other.get(owner, stored["proposal_id"])
+        assert other.ready(owner, kind="initial", input_hash=canonical_hash(reloaded["normalized_input"])) == [reloaded]
+        applied = other.mark_applied(owner, stored["proposal_id"], expected_revision=0,
+                                     response=value, now=NOW + timedelta(seconds=1))
+        assert canonical_hash(applied.proposal["result_response"]) == stored["input_hash"]
+        reopened.commit()
+    assert canonical_hash(repo.result(owner, stored["proposal_id"])) == stored["input_hash"]
+
+
 def test_create_and_read_enforce_request_owner_kind_and_basis(domain_connection, owner):
     conn = domain_connection
     first = candidate(conn, owner)

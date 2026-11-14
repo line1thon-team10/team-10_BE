@@ -5,6 +5,7 @@ import math
 import re
 from datetime import date, datetime, timezone
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import Connection, null, select, update
@@ -64,6 +65,10 @@ def canonical_object(value: dict | str) -> dict:
         if type(item) is float:
             if not math.isfinite(item):
                 raise InvalidProposalJSON("JSON numbers must be finite")
+            # JSONB reloads integral decimal JSON numbers as int, including -0.
+            # Use the JSON decimal spelling, not int(float)'s binary expansion.
+            if item.is_integer():
+                return int(Decimal(str(item)))
             return item
         if isinstance(item, (dict, list)):
             if id(item) in active:
