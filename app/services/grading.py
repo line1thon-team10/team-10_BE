@@ -333,10 +333,12 @@ class GradingService:
             changed = repo.complete(user_id, job_id, result=result, **args)
             return GradingRun(str(job_id), "succeeded" if changed else "stale", result=result if changed else None)
 
-    def run_next(self):
+    def run_next(self, *, stop_requested=lambda: False):
         with self.engine.connect() as conn:
             candidates = GradingJobRepository(conn).pending(now=self.clock())
         for candidate in candidates:
+            if stop_requested():
+                return GradingRun(None, "idle")
             try:
                 outcome = self.run_job(candidate["user_id"], candidate["id"])
             except ApiError as exc:
