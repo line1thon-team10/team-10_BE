@@ -7,7 +7,7 @@ from tests.test_quiz_answer_api import answer_case, make_case, DAY, NOW
 
 
 def weak(conn,case,kind='choice',*,correct=False,confidence='sure',day=DAY,due=None,step=0,status='active'):
-    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==case['quiz']).values(status='submitted',finalized_at=NOW))
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==case['quiz']).values(status='submitted',grading_status='completed',finalized_at=NOW))
     conn.execute(t.quiz_attempts.insert().values(id=str(uuid4()),quiz_item_id=case[kind+'_item'],answer='secret raw',confidence=confidence,
         is_correct=correct,grading_status='graded',essay_score=40 if kind=='essay' else None,
         answered_at=NOW,answered_date=day,finalized_at=NOW,graded_at=NOW))
@@ -61,3 +61,19 @@ def test_unfinalized_attempt_never_creates_visible_note(api_client,domain_connec
     domain_connection.execute(update(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id==answer_case['choice_item']).values(finalized_at=None))
     domain_connection.commit()
     assert notes(api_client,answer_case).json()['data']['total']==0
+
+
+@pytest.mark.parametrize('corrupt',['foreign_concept','foreign_subject','ungraded_set','future_attempt'])
+def test_note_projection_rejects_unrelated_or_unconfirmed_facts(api_client,domain_connection,answer_case,corrupt):
+    conn,case=domain_connection,answer_case;weak(conn,case)
+    other=make_case(conn)
+    if corrupt=='foreign_concept':
+        cid=str(uuid4());conn.execute(t.concepts.insert().values(id=cid,unit_id=other['unit'],code='foreign',title='foreign',
+            sort_order=1,start_page=1,end_page=1,in_scope=True,created_at=NOW,updated_at=NOW))
+        conn.execute(update(t.questions).where(t.questions.c.id==case['choice']).values(concept_id=cid))
+    elif corrupt=='foreign_subject':conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==case['quiz']).values(subject_id=other['subject']))
+    elif corrupt=='ungraded_set':conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id==case['quiz']).values(grading_status='failed'))
+    else:conn.execute(update(t.quiz_attempts).where(t.quiz_attempts.c.quiz_item_id==case['choice_item']).values(answered_date=DAY+timedelta(days=1)))
+    conn.commit()
+    assert notes(api_client,case).json()['data']['total']==0
+    assert api_client.get(f"/api/review/notes/{case['choice']}/question",headers={'X-Anonymous-Id':case['user']}).status_code==404

@@ -25,7 +25,8 @@ class ReviewNotesService:
             .join(t.subjects,t.materials.c.subject_id==t.subjects.c.id)
             .join(t.weak_questions,t.questions.c.id==t.weak_questions.c.question_id)
             .outerjoin(t.concepts,(t.questions.c.concept_id==t.concepts.c.id)&(t.concepts.c.unit_id==t.units.c.id))
-            .where(t.subjects.c.user_id==self.user['id'])).mappings()]
+            .where(t.subjects.c.user_id==self.user['id'],
+                t.questions.c.concept_id.is_(None)|t.concepts.c.id.is_not(None))).mappings()]
 
     def histories(self, ids):
         grouped=defaultdict(list)
@@ -37,7 +38,10 @@ class ReviewNotesService:
             .join(t.materials,t.units.c.material_id==t.materials.c.id)
             .join(t.subjects,t.materials.c.subject_id==t.subjects.c.id)
             .where(t.quiz_items.c.question_id.in_(ids),t.subjects.c.user_id==self.user['id'],
-                t.quiz_sessions.c.user_id==self.user['id'],t.quiz_attempts.c.finalized_at.is_not(None),
+                t.quiz_sessions.c.user_id==self.user['id'],
+                t.quiz_sessions.c.subject_id.is_(None)|(t.quiz_sessions.c.subject_id==t.materials.c.subject_id),
+                t.quiz_sessions.c.grading_status=='completed',t.quiz_attempts.c.answered_date<=self.today,
+                t.quiz_attempts.c.finalized_at.is_not(None),
                 t.quiz_attempts.c.graded_at.is_not(None),t.quiz_attempts.c.is_correct.is_not(None),
                 t.quiz_attempts.c.grading_status.in_(('graded','fallback')),
                 t.quiz_sessions.c.status.in_(('submitted','carried_over')),
