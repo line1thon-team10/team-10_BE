@@ -167,7 +167,8 @@ def collect_samples(conn, user, subject, today, *, data=None, snapshots=None):
     tasks_by_id={task.id:task for task in data.tasks}
     for task in data.tasks:
         record = task.record
-        if task.row['subject_id'] != subject['id'] or task.row['status'] == 'excluded' or not record:
+        if (task.row['subject_id'] != subject['id'] or task.row['status'] == 'excluded'
+                or task.row['task_type'] not in ('study','remedial') or not record):
             continue
         session = sessions.get(record['session_id'])
         if (not session or session['id'] in seen or session['task_id'] != task.id

@@ -63,7 +63,7 @@ def test_high_difficulty_is_normalized_from_snapshot_not_mutable_unit(progress_w
     assert measured.ratio==1 and not measured.eligible
 
 
-@pytest.mark.parametrize('bad',['two_days','auto_stopped','excluded','task_excluded','zero_time','no_pages','legacy','late_snapshot','old_day','foreign_session'])
+@pytest.mark.parametrize('bad',['two_days','auto_stopped','excluded','task_excluded','zero_time','no_pages','legacy','late_snapshot','old_day','foreign_session','review'])
 def test_unusable_evidence_cannot_complete_three_day_requirement(progress_world,bad):
     w=progress_world;unit=w.unit(1,10)
     for offset in (0,1): sample(w,unit,day=w.day-timedelta(days=offset))
@@ -75,6 +75,7 @@ def test_unusable_evidence_cannot_complete_three_day_requirement(progress_world,
     if bad=='zero_time': w.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id==last['session']).values(measured_seconds=0))
     if bad=='no_pages': w.conn.execute(t.study_record_ranges.delete().where(t.study_record_ranges.c.record_id==last['record']))
     if bad=='late_snapshot': save_placements(w,[last['placement']],at=w.now)
+    if bad=='review': w.conn.execute(update(t.study_tasks).where(t.study_tasks.c.id==last['task']).values(task_type='review'))
     if bad=='old_day': w.conn.execute(update(t.study_sessions).where(t.study_sessions.c.id==last['session']).values(study_date=w.day-timedelta(days=3)))
     if bad=='foreign_session':
         other=str(uuid4());w.conn.execute(t.users.insert().values(id=other,created_at=w.now,updated_at=w.now))
