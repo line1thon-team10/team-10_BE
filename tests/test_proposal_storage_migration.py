@@ -80,7 +80,7 @@ def test_preview_upgrade_keeps_legacy_plan_dialogue_and_selection_facts(migratio
         for table in old_tables:
             assert rows(conn, table) == before[table.name]
         assert compare_metadata(MigrationContext.configure(conn, opts={"compare_server_default": True}), t.metadata) == []
-        assert ScriptDirectory.from_config(config).get_heads() == ["0007_preview_storage"]
+        assert ScriptDirectory.from_config(config).get_heads() == ["0008_grading_execution_mode"]
         conn.commit()
         command.downgrade(config, "0006_quiz_answer_storage")
         assert "plan_proposal_states" not in inspect(conn).get_table_names()

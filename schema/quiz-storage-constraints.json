@@ -9,11 +9,13 @@
     {"table":"quiz_answer_receipts","name":"ck_quiz_receipt_hash","sql":"length(answer_hash) = 64"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_revision","sql":"answer_revision > 0 AND claim_count >= 0"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_status","sql":"status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')"},
+    {"table":"quiz_grading_jobs","name":"ck_quiz_job_execution_mode","sql":"execution_mode IN ('live', 'saved', 'backup')"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_lease","sql":"(status = 'running' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND claimed_at IS NOT NULL AND lease_expires_at > claimed_at) OR (status <> 'running' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)"},
     {"table":"quiz_grading_jobs","name":"ck_quiz_job_result","sql":"(status = 'succeeded' AND result IS NOT NULL) OR (status <> 'succeeded' AND result IS NULL)"},
     {"table":"quiz_submission_states","name":"ck_quiz_submission_hash","sql":"(answer_set_hash IS NULL OR length(answer_set_hash) = 64) AND (input_recovered = false OR answer_set_hash IS NOT NULL)"},
     {"table":"quiz_submission_states","name":"ck_quiz_snapshot_metadata","sql":"(result_snapshot IS NULL AND result_provenance IS NULL AND result_schema_version IS NULL AND result_captured_at IS NULL) OR (result_snapshot IS NOT NULL AND result_provenance IS NOT NULL AND result_provenance IN ('submitted', 'legacy_reconstructed') AND result_schema_version IS NOT NULL AND result_captured_at IS NOT NULL AND result_captured_at >= sealed_at)"}
   ],
+  "serverDefaults": {"quiz_grading_jobs.execution_mode": "live"},
   "foreignKeys": {
     "quiz_answers.quiz_item_id":{"ondelete":"CASCADE"},
     "quiz_answer_heads.quiz_item_id":{"ondelete":"CASCADE"},

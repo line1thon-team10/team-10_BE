@@ -9,6 +9,7 @@ from sqlalchemy import Connection, null, select, update
 
 from app.core.responses import ApiError
 from app.db import schema as t
+from app.domain.quiz_answers import validate_answer_text
 from app.repositories.locking import UserBusyError, lock_user
 
 
@@ -43,7 +44,7 @@ def answer_payload(*, choice: int | None, text: str | None, confidence: str) -> 
     if (choice is not None and (type(choice) is not int or choice < 0)) or (
             text is not None and not isinstance(text, str)) or ((choice is None) == (text is None)):
         raise ApiError("INVALID_INPUT", "문항 유형에 맞는 답안을 보내 주세요", 422)
-    return {"choice": choice, "text": text, "confidence": confidence}
+    return {"choice": choice, "text": validate_answer_text(text), "confidence": confidence}
 
 
 @dataclass(frozen=True)
@@ -80,16 +81,19 @@ class QuizAnswerRepository:
     def items(self, user_id, quiz_id) -> list[dict]:
         quiz = self.quiz(user_id, quiz_id)
         rows = self.connection.execute(select(t.quiz_items, t.questions.c.type, t.questions.c.choices,
-            t.questions.c.unit_id, t.units.c.material_id, t.materials.c.subject_id,
+            t.questions.c.unit_id, t.questions.c.concept_id, t.concepts.c.unit_id.label("concept_unit_id"),
+            t.units.c.material_id, t.materials.c.subject_id,
             t.subjects.c.user_id.label("question_owner"))
             .join(t.questions, t.quiz_items.c.question_id == t.questions.c.id)
             .join(t.units, t.questions.c.unit_id == t.units.c.id)
             .join(t.materials, t.units.c.material_id == t.materials.c.id)
             .join(t.subjects, t.materials.c.subject_id == t.subjects.c.id)
+            .outerjoin(t.concepts, t.questions.c.concept_id == t.concepts.c.id)
             .where(t.quiz_items.c.quiz_session_id == quiz["id"])
             .order_by(t.quiz_items.c.sort_order, t.quiz_items.c.id)).mappings().all()
         if any(row["question_owner"] != quiz["user_id"] or (
-                quiz["subject_id"] is not None and row["subject_id"] != quiz["subject_id"]) for row in rows):
+                quiz["subject_id"] is not None and row["subject_id"] != quiz["subject_id"]) or (
+                row["concept_id"] is not None and row["concept_unit_id"] != row["unit_id"]) for row in rows):
             raise ApiError("NO_QUIZ", "퀴즈 문항을 확인하지 못했어요", 404)
         return [dict(row) for row in rows]
 
@@ -211,11 +215,6 @@ class QuizAnswerRepository:
         quiz = self.lock_quiz(user_id, quiz_id)
         with self.connection.begin_nested():
             item = self.item(user_id, quiz["id"], item_id)
-            if item["type"] in ("choice", "ox"):
-                if choice is None or choice >= len(item["choices"] or []):
-                    raise ApiError("INVALID_INPUT", "유효한 보기 번호가 필요해요", 422)
-            elif item["type"] not in ("short", "essay") or text is None:
-                raise ApiError("INVALID_INPUT", "문항 유형에 맞는 문자열 답안이 필요해요", 422)
             current = self._current(item["id"])
             current_revision = current["revision"] if current else 0
             received = self.connection.scalar(select(t.quiz_answer_receipts.c.response_answer_id).where(
@@ -229,6 +228,13 @@ class QuizAnswerRepository:
                 if replay is None:
                     raise ApiError("ANSWER_CONFLICT", "원래 저장 응답을 확인할 수 없어요", 409)
                 return AnswerSave(replay, False, bool(current and replay["id"] == current["id"]))
+            # A receipt proves the input was accepted with the old question
+            # metadata. Only unseen requests use the current type/options.
+            if item["type"] in ("choice", "ox"):
+                if choice is None or choice >= len(item["choices"] or []):
+                    raise ApiError("INVALID_INPUT", "유효한 보기 번호가 필요해요", 422)
+            elif item["type"] not in ("short", "essay") or text is None:
+                raise ApiError("INVALID_INPUT", "문항 유형에 맞는 문자열 답안이 필요해요", 422)
             sealed = self.connection.scalar(select(t.quiz_submission_states.c.quiz_session_id).where(
                 t.quiz_submission_states.c.quiz_session_id == quiz["id"]))
             if sealed or quiz["status"] in ("submitted", "carried_over") or quiz["finalized_at"] is not None:

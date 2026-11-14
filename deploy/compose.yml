@@ -10,6 +10,8 @@ x-api: &api
     - storage:/app/storage
     - ai_cache:/app/cache
   init: true
+  labels:
+    dev.line1.database-writer: 'true'
   security_opt:
     - no-new-privileges:true
   logging:
@@ -61,6 +63,22 @@ services:
       timeout: 6s
       retries: 12
       start_period: 20s
+  grading-worker:
+    <<: *api
+    command: [python, -m, app.workers.grading, --loop]
+    restart: unless-stopped
+    stop_grace_period: 35s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, app.workers.grading, --healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 volumes:
   postgres:
   storage:
