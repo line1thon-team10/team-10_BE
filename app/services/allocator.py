@@ -47,6 +47,18 @@ class _Task:
     counts: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class _Schedule:
+    reservation_errors: tuple[Fraction, ...]
+    subject_errors: tuple[Fraction, ...]
+    ties: tuple[tuple[int, ...], ...]
+    tasks: tuple[_Task, ...]
+
+    @property
+    def key(self):
+        return self.reservation_errors, self.subject_errors, self.ties
+
+
 class _Budget:
     def __init__(self, limit):
         if type(limit) is not int or limit < 1:
@@ -289,12 +301,12 @@ class _Allocator:
                   **self._subject_targets(group_target[1], second, scores)}
         return fixed, target, (focus, group_target)
 
-    def _day(self, remaining, day, slots, rest_slots, focus):
-        """Enumerate daily page-count allocations in exact policy objective order.
+    def _day(self, remaining, day, slots, rest_slots, focus, can_improve):
+        """Yield feasible daily counts without settling ties ahead of later days.
 
         A branch-and-bound heap supplies an admissible lower bound for remaining
-        count choices. Each leaf must pack into real slots AND permit completion
-        of all other days before it can win the daily objective.
+        count choices. The caller compares complete suffix objectives and can
+        prune a partial count vector only against that full objective.
         """
         fixed, targets, group = self._day_targets(remaining, day, focus)
         indices = tuple(i for i, count in enumerate(remaining) if count and self._eligible(i, day))
@@ -334,24 +346,30 @@ class _Allocator:
             rest = tuple(count - used for count, used in zip(remaining, counts))
             if self._fit(rest, rest_slots) is None:
                 return None
-            return layout, rest, bounds(partial)[0]
+            return layout, rest, bounds(partial)
 
-        # All eligible work is an exact optimum when both target deviations are
-        # zero. This avoids enumerating the powerset of a small full-study day.
+        # Try a full-study day first, but its suffix must still be optimized.
+        # Local zero error alone does not establish a globally optimal suffix.
         full = tuple(remaining[i] for i in indices)
+        yielded_full = False
         if bounds(full)[:2] == (0, 0) and sum((remaining[i] * self.pools[i].cost for i in indices), Fraction()) <= capacity:
             result = candidate(full)
             if result is not None:
-                return result
+                yielded_full = True
+                yield result
         serial = 0
         heap = [(bounds(()), serial, (), Fraction())]
         while heap:
             self.budget.tick()
-            _, _, partial, used = heapq.heappop(heap)
+            bound, _, partial, used = heapq.heappop(heap)
+            if not can_improve(bound):
+                continue
             if len(partial) == len(indices):
+                if yielded_full and partial == full:
+                    continue
                 result = candidate(partial)
                 if result is not None:
-                    return result
+                    yield result
                 continue
             i = indices[len(partial)]
             maximum = min(remaining[i], (capacity - used) // self.pools[i].cost)
@@ -360,9 +378,73 @@ class _Allocator:
                 child = (*partial, count)
                 serial += 1
                 heapq.heappush(heap, (bounds(child), serial, child, used + count * self.pools[i].cost))
-        # The initial global oracle and every preceding accepted day guaranteed
-        # a completion, so reaching this point would be an implementation bug.
-        raise RuntimeError("A proven feasible remainder lost all daily allocations")
+
+    def _schedule(self, order, days):
+        """Lexicographic reservation vector, then subject targets, then ID ties."""
+        suffix_slots = [()] * (len(order) + 1)
+        reservation_counts = [0] * (len(order) + 1)
+        for position in range(len(order) - 1, -1, -1):
+            day, focus = order[position]
+            suffix_slots[position] = tuple(sorted((*days[day], *suffix_slots[position + 1]),
+                                                   key=lambda slot: (slot.day, slot.start)))
+            reservation_counts[position] = reservation_counts[position + 1] + (focus is not None)
+        memo = {}
+
+        def search(position, remaining):
+            self.budget.tick()
+            cache_key = position, remaining
+            if cache_key in memo:
+                return memo[cache_key]
+            if position == len(order):
+                if any(remaining):
+                    raise RuntimeError("Feasible result still contains unallocated obligations")
+                return _Schedule((), (), (), ())
+            if not any(remaining):
+                # With no unfixed work, all capped targets equal the fixed work.
+                return _Schedule((Fraction(),) * reservation_counts[position],
+                                 (Fraction(),) * (len(order) - position),
+                                 (tuple(0 for _ in remaining),) * (len(order) - position), ())
+
+            day, focus = order[position]
+            best = None
+            future_reservations = (Fraction(),) * reservation_counts[position + 1]
+            future_subjects = (Fraction(),) * (len(order) - position - 1)
+            # Allocating every remaining page on every later day is optimistic,
+            # hence safe as a lower bound for the final deterministic tie key.
+            future_ties = (tuple(-count for count in remaining),) * len(future_subjects)
+
+            def can_improve(bound):
+                primary, secondary, tie = bound
+                lower = (((primary,) if focus is not None else ()) + future_reservations,
+                         (secondary,) + future_subjects, (tie,) + future_ties)
+                return best is None or lower < best.key
+
+            for layout, rest, (primary, secondary, tie) in self._day(
+                remaining, day, days[day], suffix_slots[position + 1], focus, can_improve
+            ):
+                if not can_improve((primary, secondary, tie)):
+                    continue
+                tail = search(position + 1, rest)
+                choice = _Schedule(
+                    ((primary,) if focus is not None else ()) + tail.reservation_errors,
+                    (secondary,) + tail.subject_errors, (tie,) + tail.ties, layout + tail.tasks)
+                if best is None or choice.key < best.key:
+                    best = choice
+                # Zero is a global lower bound for both error vectors. Taking
+                # all eligible pages also minimizes this day's final ID tie.
+                if not any(choice.reservation_errors) and not any(choice.subject_errors) and all(
+                    rest[i] == 0 for i, count in enumerate(remaining) if count and self._eligible(i, day)
+                ):
+                    break
+            if best is None:
+                raise RuntimeError("A proven feasible remainder lost all daily allocations")
+            memo[cache_key] = best
+            return best
+
+        try:
+            return search(0, self.initial)
+        except RecursionError as exc:
+            raise SearchLimit(self.budget.limit, self.budget.explored) from exc
 
     def _unplaced(self):
         grouped = defaultdict(list)
@@ -425,20 +507,14 @@ class _Allocator:
         reserved = reservations(self.request.subjects, self.request.start_date)
         claimed = {day for day, _ in reserved}
         order = (*reserved, *((day, None) for day in days if day not in claimed))
-        remaining, tasks, reasons = self.initial, [], []
-        available_days = dict(days)
-        for day, focus in order:
-            slots = available_days.pop(day)
-            rest_slots = tuple(slot for _, others in sorted(available_days.items()) for slot in others)
-            layout, remaining, deviation = self._day(remaining, day, slots, rest_slots, focus)
-            tasks.extend(layout)
-            if focus is not None and deviation:
+        optimum = self._schedule(order, days)
+        reasons = []
+        for (day, _), deviation in zip(reserved, optimum.reservation_errors, strict=True):
+            if deviation:
                 fixed_here = any(task.day == day for task in self.request.fixed)
                 detail = "고정 태스크와 정수 페이지·연속 구간 제약" if fixed_here else "정수 페이지·15~60분·연속 구간 및 다른 필수 범위 제약"
                 reasons.append(AllocationReason("RESERVATION_DEVIATION", f"{detail}으로 직전일 목표 배분과 {deviation}분 차이가 있어요", day, deviation))
-        if any(remaining):
-            raise RuntimeError("Feasible result still contains unallocated obligations")
-        return self._result(True, tasks, reasons)
+        return self._result(True, optimum.tasks, reasons)
 
 
 def allocate(request: AllocationInput, *, max_search_nodes: int = 250_000) -> AllocationResult:

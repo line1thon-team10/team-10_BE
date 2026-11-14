@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from functools import lru_cache
-from itertools import permutations
+from itertools import permutations, product
 import random
 
 import pytest
@@ -483,3 +483,153 @@ def test_realistic_three_subject_thirty_page_input():
     result = allocate(request)
     assert_valid(request, result)
     assert sum(task.minutes for task in result.placements) == Fraction(555, 2)
+
+
+@pytest.mark.parametrize("low_first", [True, False])
+def test_all_reservation_objectives_precede_unit_identifier_ties(low_first):
+    low_material, high_material = ("b-1", "b-2") if low_first else ("b-2", "b-1")
+    request = AllocationInput(TODAY,
+        (subject("a", days=2, speed=10), subject("b", days=4, speed=10)),
+        (unit("a1", "a", material="a", pages=8),
+         unit("b-low", "b", material=low_material, pages=4),
+         unit("b-high", "b", material=high_material, pages=2, difficulty="high")),
+        calendar({0: [(480, 505)], 1: [(480, 580)], 3: [(480, 510)]}, 4))
+    result = allocate(request)
+    assert_valid(request, result)
+    late, early = by_subject(result, TODAY + timedelta(days=3)), by_subject(result, TODAY + timedelta(days=1))
+    actual = (abs(late["b"] - 30), abs(early["a"] - 80) + abs(early["b"] - 20))
+    # Independent witness: D0 B-low20; D1 A60+A20+B-low20; D3 B-high30.
+    # Every task is 15..60 minutes and both nonnegative errors are exactly zero.
+    witness = ((0, "b", 20), (1, "a", 60), (1, "a", 20), (1, "b", 20), (3, "b", 30))
+    assert all(15 <= minutes <= 60 for _, _, minutes in witness)
+    assert sum(minutes for day, _, minutes in witness if day == 0) <= 25
+    assert sum(minutes for day, _, minutes in witness if day == 1) == 100
+    assert sum(minutes for day, _, minutes in witness if day == 3) == 30
+    assert actual == (0, 0)
+    assert not result.reasons
+
+
+def test_remaining_reservation_objectives_precede_subject_share_error():
+    request = AllocationInput(TODAY,
+        (subject("a", days=2, speed=10), subject("b", days=4, speed=10), subject("c", days=4, speed=15)),
+        (unit("a1", "a", material="a", pages=8),
+         unit("b-low", "b", material="b-1", pages=4),
+         unit("b-high", "b", material="b-2", pages=2, difficulty="high"),
+         unit("c1", "c", material="c", pages=1)),
+        calendar({0: [(480, 505)], 1: [(480, 580)], 3: [(480, 525)]}, 4))
+    result = allocate(request)
+    assert_valid(request, result)
+    late = by_subject(result, TODAY + timedelta(days=3))
+    early = by_subject(result, TODAY + timedelta(days=1))
+    # D3 B45/C0 is closer to its subject-share target (270/7, 45/7),
+    # but leaves D1 A80/C15. B30/C15 instead permits D1 A80/B20 and D0 B20.
+    assert abs(45 - Fraction(270, 7)) + Fraction(45, 7) < abs(30 - Fraction(270, 7)) + abs(15 - Fraction(45, 7))
+    assert late == {"a": 0, "b": 30, "c": 15}
+    assert early == {"a": 80, "b": 20, "c": 0}
+    assert not result.reasons
+
+
+def _reservation_vector(pages, assigned_days, capacities):
+    """Independent two-reservation objective from a complete per-page assignment."""
+    remaining = set(range(len(pages)))
+    errors = []
+    for day, focus in ((3, "b"), (1, "a")):
+        eligible = [index for index in remaining if day < pages[index][2]]
+        focus_work = sum((pages[index][1] for index in eligible if pages[index][0] == focus), Fraction())
+        other_work = sum((pages[index][1] for index in eligible if pages[index][0] != focus), Fraction())
+        used_capacity = min(capacities[day], focus_work + other_work)
+        # Projection of 80% onto the feasible capped target interval.
+        focus_target = min(focus_work, max(used_capacity - other_work, capacities[day] * Fraction(4, 5)))
+        other_target = used_capacity - focus_target
+        assigned = [index for index in remaining if assigned_days[index] == day]
+        focus_actual = sum((pages[index][1] for index in assigned if pages[index][0] == focus), Fraction())
+        other_actual = sum((pages[index][1] for index in assigned if pages[index][0] != focus), Fraction())
+        errors.append(abs(focus_actual - focus_target) + abs(other_actual - other_target))
+        remaining.difference_update(assigned)
+    return tuple(errors)
+
+
+def _brute_reservation_vector(pages, capacities):
+    """Enumerate individual page dates, then use independent task subset packing."""
+    best = None
+    allowed_days = [tuple(day for day in (0, 1, 3) if day < deadline and capacities[day])
+                    for _, _, deadline, _ in pages]
+
+    @lru_cache(None)
+    def fits(day, selected):
+        return brute_pack(selected, ((day, capacities[day]),))
+
+    for assignment in product(*allowed_days):
+        if any(sum((pages[index][1] for index, assigned in enumerate(assignment) if assigned == day), Fraction()) > capacities[day]
+               for day in (0, 1, 3)):
+            continue
+        if not all(fits(day, tuple(page for page, assigned in zip(pages, assignment) if assigned == day)) for day in (0, 1, 3)):
+            continue
+        vector = _reservation_vector(pages, assignment, capacities)
+        best = vector if best is None else min(best, vector)
+    return best
+
+
+def test_multiple_reservation_vectors_match_small_complete_page_oracle():
+    rng = random.Random(2026111401)
+    feasible = infeasible = 0
+    cases = [((1, 4, 2), 60, {0: 25, 1: 80, 3: 30}),
+             ((3, 4, 2), 25, {0: 25, 1: 95, 3: 30}),
+             ((4, 4, 2), 20, {0: 25, 1: 100, 3: 30})]
+    for _ in range(40):
+        counts = (rng.randint(1, 2), rng.randint(1, 2), rng.randint(1, 2))
+        a_cost = rng.choice((10, 15, 20))
+        capacities = {0: rng.choice((15, 20, 25, 30)), 1: rng.choice((30, 40, 50, 60)),
+                      3: rng.choice((15, 20, 25, 30))}
+        cases.append((counts, a_cost, capacities))
+    for counts, a_cost, capacities in cases:
+        costs = (a_cost, 10, 15)
+        owners = ("a", "b", "b")
+        pages = tuple((owners[index], Fraction(costs[index]), 2 if index == 0 else 4, 0)
+                      for index in range(3) for _ in range(counts[index]))
+        expected = _brute_reservation_vector(pages, capacities)
+        request = AllocationInput(TODAY,
+            (subject("a", days=2, speed=a_cost), subject("b", days=4, speed=10)),
+            (unit("a", "a", material="a", pages=counts[0]),
+             unit("b-low", "b", material="b-1", pages=counts[1]),
+             unit("b-high", "b", material="b-2", pages=counts[2], difficulty="high")),
+            calendar({day: [(480, 480 + value)] for day, value in capacities.items()}, 4))
+        result = allocate(request)
+        assert result.feasible is (expected is not None), (counts, capacities)
+        if not result.feasible:
+            infeasible += 1
+            continue
+        feasible += 1
+        assert_valid(request, result)
+        placed = {part.unit_id: [] for task in result.placements for part in task.parts}
+        for task in result.placements:
+            for part in task.parts:
+                placed[part.unit_id].extend([(task.day - TODAY).days] * (part.span.end - part.span.start + 1))
+        assignment = tuple(day for key in ("a", "b-low", "b-high") for day in placed[key])
+        actual = _reservation_vector(pages, assignment, capacities)
+        assert actual == expected, (counts, capacities, actual, expected)
+    assert feasible > 0 and infeasible > 0
+
+
+def test_resource_limit_after_feasibility_does_not_approve_unproved_objective(monkeypatch):
+    from app.services import allocator
+
+    request = AllocationInput(TODAY,
+        (subject("a", days=2, speed=10), subject("b", days=4, speed=10)),
+        (unit("a1", "a", material="a", pages=8), unit("b-low", "b", material="b-1", pages=4),
+         unit("b-high", "b", material="b-2", pages=2, difficulty="high")),
+        calendar({0: [(480, 505)], 1: [(480, 580)], 3: [(480, 510)]}, 4))
+    original_fit = allocator._Allocator._fit
+    feasible_proved = []
+
+    def exhaust_after_global_fit(self, remaining, slots):
+        result = original_fit(self, remaining, slots)
+        if not feasible_proved and remaining == self.initial and result is not None:
+            feasible_proved.append(True)
+            self.budget.limit = self.budget.explored
+        return result
+
+    monkeypatch.setattr(allocator._Allocator, "_fit", exhaust_after_global_fit)
+    with pytest.raises(SearchLimit):
+        allocate(request)
+    assert feasible_proved == [True]
