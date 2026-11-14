@@ -1,10 +1,12 @@
 """Durable per-answer jobs. External grading runs after the claim is committed."""
 from datetime import datetime, timedelta
+import re
 from uuid import uuid4
 
 from sqlalchemy import Connection, and_, exists, null, or_, select, update
 
 from app.core.responses import ApiError
+from app.ai.gateway import InvalidOutput, canonical_json, parse_json
 from app.db import schema as t
 from app.repositories.quiz_answers import QuizAnswerRepository, aware_time, normalized_uuid, row_dict
 
@@ -135,9 +137,13 @@ class GradingJobRepository:
 
     @staticmethod
     def _validated_result(result: dict, question_type: str) -> dict:
-        keys = {"is_correct", "essay_score", "feedback", "got_points", "missing_points", "grading_status"}
+        keys = {"is_correct", "essay_score", "feedback", "got_points", "missing_points", "grading_status", "provenance"}
         if not isinstance(result, dict) or set(result) - keys or type(result.get("is_correct")) is not bool:
             raise ApiError("INVALID_INPUT", "검증된 채점 결과가 필요해요", 422)
+        try:
+            result = parse_json(canonical_json(result))
+        except InvalidOutput:
+            raise ApiError("INVALID_INPUT", "저장할 수 없는 채점 결과예요", 422) from None
         score = result.get("essay_score")
         if question_type == "essay":
             if type(score) is not int or not 0 <= score <= 100 or result["is_correct"] != (score >= 85):
@@ -153,7 +159,32 @@ class GradingJobRepository:
         status = result.get("grading_status", "graded")
         if status not in ("graded", "fallback"):
             raise ApiError("INVALID_INPUT", "완료된 채점 결과가 필요해요", 422)
+        provenance = result.get("provenance")
+        if provenance is not None:
+            hashes = {"answer_hash", "question_hash", "source_hash", "material_hash"}
+            versions = {"model_version", "prompt_version", "schema_version"}
+            if type(provenance) is not dict or set(provenance) != hashes | versions | {"saved_result_id"}:
+                raise ApiError("INVALID_INPUT", "채점 provenance 필드가 올바르지 않아요", 422)
+            if any(type(provenance[key]) is not str or re.fullmatch(r"[0-9a-f]{64}", provenance[key]) is None for key in hashes):
+                raise ApiError("INVALID_INPUT", "채점 입력 해시가 올바르지 않아요", 422)
+            if any(type(provenance[key]) is not str or not provenance[key].strip() for key in versions):
+                raise ApiError("INVALID_INPUT", "채점 버전이 필요해요", 422)
+            if provenance["saved_result_id"] is not None:
+                provenance["saved_result_id"] = normalized_uuid(provenance["saved_result_id"])
         return {key: result.get(key) for key in keys - {"grading_status"}} | {"grading_status": status}
+
+    def _check_provenance(self, user_id, job, provenance):
+        if provenance is None:
+            return  # Legacy results have no inferred version evidence.
+        answer_hash = self.connection.scalar(select(t.quiz_answers.c.answer_hash).where(t.quiz_answers.c.id == job["answer_id"]))
+        if provenance["answer_hash"] != answer_hash:
+            raise ApiError("INVALID_INPUT", "채점 provenance가 현재 답안과 다릅니다", 422)
+        saved_id = provenance["saved_result_id"]
+        if saved_id is not None and self.connection.scalar(select(t.ai_saved_results.c.id).where(
+            t.ai_saved_results.c.id == saved_id, t.ai_saved_results.c.user_id == normalized_uuid(user_id),
+            t.ai_saved_results.c.kind == "essay_grade", t.ai_saved_results.c.schema_version == provenance["schema_version"],
+        )) is None:
+            raise ApiError("INVALID_INPUT", "채점 저장 결과의 소유자 또는 버전이 다릅니다", 422)
 
     def complete(self, user_id, job_id, *, owner: str, token, revision: int, now: datetime, result: dict) -> bool:
         now = aware_time(now)
@@ -161,6 +192,7 @@ class GradingJobRepository:
         if type(revision) is not int or not self._is_current(job) or revision != job["stored_revision"]:
             return False
         result = self._validated_result(result, job["question_type"])
+        self._check_provenance(user_id, job, result["provenance"])
         changed = self.connection.execute(update(t.quiz_grading_jobs).where(
             *self._lease_conditions(job, owner, token, revision, now)).values(
             status="succeeded", result=result, error_code=None, finished_at=now,

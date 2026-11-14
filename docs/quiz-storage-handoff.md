@@ -34,6 +34,8 @@ Q-05는 과거 완료 세트의 첫 복구 조회에서 현재 보존 사실로 
 
 실패는 답안 원문을 유지하고 result=null로 남긴다. 저장된 채점 결과는 `is_correct`, `essay_score`, `feedback`, `got_points`, `missing_points`, `grading_status`를 가진다. 서술형 점수는 정수 0..100이며 85점 정오 경계를 검증한다. 이 연산은 quiz_attempts/숙달도/취약 문항을 확정하지 않는다. JSON 결과를 지울 때 SQL NULL을 사용하며 JSON 리터럴 null을 채점 성공으로 취급하지 않는다.
 
+Q-04는 내부 result에 선택적 `provenance`를 추가한다. 서버가 만든 `answer_hash`, `question_hash`, `source_hash`, `material_hash`, `model_version`, `prompt_version`, `schema_version`, `saved_result_id`만 허용한다. 입력 해시는 저장된 답안과 일치해야 하며, 저장 결과를 참조하면 같은 사용자·essay_grade·schema의 결과여야 한다. 해시는 소문자 SHA-256이고 NUL/surrogate/비정상 JSON 숫자는 저장 전에 거절한다. 이전 결과의 provenance는 null 또는 누락일 수 있다. **Q-05는 provenance가 없다는 사실을 현재 문항·근거·자료 버전과 일치한다는 증거로 간주하지 않아야 한다.** 신규 실행 결과는 worker가 만든 버전 해시를 재검사한 후에만 확정하고 legacy 복구 정책은 별도로 적용한다.
+
 ## 답안 집합 봉인
 
 `QuizAnswerRepository.seal(user_id, quiz_id, expected_revisions={item_id: revision, ...}, now=...)`는 모든 현재 항목의 답안과 revision을 검증하고 정렬된 항목/revision/answerHash 집합을 봉인한다. 동일 집합 재호출은 최초 상태를 반환하며 다른 집합은 `QUIZ_FINALIZED`다. 봉인만으로 기존 quiz_sessions.status나 점수/이력을 확정하지 않는다.
