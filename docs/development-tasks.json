@@ -48,7 +48,7 @@
       "materials/initial plan",
       "replanning/management"
     ],
-    "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only.",
+    "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only. Submission/judging freeze overrides deployment order: retain BE main3475cf2 and FE main49c95c9; future API implementation stays isolated, no main promotion or new-contract production deployment until user lifts hold.",
     "status_source": "docs/development-tasks.json",
     "flows": [
       {
@@ -67,9 +67,22 @@
           "QA-DAY9"
         ],
         "deployed_be_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
-        "deployed_flow_complete": false
+        "deployed_flow_complete": false,
+        "release_state": "held_for_submission_contract_freeze"
       }
-    ]
+    ],
+    "release_hold": {
+      "state": "active_until_user_confirms_submission_and_judging_complete",
+      "reason": "FE 담당자가 BE3475cf2 계약에 맞췄으므로 제출·심사까지 API 모양 변경의 main 병합을 보류한다.",
+      "be_main_contract_sha": "3475cf204ac726f9c96d44bbc687ea8253f8c48e",
+      "fe_main_sha": "49c95c9eb8f7eadc80836fee7b8b6a65e696233e",
+      "current_runtime_sha": "4c20454fef5382e7e97232f93e02e1637a235583",
+      "current_runtime_matches_frozen_contract": false,
+      "allowed": "Isolated branch implementation, focused tests, independent review, PR CI, integration-only development.",
+      "held": "BE API-changing main merges, FE dev to main promotion, new-contract production dispatch.",
+      "runtime_target_question": "Awaiting whether judging FE uses current RPI or a separate3475cf2 server. No rollback/reset/deployment without confirmed target.",
+      "fe_compatibility": "FE03A already merged to dev1edf606 requires quizId and answer PUT absent in3475cf2. FE main does not include it; FE03B stays local."
+    }
   },
   "tasks": [
     {
@@ -3704,7 +3717,8 @@
       "validation_evidence": [
         "Starts against reviewed immutable Q03 contract while its unrelated test-budget CI repair runs. Distinct worktree/file ownership from FE02A review. Minimal mock PUT/recovery compatibility permitted; no seed/scoring rewrite.",
         "Node26 and npm check passed. API-only independent P2: canceled unpinned GET writes older revision into pinned cache after successful PUT. Preserved actual-hook reproduction /private/tmp/team10-fe03a-edge-review.yr35qs65/tests/test-independent-quiz-stale-get.mjs; author fixing before FE03B.",
-        "Original stale GET repro byte-identical final recheck1 passed324ms atca8a9a3, no remaining findings. Author17 changed-risk cases/npm check passed. PR6 merged to dev1edf606."
+        "Original stale GET repro byte-identical final recheck1 passed324ms atca8a9a3, no remaining findings. Author17 changed-risk cases/npm check passed. PR6 merged to dev1edf606.",
+        "Freeze audit: dev1edf606 cannot run against3475cf2 because GET lacks quizId and answer PUT is absent. FE main49c95c9 unaffected; no promotion to main during judging."
       ],
       "integration_only_paths": [
         "FE/src/api/endpoints.js",
@@ -3713,13 +3727,14 @@
       "validation_mode": "risk-focused-impact-and-required-ci",
       "worktree": "FE-task-quiz-answers",
       "integration_sha": "1edf606ed6e9e59e77732d79110d9a0f447114eb",
-      "review_status": "approved"
+      "review_status": "approved",
+      "release_hold": true
     },
     {
       "id": "FE-03B",
       "title": "퀴즈 최종 제출·결과 재조회 흐름",
       "lane": "frontend",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "FE-03A",
@@ -3745,14 +3760,16 @@
       "optional": false,
       "branch": "feat/quiz-submit-result-flow",
       "base_sha": "6f61b7aa1d632374ccf18db9f489d57917354599",
-      "head_sha": null,
+      "head_sha": "801501082f39c78af3a61e77d74c950a2abfbafc",
       "pr_url": null,
       "validation_evidence": [
-        "Worktree created at6f61b7a; author first fixes FE03A stale GET and normally merges it, then final submit/result flow. API/Node impact tests and npm check only; no browser verification."
+        "Worktree created at6f61b7a; author first fixes FE03A stale GET and normally merges it, then final submit/result flow. API/Node impact tests and npm check only; no browser verification.",
+        "Author final8015010:26 Node cases and npm check passed, clean local branch. Incompatible with3475cf2 by design: requires answer PUT,quizId/savedAnswers and selected result query. No push/merge/deploy after freeze."
       ],
       "integration_only_paths": [],
       "validation_mode": "risk-focused-impact-and-required-ci",
-      "worktree": "FE-task-quiz-submit"
+      "worktree": "FE-task-quiz-submit",
+      "release_hold": true
     },
     {
       "id": "QA-DAY9",
@@ -3790,7 +3807,8 @@
         "API-only connected flow2 SQLite/PG passed at34a790a, preserved verbatim inefbb524:focus end,p13,PUT answers,GET recovery,saved submit,result GET,identical replay; no answer/head loss or duplicate attempts/mastery,owned cache,provider0. FE03B impact review and mandatory CI still pending; no screen verification."
       ],
       "integration_only_paths": [],
-      "validation_mode": "risk-focused-impact-and-required-ci"
+      "validation_mode": "risk-focused-impact-and-required-ci",
+      "release_hold": true
     }
   ]
 }
