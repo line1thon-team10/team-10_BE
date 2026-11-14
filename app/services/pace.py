@@ -152,9 +152,10 @@ class PaceService:
                 placement=by_task.get(task.id)
                 duration=fraction(placement['duration']) if placement else Fraction(task.row['estimated_minutes'])
                 total+=duration
+                if placement and (duration>60 or duration<15): conflict=True
                 if task.row['starts_at'] is not None:
                     start=_minute(_local(task.row['starts_at'],zone));end=start+duration
-                    if placement and (start<8*60 or end>23*60 or duration>60 or duration<15): conflict=True
+                    if placement and (start<8*60 or end>23*60): conflict=True
                     if placement and any(start<item.end and end>item.start for item in busy): conflict=True
                     intervals.append((start,end,placement is not None))
             for i,(start,end,changed) in enumerate(intervals):
