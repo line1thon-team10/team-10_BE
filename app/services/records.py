@@ -11,6 +11,7 @@ from app.repositories.records import RecordRepository
 from app.services.learning_evidence import revalidate_record_passes
 from app.services.learning_passes import create_initial_passes, create_remedial_passes
 from app.services.remedial import after_initial_passes
+from app.services.carryover_corrections import reconcile_carryover
 from app.services.study import StudyData, Task
 
 RESULT_TO_DB = {"done": "completed", "partial": "partial", "none": "missed"}
@@ -150,6 +151,7 @@ def save_record(conn, task: Task, result: str, ranges: list[dict], study_date, s
     create_initial_passes(conn, user_id, task, record_id, at)
     create_remedial_passes(conn, user_id, task, record_id, at)
     after_initial_passes(conn, user_id, {row["unit_id"] for row in task.ranges}, at)
+    reconcile_carryover(conn, task, user_id=user_id, at=at)
 
 
 def check_session(conn, task: Task, session_id: str | None, *, user_id: str) -> str | None:
