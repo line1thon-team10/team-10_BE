@@ -166,7 +166,7 @@ def test_prepared_bank_requires_gradable_answers_and_physical_pdf_bounds(api_cli
 def test_every_source_stays_inside_its_own_concept(api_client,progress_world,source_range,expected):
     w=progress_world;unit=w.unit(1,10)
     concept=w.concept(unit,1,2)
-    w.concept(unit,3,10)
+    w.concept(unit,3,10,code='C2',sort_order=1)
     w.task((unit,1,10),done=[(unit,1,10)],status='completed')
     for _ in range(4):add_question(w,unit,page=1,concept_id=concept['id'])
     qid=add_question(w,unit,page=1,concept_id=concept['id'])
