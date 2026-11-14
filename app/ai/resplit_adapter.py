@@ -44,7 +44,7 @@ _CAP = re.compile(r'(?:하루|매일|일일)\s*(\d+)\s*(분|시간)(?:\s*(\d+)\s
 _UNCERTAIN = re.compile(r'아마|정도|대충|쯤|가능하면|혹시|않|아니|안\s|못|말고|제외|빼|취소|대신|이상|최소|보다|[?？]|거나|든지|할까|하면|일지도|또는|혹은')
 # Everything not consumed as an owned selector or explicit constraint must be a
 # scheduling request connector. Unknown clauses must not silently disappear.
-_FILLER = re.compile(r'전체|모든|과목|공부|학습|계획|일정|시간|분량|배정|배분|재배분|재분배|재분할|재생성|다시|남은|새로|수립|만들어|해줘|해주세요|해\s*주세요|해|줘|주세요|하고|하자|하도록|하겠어|할게|하고싶어|하고\s*싶어|부탁해|부탁|변경|조정|제한|최대|이하|이내|상한|까지|부터|동안|매주|요일|매일|에만|만|에는|에|은|는|을|를|로|으로|와|과|및|또는|하고|씩|도|의|총|[\s,·/\-~〜～.!]')
+_FILLER = re.compile(r'전체|모든|과목|공부|학습|계획|일정|시간|분량|배정|배분|재배분|재분배|재분할|재생성|나눠|다시|남은|새로|수립|만들어|해줘|해주세요|해\s*주세요|해|줘|주세요|하고|하자|하도록|하겠어|할게|하고싶어|하고\s*싶어|부탁해|부탁|변경|조정|제한|최대|이하|이내|상한|까지|부터|동안|매주|요일|매일|에만|만|에는|에|은|는|을|를|로|으로|와|과|및|또는|하고|씩|도|의|총|[\s,·/\-~〜～.!]')
 
 
 def _subject_pattern(name):
@@ -61,6 +61,7 @@ def _clause_window(text, context):
     today = date.fromisoformat(context['today'])
     subjects = context['subjects']
     selected = []
+    selector_positions = []
     # Longest names first prevents a short subject name from shadowing another.
     for subject in sorted(subjects, key=lambda item: -len(item['name'])):
         pattern = _subject_pattern(subject['name'])
@@ -68,9 +69,14 @@ def _clause_window(text, context):
             if any(item['name'] == subject['name'] for item in selected):
                 return None
             selected.append(subject)
-            text = pattern.sub(' ', text)
+            selector_positions.append(pattern.search(text).start())
+            text = pattern.sub(lambda match: ' ' * len(match.group()), text)
     if selected and any(sum(item['name'] == chosen['name'] for item in subjects) > 1 for chosen in selected):
         return None
+    first_constraint = re.search(_DATE.pattern + '|' + _CAP.pattern +
+                                 r'|오늘|내일|모레|[월화수목금토일]요일|평일|주말|이번\s*주|다음\s*주|(?<!\w)[월화수목금토일](?:[·/ ]?[월화수목금토일]){1,6}(?!\w)', text)
+    if len(selected) > 1 and first_constraint and first_constraint.start() < max(selector_positions):
+        return None  # A later subject cannot inherit an earlier subject's clause.
     scope = selected or subjects
     if not scope or _UNCERTAIN.search(text):
         return None
@@ -202,6 +208,11 @@ def explicit_intent(context):
         canonical_json(context)
         if _GENERIC.fullmatch(text.strip().rstrip('.!')):
             return []
+        # A comma before a named subject starts a new scope; commas between
+        # dates or weekdays remain inside the same scope.
+        subject_names = '|'.join(re.escape(item['name']) for item in context['subjects'])
+        if subject_names:
+            text = re.sub(r',(?=\s*(?:' + subject_names + r'))', ';', text)
         clauses = re.split(r'[;\n]|그리고', text)
         windows = []
         for clause in clauses:

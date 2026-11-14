@@ -43,6 +43,7 @@ def ready(windows):
     ('수학과 자료구조 월요일 하루 60분', [window(A, [16], 60), window(B, [16, 23], 60)]),
     ('남은 전체 범위를 다시 배분해줘', []),
     ('다시 나눠줘', []),
+    ('내일부터 다시 나눠줘', [window(None, range(15, 24))]),
     ('현재 일정과 목표대로 재생성', []),
 ])
 def test_grounded_windows(text, expected):
@@ -210,3 +211,19 @@ def test_actual_process_gateway_and_observed_groq_transport(behavior, success, c
         assert all(item.provider_request_id == 'fixture-groq-request' for item in result.usage)
     else:
         assert result.usage[0].status == 'failed'
+
+
+def test_comma_separates_subject_specific_constraints():
+    ctx = context('수학 월요일 하루 30분, 자료구조 화요일 하루 45분')
+    expected = [window(A, [16], 30), window(B, [17], 45)]
+    assert adapter.explicit_intent(ctx) == expected
+    assert adapter.validate_resplit_result(ready(expected), ctx) == ready(expected)
+
+
+@pytest.mark.parametrize('text', ['수학은 월요일 자료구조는 화요일 하루 30분',
+    '수학 월수금 자료구조 화요일 하루 30분', '수학 월/수/금 자료구조 화요일 하루 30분'])
+def test_subject_following_another_subject_constraint_cannot_inherit_it(text):
+    ctx = context(text)
+    assert adapter.explicit_intent(ctx) is None
+    with pytest.raises(InvalidOutput):
+        adapter.validate_resplit_result(ready([window(A, [16, 17], 30), window(B, [16, 17, 23], 30)]), ctx)
