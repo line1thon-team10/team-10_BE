@@ -6,7 +6,7 @@ from app.core.clock import today_for
 from app.db import schema as t
 
 
-def archived_dates(conn, user, subjects):
+def archived_dates(conn, user, subjects, *, include_legacy=True):
     archived = {subject['id']:subject for subject in subjects if subject['status']=='archived'}
     if not archived:
         return {}
@@ -28,7 +28,7 @@ def archived_dates(conn, user, subjects):
         value = subject.get('archived_at')
         if value is not None:
             result[subject_id] = (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo(user['timezone'])).date()
-        else:
+        elif include_legacy:
             result[subject_id] = today_for(user)
     return result
 

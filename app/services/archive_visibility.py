@@ -9,16 +9,25 @@ from app.services.subject_archive_state import archived_dates
 class ArchiveVisibility:
     def __init__(self, conn, user, subjects):
         self.subjects = {subject['id']: subject for subject in subjects}
-        self.cutoffs = archived_dates(conn, user, subjects)
+        self.cutoffs = archived_dates(conn, user, subjects, include_legacy=False)
+        self.unknown = {subject['id'] for subject in subjects
+            if subject['status'] == 'archived' and subject['id'] not in self.cutoffs}
         self.today = today_for(user)
         self.zone = ZoneInfo(user.get('timezone') or 'Asia/Seoul')
 
     def date(self, subject_id, day):
+        if subject_id in self.unknown:
+            return False
         cutoff = self.cutoffs.get(subject_id)
         return cutoff is None or day < cutoff
 
     def task(self, task):
         row = task.row
+        if row['subject_id'] in self.unknown:
+            # An absent historical cutoff cannot advance with the live clock.
+            # Preserve actual records, not unverifiable past/future placements.
+            return bool(row['scheduled_date'] <= self.today and task.record
+                and task.record['result'] in ('completed', 'partial'))
         cutoff = self.cutoffs.get(row['subject_id'])
         if cutoff is None:
             return True
