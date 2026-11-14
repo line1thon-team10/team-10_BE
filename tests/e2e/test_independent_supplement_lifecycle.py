@@ -169,3 +169,15 @@ def test_finalized_carried_quiz_keeps_verified_remedial_recovery(api_client, dom
     conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(**changes))
     conn.commit()
     assert eligible(conn, case)
+
+
+def test_finalized_carried_over_source_remains_valid_when_remedial_is_completed(api_client, domain_connection, remedial_case):
+    conn, case = domain_connection, remedial_case
+    source, _ = low_quiz(api_client, conn, case)
+    task = remedial_task(conn)
+    conn.execute(update(t.quiz_sessions).where(t.quiz_sessions.c.id == source).values(status='carried_over'))
+    go(conn, case, case['nextday'])
+    write(api_client, case, task['id'])
+    passes = pass_rows(conn)
+    assert len(passes) == 1 and eligible(conn, case)
+    assert passes[0]['evidence_snapshot']['sourceQuizId'] == source
