@@ -41,15 +41,12 @@
     "completion_unit": "verified_user_flow",
     "current_flow": "FLOW-COMPAT-3475",
     "current_work_order": [
-      "Restore current judging FE49c/BE3475 request compatibility on RPI4c without deploying new contracts",
-      "Q-03/Q-04 review closure",
-      "Q-05 final submission with FE-02A in parallel",
-      "Q-06 saved grading and FE-03A/FE-03B",
-      "QA-DAY9 and deployment",
-      "materials/initial plan",
-      "replanning/management"
+      "Backend only: material upload/analysis/structure -> subject draft/onboarding -> plan approval",
+      "Code E2E with SQLite/PostgreSQL, independent failure reproduction",
+      "Record idempotency and day summaries",
+      "Remaining backend tasks; keep new contracts off production"
     ],
-    "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only. Submission/judging freeze overrides deployment order: retain BE main3475cf2 and FE main49c95c9; future API implementation stays isolated, no main promotion or new-contract production deployment until user lifts hold.",
+    "execution_policy": "Two implementation agents plus one independent reviewer. Root owns contracts, assignment, integration. Author fixes findings; reviewer reruns preserved reproduction plus changed risk. Required CI remains; full regression at large integration milestones only. Reviewed immutable parents may be stacked while their mandatory CI runs; integration/deployment still requires CI success. Latest user instruction: no browser, screen, screenshot, or console verification. Implement the agreed specification, run focused contract/API impact tests and mandatory CI only. Submission/judging freeze overrides deployment order: retain BE main3475cf2 and FE main49c95c9; future API implementation stays isolated, no main promotion or new-contract production deployment until user lifts hold. Current session: user explicitly requests active subagent implementation/review parallelism and code E2E execution; do not edit any frontend. Local candidate merges may be prepared while final CI is pending; production freeze remains.",
     "status_source": "docs/development-tasks.json",
     "flows": [
       {
@@ -99,7 +96,7 @@
       "compatibility_exception": "Prepare a minimal compatibility fix on the current runtime lineage only; keep main3475cf2 and new-contract integration isolated.",
       "compatibility_candidate_sha": "bb8c824d9f3d25cbb3a81d063a166040d629e90f",
       "compatibility_ci_run_id": 43561071174,
-      "deployment_instruction": "Sol preflight complete; dispatch instruction held. Root must re-check CI and explicitly reassign exact candidate before deployment."
+      "deployment_instruction": "CI43561071174 succeeded at exact bb8c824; compatibility-only deploy dispatched as43562567179, build in progress; verify actual runtime before reporting deployed."
     },
     "handoff_entry": "../HANDOFF.md (workspace root; local file, not published)"
   },
@@ -562,7 +559,7 @@
       "id": "R-04",
       "title": "기록 요청 멱등 응답 저장",
       "lane": "study",
-      "status": "planned",
+      "status": "review",
       "assignee": null,
       "depends_on": [
         "R-02"
@@ -595,13 +592,16 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
+      "branch": "feat/record-idempotency",
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "c950e6d",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "0009_record_requests after0008_grading_execution_mode; keyed POST/PATCH first-response replay. E2E/transaction26 + records/schema207 + migration2 SQLitePG passed; independent review pending."
+      ],
       "integration_only_paths": [],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-record-replay"
     },
     {
       "id": "R-05",
@@ -1853,12 +1853,13 @@
       "optional": false,
       "branch": "feat/material-storage",
       "base_sha": "b0dd061",
-      "head_sha": "522ec901ccebc3158ccfc31b82913c266a5b13a2",
+      "head_sha": "bfc07025956d39895141e299015df91087fd06a3",
       "pr_url": null,
       "validation_evidence": [
         "Next materials/initial-plan flow starts while day9 CI/FE submit continue. Existing materials+ai_jobs reused, no schema change. Multipart cumulative byte cap, atomic owned sameSHA receipt, actual persisted file and queued job only; no fabricated analysis completion. main.py minimal router registration lease.",
         "Final522ec901 author59 SQLite/PG impact cases passed, immutable queued input and atomic file cleanup. New API only, no push/main/deploy; independent review deferred for urgent current FE compatibility.",
-        "Independent final522ec901 P2: reusable succeeded job restores file but fails to restore original_storage_key/original_deleted_at; upload200 then download404. Preserved /private/tmp/team10-m01-edge-review.4i5xkubw/tests/test_independent_material_admission.py. SQLite/PG4 failed, contention/chunk-cap6 passed. Author fix required."
+        "Independent final522ec901 P2: reusable succeeded job restores file but fails to restore original_storage_key/original_deleted_at; upload200 then download404. Preserved /private/tmp/team10-m01-edge-review.4i5xkubw/tests/test_independent_material_admission.py. SQLite/PG4 failed, contention/chunk-cap6 passed. Author fix required.",
+        "Reupload restoration E2E18 SQLite+PG passed: deleted/null key, queued/running/succeeded, unchanged units/concepts/job."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1872,7 +1873,7 @@
       "id": "M-02",
       "title": "PDF 분석 작업·OCR·진행·재시도",
       "lane": "materials",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/quiz_implementation",
       "depends_on": [
         "M-01",
@@ -1903,10 +1904,11 @@
       "optional": false,
       "branch": "feat/material-analysis",
       "base_sha": "522ec901ccebc3158ccfc31b82913c266a5b13a2",
-      "head_sha": null,
+      "head_sha": "00dcd0f7b8c64e098c9a51200feb9389619bd783",
       "pr_url": null,
       "validation_evidence": [
-        "Design investigation only, no implementation/tests. ai_jobs.result lease envelope and schema DTO lease remain unapproved; inspect every writer and retry/token CAS before implementation."
+        "Design investigation only, no implementation/tests. ai_jobs.result lease envelope and schema DTO lease remain unapproved; inspect every writer and retry/token CAS before implementation.",
+        "Durable analysis worker/API implemented; author48 SQLitePG plus independent M02/M03 50 passed. Missing-original failedStep P2 fixed and original reproduced green; local integration candidate only, CI pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -1919,7 +1921,7 @@
       "id": "M-03",
       "title": "수동 목차 해석",
       "lane": "materials",
-      "status": "planned",
+      "status": "review",
       "assignee": null,
       "depends_on": [
         "M-01",
@@ -1944,15 +1946,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
+      "branch": "feat/material-analysis",
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "00dcd0f7b8c64e098c9a51200feb9389619bd783",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "TOC parsing only with bounded observed AI fallback; negative/NUL boundary independent28 SQLitePG passed; local integration candidate, CI pending."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-material-analysis"
     },
     {
       "id": "M-04",
@@ -2089,7 +2094,7 @@
       "id": "P-02",
       "title": "초기 계획 후보·승인",
       "lane": "planning",
-      "status": "running",
+      "status": "review",
       "assignee": "/root/study_implementation",
       "depends_on": [
         "P-01",
@@ -2121,10 +2126,11 @@
       "optional": false,
       "branch": "feat/initial-plan-approval",
       "base_sha": "00930b93b4dc294d76ed642b87fd259fe00c9790",
-      "head_sha": "cd2238e0a973a7f404535c0f296e6d61b13efa14",
+      "head_sha": "b28376f",
       "pr_url": null,
       "validation_evidence": [
-        "Read-only plan_inputs and tests committedcd2238e:22 SQLite and44 SQLite/PG passed, clean. No public API/preview persistence/approval or placement writes. Existing approved plan draftSubjectIds, SearchLimit error and speed snapshot policy undecided."
+        "Read-only plan_inputs and tests committedcd2238e:22 SQLite and44 SQLite/PG passed, clean. No public API/preview persistence/approval or placement writes. Existing approved plan draftSubjectIds, SearchLimit error and speed snapshot policy undecided.",
+        "Initial draft/approval author64 and independent10 SQLitePG passed. Existing-plan subject additions author8 passed; independent review pending."
       ],
       "integration_only_paths": [
         "BE/app/main.py"
@@ -2179,7 +2185,7 @@
       "id": "U-01",
       "title": "과목 목록·신규 draft 과목 생성",
       "lane": "management",
-      "status": "planned",
+      "status": "review",
       "assignee": null,
       "depends_on": [
         "O-01",
@@ -2206,15 +2212,18 @@
       ],
       "external_gates": [],
       "optional": false,
-      "branch": null,
+      "branch": "feat/subject-cards",
       "base_sha": null,
-      "head_sha": null,
+      "head_sha": "ac998e7",
       "pr_url": null,
-      "validation_evidence": [],
+      "validation_evidence": [
+        "Owned cards and persistent draft create: E2E20 SQLitePG + progress44 passed. Independent toc display no P2 fixed; original6 SQLitePG passed, review closure pending."
+      ],
       "integration_only_paths": [
         "BE/app/main.py"
       ],
-      "validation_mode": "task-specific-tests-and-integration"
+      "validation_mode": "task-specific-tests-and-integration",
+      "worktree": "BE-task-subjects"
     },
     {
       "id": "U-02",
@@ -3876,7 +3885,8 @@
       "head_sha": "fc06c0ab7b1843a2c7f050907f6ff87f28398f6f",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
       "validation_evidence": [
-        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed."
+        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed.",
+        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified."
       ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",
@@ -3911,7 +3921,8 @@
       "head_sha": "e3f9a7bf1471e73f2d75fe30cbc7e633caee2bee",
       "pr_url": "https://github.com/line1thon-team10/team-10_BE/pull/33",
       "validation_evidence": [
-        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed."
+        "Independent original FE wire reproduction passed. Combined8 SQLite/PG passed atb5b5a86; finalbb8c824 adds separate previously validated test-only cold spawn budget correction. Required CI43561071174 pending; not deployed.",
+        "CI43561071174 succeeded atbb8c824. Compatibility-only deploy43562567179 dispatched; actual runtime not yet verified."
       ],
       "integration_only_paths": [],
       "validation_mode": "frozen-contract-api-compatibility",
