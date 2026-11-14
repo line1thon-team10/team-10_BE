@@ -10,10 +10,10 @@ from sqlalchemy import select, update
 from app.core.responses import ApiError
 from app.db import schema as t
 from app.domain.ranges import PageSpan, subtract, page_count
-from app.domain.scheduling import BusyInterval, free_slots, half_up
-from app.repositories.events import EventRepository
+from app.domain.scheduling import BusyInterval, Slot, free_slots, half_up
 from app.repositories.proposals import ProposalRepository, ProposalNotFound, LegacyProposalUnavailable, LegacyResponseUnavailable
-from app.services.onboarding_events import _local, _minute, event_intervals
+from app.services.onboarding_events import _local, _minute
+from app.services.schedule_placements import free_calendar_slots
 from app.services.plan_draft import _basis, _instant, _fraction, _apply as apply_allocation
 from app.services.proposals import PlanEffect, PreviewDomain, ProposalService
 from app.services.study import StudyData
@@ -66,31 +66,6 @@ def _movable(task, sessions):
     return (task.row['status'] not in ('completed','carried_over','excluded')
         and not sessions.get(task.id) and (task.record is None or task.record['result'] != 'completed')
         and bool(_remaining(task)))
-
-
-def _busy(conn,user,data,first,last,ignore=()):
-    repository=EventRepository(conn,user['id'])
-    rows=repository.events(); exceptions=defaultdict(list)
-    for row in repository.exceptions([x['id'] for x in rows]): exceptions[row['event_id']].append(row)
-    busy=[]
-    week=first
-    while week<=last:
-        for row in rows:
-            busy.extend(x for x in event_intervals(row,exceptions[row['id']],week,user['timezone']) if first<=x.day<=last)
-        week+=timedelta(days=7)
-    tz=ZoneInfo(user['timezone'])
-    for task in data.tasks:
-        row=task.row
-        if task.id in ignore or row['status'] in ('carried_over','excluded') or not first<=row['scheduled_date']<=last:
-            continue
-        if row['starts_at'] is None or row['ends_at'] is None:
-            # Historical unscheduled obligations occupy a deterministic morning
-            # window. Never pretend missing timing means the task costs no time.
-            start=Fraction(8*60); end=min(Fraction(23*60),start+row['estimated_minutes'])
-        else:
-            start,end=_minute(_local(row['starts_at'],tz)),_minute(_local(row['ends_at'],tz))
-        if start<end: busy.append(BusyInterval(row['scheduled_date'],start,end))
-    return busy
 
 
 def _move(task,slot,minutes):
@@ -158,7 +133,13 @@ class TodayPlanService:
                 and x.row['scheduled_date']==day and x.record is None),
                 key=lambda x:(str(x.row['starts_at'] or ''),x.id))
         ignored=(task.id,*(x.id for x in shifted))
-        busy=_busy(conn,user,data,day,day,ignore=ignored)
+        available=free_calendar_slots(conn,user,[Slot(day,Fraction(8*60),Fraction(23*60))],ignore_task_ids=ignored)
+        busy=[]
+        cursor=Fraction(8*60)
+        for slot in available:
+            if cursor<slot.start: busy.append(BusyInterval(day,cursor,slot.start))
+            cursor=slot.end
+        if cursor<Fraction(23*60): busy.append(BusyInterval(day,cursor,Fraction(23*60)))
         first_fixed=min((_minute(_local(x.row['starts_at'],ZoneInfo(user['timezone']))) for x in data.tasks
             if x.row['subject_id']==task.row['subject_id'] and x.row['scheduled_date']==day and x.id not in ignored
             and x.row['status'] not in ('carried_over','excluded') and x.row['starts_at']),default=Fraction(23*60))

@@ -153,3 +153,43 @@ def test_day_change_invalidates_unapplied_preview_but_not_applied_replay(api_cli
     conn.execute(update(t.users).where(t.users.c.id==case['user']).values(demo_date=TODAY+timedelta(days=1)));conn.commit()
     response=apply(api_client,case,candidate)
     assert response.status_code==409 and response.json()['error']['code']=='PREVIEW_STALE'
+
+
+def test_applied_reply_survives_next_day_without_duplicate_task(api_client,domain_connection,today_case):
+    conn,case=domain_connection,today_case
+    future=copy_task(conn,case);conn.commit()
+    candidate=preview(api_client,case).json()['data']['previewId']
+    applied=apply(api_client,case,candidate)
+    assert applied.status_code==200
+    conn.execute(update(t.users).where(t.users.c.id==case['user']).values(demo_date=TODAY+timedelta(days=1)));conn.commit()
+    assert apply(api_client,case,candidate).json()==applied.json()
+    assert len(conn.execute(select(t.study_tasks.c.id).where(t.study_tasks.c.origin_task_id==future)).all())==1
+
+
+def test_mid_apply_failure_rolls_back_original_status_and_new_placement(api_client,domain_connection,today_case,monkeypatch):
+    from app.services import plan_today
+    conn,case=domain_connection,today_case
+    future=copy_task(conn,case);conn.commit()
+    candidate=preview(api_client,case).json()['data']['previewId']
+    original=plan_today._instant
+    monkeypatch.setattr(plan_today,'_instant',lambda *_: (_ for _ in ()).throw(RuntimeError('write fault')))
+    failed=apply(api_client,case,candidate)
+    assert failed.status_code==500
+    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==future))=='planned'
+    assert not conn.execute(select(t.study_tasks.c.id).where(t.study_tasks.c.origin_task_id==future)).all()
+    assert conn.scalar(select(t.plans.c.revision))==1
+    conn.commit()
+    monkeypatch.setattr(plan_today,'_instant',original)
+    assert apply(api_client,case,candidate).status_code==200
+
+
+def test_started_postpone_target_and_malformed_preview_do_not_move(api_client,domain_connection,today_case):
+    conn,case=domain_connection,today_case
+    copy_task(conn,case)
+    conn.execute(t.study_sessions.insert().values(id=str(uuid4()),user_id=case['user'],task_id=case['task']['id'],
+        status='running',started_at=NOW,study_date=TODAY,created_at=NOW))
+    conn.commit()
+    response=preview(api_client,case,'postpone',taskId=case['task']['id'])
+    assert response.status_code==400 and response.json()['error']['code']=='NO_TASK'
+    assert apply(api_client,case,'bad-id').status_code==422
+    assert conn.scalar(select(t.study_tasks.c.status).where(t.study_tasks.c.id==case['task']['id']))=='planned'
